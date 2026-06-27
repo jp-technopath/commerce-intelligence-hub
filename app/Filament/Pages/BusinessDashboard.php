@@ -531,13 +531,13 @@ class BusinessDashboard extends Page
                 COALESCE(SUM(returning_customers), 0) as returning_customers,
                 COALESCE(SUM(items_sold), 0) as items_sold,
                 CASE WHEN SUM(sessions) > 0
-                    THEN (SUM(orders)::float / SUM(sessions)::float) * 100
+                    THEN (CAST(SUM(orders) AS DECIMAL(20,6)) / CAST(SUM(sessions) AS DECIMAL(20,6))) * 100
                     ELSE 0 END as conversion_rate,
                 CASE WHEN SUM(orders) > 0
-                    THEN SUM(revenue)::float / SUM(orders)::float
+                    THEN CAST(SUM(revenue) AS DECIMAL(20,6)) / CAST(SUM(orders) AS DECIMAL(20,6))
                     ELSE 0 END as aov,
                 CASE WHEN (SUM(new_customers) + SUM(returning_customers)) > 0
-                    THEN (SUM(returning_customers)::float / (SUM(new_customers) + SUM(returning_customers))::float) * 100
+                    THEN (CAST(SUM(returning_customers) AS DECIMAL(20,6)) / CAST((SUM(new_customers) + SUM(returning_customers)) AS DECIMAL(20,6))) * 100
                     ELSE 0 END as return_rate
             ')
             ->first();
