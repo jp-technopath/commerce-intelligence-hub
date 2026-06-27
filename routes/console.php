@@ -1,6 +1,8 @@
 <?php
 
 use App\Jobs\RunNightlyAnalysis;
+use App\Jobs\TriggerIntegrationSync;
+use App\Models\Integration;
 use Illuminate\Support\Facades\Schedule;
 
 /*
@@ -13,9 +15,21 @@ use Illuminate\Support\Facades\Schedule;
 |
 */
 
+// Daily data sync — pull latest data from all active integrations
+// Runs at 01:00 UTC so data is fresh before nightly analysis at 02:00
+Schedule::call(function () {
+    Integration::where('status', 'active')->each(function (Integration $integration) {
+        TriggerIntegrationSync::dispatch($integration);
+    });
+})
+    ->dailyAt('01:00')
+    ->name('daily-integration-sync')
+    ->withoutOverlapping(60);
+
 // Nightly analysis — runs Change Detection Engine for all active clients
 // Phase 4 will fully implement RunNightlyAnalysis
 Schedule::job(new RunNightlyAnalysis())
     ->dailyAt(config('intelligence.nightly_run_time', '02:00'))
     ->name('nightly-intelligence-analysis')
     ->withoutOverlapping(60);
+
