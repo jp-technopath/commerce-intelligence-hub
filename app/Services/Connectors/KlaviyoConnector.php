@@ -32,6 +32,9 @@ class KlaviyoConnector
         'clicks',
         'recipients',
         'unsubscribes',
+        'conversion_value',
+        'conversions',
+        'bounced',
     ];
 
     private array $credentials;
@@ -56,8 +59,12 @@ class KlaviyoConnector
 
     /**
      * Run a full sync for this integration.
+     *
+     * Klaviyo rate limits: Burst 1/s, Steady 2/m, Daily 225/d.
+     * We split into current + comparison period (4 API calls total)
+     * with a 35s pause between pairs to stay under the steady limit.
      */
-    public function sync(SyncLog $syncLog): void
+    public function sync(SyncLog $syncLog, int $numOfDays = 30): void
     {
         $apiKey = $this->credentials['api_key'] ?? null;
 
@@ -71,9 +78,26 @@ class KlaviyoConnector
         }
 
         try {
-            $campaignCount = $this->fetchCampaignMetrics();
-            $flowCount     = $this->fetchFlowMetrics();
-            $total         = $campaignCount + $flowCount;
+            $total = 0;
+            $halfDays = (int) ceil($numOfDays / 2);
+
+            // ── Current period ───────────────────────────────────────────
+            $currentFrom = now()->subDays($halfDays)->startOfDay();
+            $currentTo   = now()->endOfDay();
+
+            $total += $this->fetchCampaignMetrics($currentFrom, $currentTo);
+            $total += $this->fetchFlowMetrics($currentFrom, $currentTo);
+
+            // ── Comparison period (only if numOfDays > halfDays) ──────────
+            if ($numOfDays > $halfDays) {
+                sleep(35); // respect Klaviyo's 2 req/min steady rate limit
+
+                $prevFrom = now()->subDays($numOfDays)->startOfDay();
+                $prevTo   = now()->subDays($halfDays)->endOfDay();
+
+                $total += $this->fetchCampaignMetrics($prevFrom, $prevTo);
+                $total += $this->fetchFlowMetrics($prevFrom, $prevTo);
+            }
 
             $syncLog->update([
                 'status'            => SyncStatus::Success,
@@ -83,8 +107,7 @@ class KlaviyoConnector
 
             Log::info('KlaviyoConnector: sync complete', [
                 'integration_id' => $this->integration->id,
-                'campaigns'      => $campaignCount,
-                'flows'          => $flowCount,
+                'num_of_days'    => $numOfDays,
                 'total'          => $total,
             ]);
 
@@ -106,6 +129,8 @@ class KlaviyoConnector
 
     /**
      * Fetch campaign-level email metrics from Klaviyo.
+     *
+     * Aggregates by campaign_id + send_channel before storing.
      *
      * @return int Number of records stored
      */
@@ -130,8 +155,9 @@ class KlaviyoConnector
 
         $response = $this->makeRequest('POST', self::BASE_URL . '/campaign-values-reports/', $body);
         $results  = $response['data']['attributes']['results'] ?? [];
-        $count    = 0;
 
+        // Aggregate by campaign_id + send_channel
+        $aggregated = [];
         foreach ($results as $result) {
             $campaignId  = $result['groupings']['campaign_id']  ?? null;
             $sendChannel = $result['groupings']['send_channel'] ?? 'email';
@@ -141,10 +167,38 @@ class KlaviyoConnector
                 continue;
             }
 
-            $campaignName = $this->getCampaignName($campaignId);
-            $recipients   = (int) ($stats['recipients'] ?? 0);
-            $opens        = (int) ($stats['opens']      ?? 0);
-            $clicks       = (int) ($stats['clicks']     ?? 0);
+            $key = $campaignId . '|' . $sendChannel;
+
+            if (! isset($aggregated[$key])) {
+                $aggregated[$key] = [
+                    'campaign_id'      => $campaignId,
+                    'channel'          => $sendChannel,
+                    'recipients'       => 0,
+                    'opens'            => 0,
+                    'clicks'           => 0,
+                    'conversions'      => 0,
+                    'conversion_value' => 0,
+                    'unsubscribes'     => 0,
+                    'bounced'          => 0,
+                ];
+            }
+
+            $aggregated[$key]['recipients']       += (int)   ($stats['recipients']       ?? 0);
+            $aggregated[$key]['opens']             += (int)   ($stats['opens']            ?? 0);
+            $aggregated[$key]['clicks']            += (int)   ($stats['clicks']           ?? 0);
+            $aggregated[$key]['conversions']       += (int)   ($stats['conversions']      ?? 0);
+            $aggregated[$key]['conversion_value']  += (float) ($stats['conversion_value'] ?? 0);
+            $aggregated[$key]['unsubscribes']      += (int)   ($stats['unsubscribes']     ?? 0);
+            $aggregated[$key]['bounced']           += (int)   ($stats['bounced']          ?? 0);
+        }
+
+        // Store aggregated results
+        $count = 0;
+        foreach ($aggregated as $agg) {
+            $campaignName = $this->getCampaignName($agg['campaign_id']);
+            $recipients   = $agg['recipients'];
+            $opens        = $agg['opens'];
+            $clicks       = $agg['clicks'];
 
             EmailMarketingMetric::updateOrCreate(
                 [
@@ -152,21 +206,21 @@ class KlaviyoConnector
                     'date'          => $from->toDateString(),
                     'source'        => 'klaviyo',
                     'type'          => 'campaign',
+                    'channel'       => $agg['channel'],
                     'campaign_name' => $campaignName,
                 ],
                 [
-                    'channel'      => $sendChannel,
                     'recipients'   => $recipients,
                     'opens'        => $opens,
                     'clicks'       => $clicks,
-                    'conversions'  => 0,
-                    'revenue'      => 0,
-                    'unsubscribes' => (int)   ($stats['unsubscribes']     ?? 0),
-                    'bounces'      => 0,
+                    'conversions'  => $agg['conversions'],
+                    'revenue'      => $agg['conversion_value'],
+                    'unsubscribes' => $agg['unsubscribes'],
+                    'bounces'      => $agg['bounced'],
                     'open_rate'    => $recipients > 0 ? round($opens  / $recipients, 4) : 0,
                     'click_rate'   => $recipients > 0 ? round($clicks / $recipients, 4) : 0,
                     'metadata_json' => [
-                        'campaign_id' => $campaignId,
+                        'campaign_id' => $agg['campaign_id'],
                     ],
                 ]
             );
@@ -179,6 +233,9 @@ class KlaviyoConnector
 
     /**
      * Fetch flow-level email metrics from Klaviyo.
+     *
+     * The API can return multiple rows per flow (one per flow message/step),
+     * so we aggregate by flow_id + send_channel before storing.
      *
      * @return int Number of records stored
      */
@@ -203,8 +260,9 @@ class KlaviyoConnector
 
         $response = $this->makeRequest('POST', self::BASE_URL . '/flow-values-reports/', $body);
         $results  = $response['data']['attributes']['results'] ?? [];
-        $count    = 0;
 
+        // Aggregate by flow_id + send_channel (API returns multiple rows per flow step)
+        $aggregated = [];
         foreach ($results as $result) {
             $flowId      = $result['groupings']['flow_id']      ?? null;
             $sendChannel = $result['groupings']['send_channel'] ?? 'email';
@@ -214,10 +272,38 @@ class KlaviyoConnector
                 continue;
             }
 
-            $flowName   = $this->getFlowName($flowId);
-            $recipients = (int) ($stats['recipients'] ?? 0);
-            $opens      = (int) ($stats['opens']      ?? 0);
-            $clicks     = (int) ($stats['clicks']     ?? 0);
+            $key = $flowId . '|' . $sendChannel;
+
+            if (! isset($aggregated[$key])) {
+                $aggregated[$key] = [
+                    'flow_id'          => $flowId,
+                    'channel'          => $sendChannel,
+                    'recipients'       => 0,
+                    'opens'            => 0,
+                    'clicks'           => 0,
+                    'conversions'      => 0,
+                    'conversion_value' => 0,
+                    'unsubscribes'     => 0,
+                    'bounced'          => 0,
+                ];
+            }
+
+            $aggregated[$key]['recipients']       += (int)   ($stats['recipients']       ?? 0);
+            $aggregated[$key]['opens']             += (int)   ($stats['opens']            ?? 0);
+            $aggregated[$key]['clicks']            += (int)   ($stats['clicks']           ?? 0);
+            $aggregated[$key]['conversions']       += (int)   ($stats['conversions']      ?? 0);
+            $aggregated[$key]['conversion_value']  += (float) ($stats['conversion_value'] ?? 0);
+            $aggregated[$key]['unsubscribes']      += (int)   ($stats['unsubscribes']     ?? 0);
+            $aggregated[$key]['bounced']           += (int)   ($stats['bounced']          ?? 0);
+        }
+
+        // Store aggregated results
+        $count = 0;
+        foreach ($aggregated as $agg) {
+            $flowName   = $this->getFlowName($agg['flow_id']);
+            $recipients = $agg['recipients'];
+            $opens      = $agg['opens'];
+            $clicks     = $agg['clicks'];
 
             EmailMarketingMetric::updateOrCreate(
                 [
@@ -225,22 +311,22 @@ class KlaviyoConnector
                     'date'          => $from->toDateString(),
                     'source'        => 'klaviyo',
                     'type'          => 'flow',
+                    'channel'       => $agg['channel'],
                     'campaign_name' => $flowName,
                 ],
                 [
-                    'channel'      => $sendChannel,
-                    'flow_id'      => $flowId,
+                    'flow_id'      => $agg['flow_id'],
                     'recipients'   => $recipients,
                     'opens'        => $opens,
                     'clicks'       => $clicks,
-                    'conversions'  => 0,
-                    'revenue'      => 0,
-                    'unsubscribes' => (int)   ($stats['unsubscribes']     ?? 0),
-                    'bounces'      => 0,
+                    'conversions'  => $agg['conversions'],
+                    'revenue'      => $agg['conversion_value'],
+                    'unsubscribes' => $agg['unsubscribes'],
+                    'bounces'      => $agg['bounced'],
                     'open_rate'    => $recipients > 0 ? round($opens  / $recipients, 4) : 0,
                     'click_rate'   => $recipients > 0 ? round($clicks / $recipients, 4) : 0,
                     'metadata_json' => [
-                        'flow_id' => $flowId,
+                        'flow_id' => $agg['flow_id'],
                     ],
                 ]
             );

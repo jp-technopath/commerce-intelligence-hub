@@ -42,7 +42,7 @@ class NewRelicConnector
      * Fetches summarised metrics for yesterday and stores them
      * as a single PerformanceMetric row.
      */
-    public function sync(SyncLog $syncLog): void
+    public function sync(SyncLog $syncLog, int $numOfDays = 1): void
     {
         $apiKey        = $this->credentials['api_key'] ?? null;
         $applicationId = $this->credentials['application_id'] ?? null;
@@ -57,17 +57,29 @@ class NewRelicConnector
         }
 
         try {
-            $from = Carbon::yesterday()->startOfDay()->toIso8601String();
-            $to   = Carbon::today()->startOfDay()->toIso8601String();
+            $recordsProcessed = 0;
 
-            $raw    = $this->fetchMetricsData($applicationId, $apiKey, $from, $to);
-            $parsed = $this->parseMetrics($raw);
+            for ($d = $numOfDays; $d >= 1; $d--) {
+                $date = Carbon::today()->subDays($d);
+                $from = $date->copy()->startOfDay()->toIso8601String();
+                $to   = $date->copy()->endOfDay()->toIso8601String();
 
-            $this->storeMetrics($parsed, Carbon::yesterday()->toDateString());
+                $raw    = $this->fetchMetricsData($applicationId, $apiKey, $from, $to);
+                $parsed = $this->parseMetrics($raw);
+
+                $this->storeMetrics($parsed, $date->toDateString());
+                $recordsProcessed++;
+            }
+
+            Log::info('NewRelicConnector: sync complete', [
+                'integration_id' => $this->integration->id,
+                'num_of_days'    => $numOfDays,
+                'records'        => $recordsProcessed,
+            ]);
 
             $syncLog->update([
                 'status'            => SyncStatus::Success,
-                'records_processed' => 1,
+                'records_processed' => $recordsProcessed,
                 'completed_at'      => now(),
             ]);
 

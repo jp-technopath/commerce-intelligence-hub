@@ -28,7 +28,8 @@ class ChangeDetectionEngine
 
     /**
      * Run change detection for a single client.
-     * Compares last 7 days vs previous 7 days for all available metrics.
+     * Compares the configured comparison period (default 7 days) vs the
+     * previous equivalent period for all available metrics.
      * Creates Finding records for any metric that exceeds thresholds.
      *
      * Returns the number of new findings generated.
@@ -38,11 +39,13 @@ class ChangeDetectionEngine
         $newFindings = 0;
 
         try {
-            $enabledCommerce   = $client->getMonitoredMetrics('commerce');
-            $enabledBehavioral = $client->getMonitoredMetrics('behavioral');
+            $enabledCommerce   = $client->getMonitoredMetricsForType('commerce');
+            $enabledBehavioral = $client->getMonitoredMetricsForType('behavioral');
 
             $newFindings += $this->detectCommerceChanges($client, $enabledCommerce);
             $newFindings += $this->detectBehavioralChanges($client, $enabledBehavioral);
+            $newFindings += $this->detectUnifiedConversionRate($client);
+            $newFindings += $this->detectFunnelChanges($client);
             $newFindings += $this->detectCrossDatasetChanges($client);
         } catch (\Exception $e) {
             Log::error('ChangeDetectionEngine: error for client', [
@@ -60,7 +63,7 @@ class ChangeDetectionEngine
 
     private function detectCommerceChanges(Client $client, array $enabledMetrics): int
     {
-        $days     = $client->getComparisonPeriod();
+        $days     = $client->getComparisonPeriodForType('commerce');
         $current  = $this->getCommercePeriod($client, 0, $days);
         $previous = $this->getCommercePeriod($client, $days, $days);
 
@@ -73,6 +76,12 @@ class ChangeDetectionEngine
 
         $findings = 0;
 
+        $periodLabel = match($days) {
+            30 => 'month-over-month',
+            14 => 'bi-weekly',
+            default => 'week-over-week',
+        };
+
         // Sessions (traffic)
         if (in_array('sessions', $enabledMetrics)) {
             $findings += $this->checkMetric(
@@ -83,7 +92,7 @@ class ChangeDetectionEngine
                 decreaseKey:    'revenue_decrease',
                 increaseKey:    null,
                 category:       FindingCategory::Revenue,
-                title:          fn($dir, $pct) => "Traffic {$dir} {$pct}% week-over-week",
+                title:          fn($dir, $pct) => "Traffic {$dir} {$pct}% {$periodLabel}",
                 description:    fn($dir, $pct, $c, $p) => "Sessions {$dir} from {$p} to {$c} ({$pct}% change) comparing the last {$days} days to the prior {$days}-day period.",
                 findingType:    'traffic_change',
             );
@@ -115,7 +124,7 @@ class ChangeDetectionEngine
                 decreaseKey:    'revenue_decrease',
                 increaseKey:    'revenue_increase',
                 category:       FindingCategory::Revenue,
-                title:          fn($dir, $pct) => "Revenue {$dir} {$pct}% week-over-week",
+                title:          fn($dir, $pct) => "Revenue {$dir} {$pct}% {$periodLabel}",
                 description:    fn($dir, $pct, $c, $p) => "Total revenue {$dir} from \${$p} to \${$c} ({$pct}% change) comparing the last {$days} days to the prior {$days}-day period.",
                 findingType:    'revenue_change',
                 revenueImpact:  fn($c, $p) => round($c - $p, 2),
@@ -163,7 +172,7 @@ class ChangeDetectionEngine
 
     private function detectBehavioralChanges(Client $client, array $enabledMetrics): int
     {
-        $days     = $client->getComparisonPeriod();
+        $days     = $client->getComparisonPeriodForType('behavioral');
         $current  = $this->getBehavioralPeriod($client, 0, $days);
         $previous = $this->getBehavioralPeriod($client, $days, $days);
 
@@ -177,7 +186,7 @@ class ChangeDetectionEngine
         $findings = 0;
 
         $behavioralChecks = [
-            ['rage_clicks',   'rage_clicks_increase',   FindingCategory::Behavioral, 'Rage click rate increased %s%%',    'Rage clicks increased from %s to %s (%s%% change) over the past 7 days. This indicates user frustration with unresponsive UI elements.'],
+            ['rage_clicks',   'rage_clicks_increase',   FindingCategory::Behavioral, 'Rage click rate increased %s%%',    'Rage clicks increased from %s to %s (%s%% change) over the past ' . $days . ' days. This indicates user frustration with unresponsive UI elements.'],
             ['dead_clicks',   'dead_clicks_increase',   FindingCategory::Behavioral, 'Dead click rate increased %s%%',    'Dead clicks increased from %s to %s (%s%% change). Users are clicking on non-interactive elements — potential CTA or layout confusion.'],
             ['quick_backs',   'quickbacks_increase',    FindingCategory::Behavioral, 'Quickback rate increased %s%%',     'Quickbacks increased from %s to %s (%s%% change). Users are navigating away quickly, suggesting content or relevance issues.'],
             ['script_errors', 'script_errors_increase', FindingCategory::Technical,  'JavaScript error rate increased %s%%', 'Script errors increased from %s to %s (%s%% change). This may be causing invisible checkout or page failures.'],
@@ -212,7 +221,7 @@ class ChangeDetectionEngine
                         'current'      => $currVal,
                         'previous'     => $prevVal,
                         'change_pct'   => $pct,
-                        'period_days'  => 7,
+                        'period_days'  => $days,
                         'source'       => 'clarity',
                     ],
                 );
@@ -220,6 +229,272 @@ class ChangeDetectionEngine
         }
 
         return $findings;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Unified Conversion Rate (Adobe Orders ÷ GA4 Active Users)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function detectUnifiedConversionRate(Client $client): int
+    {
+        $days = $client->getComparisonPeriodForType('commerce');
+
+        $periodLabel = match($days) {
+            30 => 'month-over-month',
+            14 => 'bi-weekly',
+            default => 'week-over-week',
+        };
+
+        // Need both GA4 and Adobe to compute the unified rate
+        $activeTypes = $client->getActiveIntegrationTypes();
+        if (! in_array('ga4', $activeTypes) || ! in_array('adobe_commerce', $activeTypes)) {
+            return 0;
+        }
+
+        $end        = Carbon::today();
+        $start      = $end->copy()->subDays($days - 1);
+        $prevEnd    = $start->copy()->subDay();
+        $prevStart  = $prevEnd->copy()->subDays($days - 1);
+
+        // Current period
+        $ga4Curr = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->get();
+
+        $adobeCurr = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'adobe_commerce')
+            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->get();
+
+        // Previous period
+        $ga4Prev = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$prevStart->toDateString(), $prevEnd->toDateString()])
+            ->get();
+
+        $adobePrev = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'adobe_commerce')
+            ->whereBetween('date', [$prevStart->toDateString(), $prevEnd->toDateString()])
+            ->get();
+
+        $currUsers  = (float) $ga4Curr->sum('active_users');
+        $prevUsers  = (float) $ga4Prev->sum('active_users');
+        $currOrders = (float) $adobeCurr->sum('orders');
+        $prevOrders = (float) $adobePrev->sum('orders');
+
+        if ($currUsers <= 0 && $prevUsers <= 0) return 0;
+
+        $currRate = $currUsers > 0 ? ($currOrders / $currUsers) * 100 : 0;
+        $prevRate = $prevUsers > 0 ? ($prevOrders / $prevUsers) * 100 : 0;
+
+        if ($prevRate <= 0) return 0;
+
+        $change = ($currRate - $prevRate) / $prevRate;
+        $absChange = abs($change);
+        $threshold = $client->getThreshold('conversion_decrease');
+
+        if ($absChange < $threshold) return 0;
+
+        $dir = $change > 0 ? 'increased' : 'decreased';
+        $pct = round($absChange * 100, 1);
+
+        return $this->createFinding(
+            client:        $client,
+            findingType:   'unified_conversion_rate_' . ($change > 0 ? 'increase' : 'decrease'),
+            category:      FindingCategory::Conversion,
+            title:         "Conversion rate {$dir} {$pct}% {$periodLabel} (Orders ÷ Active Users)",
+            description:   sprintf(
+                "Unified conversion rate (Adobe orders ÷ GA4 active users) %s from %.2f%% to %.2f%% (%.1f%% change) "
+                . "comparing the last %d days to the prior %d-day period. "
+                . "Current: %s orders ÷ %s users. Previous: %s orders ÷ %s users.",
+                $dir, $prevRate, $currRate, $change * 100,
+                $days, $days,
+                number_format($currOrders), number_format($currUsers),
+                number_format($prevOrders), number_format($prevUsers)
+            ),
+            severity:      $this->commerceSeverity($absChange, $threshold),
+            confidence:    $this->confidence($absChange, $threshold),
+            metadata:      [
+                'metric'         => 'unified_conversion_rate',
+                'current_rate'   => round($currRate, 2),
+                'previous_rate'  => round($prevRate, 2),
+                'current_orders' => $currOrders,
+                'current_users'  => $currUsers,
+                'previous_orders'=> $prevOrders,
+                'previous_users' => $prevUsers,
+                'change_pct'     => round($change * 100, 1),
+                'period_days'    => $days,
+                'sources'        => ['ga4', 'adobe_commerce'],
+            ],
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Purchase Journey Funnel Changes
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function detectFunnelChanges(Client $client): int
+    {
+        $days = $client->getComparisonPeriodForType('commerce');
+
+        $periodLabel = match($days) {
+            30 => 'month-over-month',
+            14 => 'bi-weekly',
+            default => 'week-over-week',
+        };
+
+        $activeTypes = $client->getActiveIntegrationTypes();
+        if (! in_array('ga4', $activeTypes)) return 0;
+
+        $end        = Carbon::today();
+        $start      = $end->copy()->subDays($days - 1);
+        $prevEnd    = $start->copy()->subDay();
+        $prevStart  = $prevEnd->copy()->subDays($days - 1);
+
+        $currRows = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->whereNotNull('metadata_json')
+            ->get();
+
+        $prevRows = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$prevStart->toDateString(), $prevEnd->toDateString()])
+            ->whereNotNull('metadata_json')
+            ->get();
+
+        $currFunnel = $this->aggregateFunnel($currRows);
+        $prevFunnel = $this->aggregateFunnel($prevRows);
+
+        // Need data in both periods
+        if ($currFunnel['view_item'] <= 0 || $prevFunnel['view_item'] <= 0) return 0;
+
+        $findings = 0;
+
+        // Check each funnel transition for drop-off rate changes
+        $transitions = [
+            ['from' => 'view_item',      'to' => 'add_to_cart',    'label' => 'View → Cart',     'type' => 'view_to_cart'],
+            ['from' => 'add_to_cart',    'to' => 'begin_checkout', 'label' => 'Cart → Checkout',  'type' => 'cart_to_checkout'],
+            ['from' => 'begin_checkout', 'to' => 'purchase',       'label' => 'Checkout → Purchase', 'type' => 'checkout_to_purchase'],
+        ];
+
+        foreach ($transitions as $t) {
+            $currFrom = $currFunnel[$t['from']];
+            $currTo   = $currFunnel[$t['to']];
+            $prevFrom = $prevFunnel[$t['from']];
+            $prevTo   = $prevFunnel[$t['to']];
+
+            if ($currFrom <= 0 || $prevFrom <= 0) continue;
+
+            $currDropOff = 1 - ($currTo / $currFrom);
+            $prevDropOff = 1 - ($prevTo / $prevFrom);
+
+            // Only alert when drop-off rate *increased* (more people abandoning)
+            if ($prevDropOff <= 0) continue;
+
+            $change = ($currDropOff - $prevDropOff) / $prevDropOff;
+
+            // Threshold: 15% increase in drop-off rate
+            $threshold = 0.15;
+
+            if ($change >= $threshold) {
+                $pct = round($change * 100, 1);
+                $currDropPct = round($currDropOff * 100, 1);
+                $prevDropPct = round($prevDropOff * 100, 1);
+
+                $findings += $this->createFinding(
+                    client:      $client,
+                    findingType: "funnel_{$t['type']}_dropoff_increase",
+                    category:    FindingCategory::Conversion,
+                    title:       "{$t['label']} abandonment up {$pct}% {$periodLabel}",
+                    description: sprintf(
+                        "Purchase funnel drop-off at %s increased from %.1f%% to %.1f%% (%s%% change) "
+                        . "comparing the last %d days to the prior %d-day period. "
+                        . "Current: %s → %s (%.1f%% drop). Previous: %s → %s (%.1f%% drop).",
+                        $t['label'], $prevDropPct, $currDropPct, $pct,
+                        $days, $days,
+                        number_format($currFrom), number_format($currTo), $currDropPct,
+                        number_format($prevFrom), number_format($prevTo), $prevDropPct
+                    ),
+                    severity:    $change >= 0.50 ? FindingSeverity::Critical
+                               : ($change >= 0.30 ? FindingSeverity::High : FindingSeverity::Medium),
+                    confidence:  $this->confidence($change, $threshold),
+                    metadata:    [
+                        'metric'           => "funnel_{$t['type']}_dropoff",
+                        'transition'       => $t['label'],
+                        'current_dropoff'  => $currDropPct,
+                        'previous_dropoff' => $prevDropPct,
+                        'change_pct'       => $pct,
+                        'current_from'     => $currFrom,
+                        'current_to'       => $currTo,
+                        'previous_from'    => $prevFrom,
+                        'previous_to'      => $prevTo,
+                        'period_days'      => $days,
+                        'source'           => 'ga4',
+                    ],
+                );
+            }
+        }
+
+        // Also check overall View → Purchase conversion change
+        $currOverall = ($currFunnel['purchase'] / $currFunnel['view_item']) * 100;
+        $prevOverall = ($prevFunnel['purchase'] / $prevFunnel['view_item']) * 100;
+
+        if ($prevOverall > 0) {
+            $overallChange = ($currOverall - $prevOverall) / $prevOverall;
+            $absChange = abs($overallChange);
+            $threshold = $client->getThreshold('conversion_decrease');
+
+            if ($absChange >= $threshold) {
+                $dir = $overallChange > 0 ? 'improved' : 'declined';
+                $pct = round($absChange * 100, 1);
+
+                $findings += $this->createFinding(
+                    client:      $client,
+                    findingType: 'funnel_overall_conversion_' . ($overallChange > 0 ? 'increase' : 'decrease'),
+                    category:    FindingCategory::Conversion,
+                    title:       "Funnel conversion (View → Purchase) {$dir} {$pct}% {$periodLabel}",
+                    description: sprintf(
+                        "Overall purchase funnel conversion %s from %.2f%% to %.2f%% (%.1f%% change) "
+                        . "comparing the last %d days to the prior %d-day period.",
+                        $dir, $prevOverall, $currOverall, $overallChange * 100, $days, $days
+                    ),
+                    severity:    $this->commerceSeverity($absChange, $threshold),
+                    confidence:  $this->confidence($absChange, $threshold),
+                    metadata:    [
+                        'metric'         => 'funnel_overall_conversion',
+                        'current_rate'   => round($currOverall, 2),
+                        'previous_rate'  => round($prevOverall, 2),
+                        'change_pct'     => round($overallChange * 100, 1),
+                        'period_days'    => $days,
+                        'source'         => 'ga4',
+                    ],
+                );
+            }
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Aggregate funnel event counts from metadata_json across rows.
+     */
+    private function aggregateFunnel(Collection $rows): array
+    {
+        $totals = ['view_item' => 0, 'add_to_cart' => 0, 'begin_checkout' => 0, 'purchase' => 0];
+
+        foreach ($rows as $m) {
+            $funnel = ($m->metadata_json ?? [])['funnel'] ?? null;
+            if (! $funnel) continue;
+
+            foreach ($totals as $key => &$val) {
+                $val += (int) ($funnel[$key] ?? 0);
+            }
+            unset($val);
+        }
+
+        return $totals;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -452,9 +727,11 @@ class ChangeDetectionEngine
      */
     private function detectCrossDatasetChanges(Client $client): int
     {
-        // Pull 7-day current and previous for commerce
-        $commCurr = $this->getCommercePeriod($client, 0, 7);
-        $commPrev = $this->getCommercePeriod($client, 7, 7);
+        // Use the client's configured comparison period
+        $days = $client->getComparisonPeriodForType('commerce');
+
+        $commCurr = $this->getCommercePeriod($client, 0, $days);
+        $commPrev = $this->getCommercePeriod($client, $days, $days);
 
         if ($commCurr->isEmpty() || $commPrev->isEmpty()) {
             return 0;
@@ -466,8 +743,8 @@ class ChangeDetectionEngine
         ];
 
         // Try period-over-period behavioral comparison first
-        $behCurr = $this->getBehavioralPeriod($client, 0, 7);
-        $behPrev = $this->getBehavioralPeriod($client, 7, 7);
+        $behCurr = $this->getBehavioralPeriod($client, 0, $days);
+        $behPrev = $this->getBehavioralPeriod($client, $days, $days);
 
         $hasBehavioralHistory = $behCurr->isNotEmpty() && $behPrev->isNotEmpty()
             && $behPrev->sum('traffic') > 0;

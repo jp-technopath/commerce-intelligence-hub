@@ -11,6 +11,9 @@ use Google\Service\AnalyticsData\DateRange;
 use Google\Service\AnalyticsData\Dimension;
 use Google\Service\AnalyticsData\Metric;
 use Google\Service\AnalyticsData\RunReportRequest;
+use Google\Service\AnalyticsData\FilterExpression;
+use Google\Service\AnalyticsData\Filter;
+use Google\Service\AnalyticsData\InListFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -28,7 +31,7 @@ class GA4Connector
     /**
      * Run a full sync for this integration.
      */
-    public function sync(SyncLog $syncLog): void
+    public function sync(SyncLog $syncLog, int $numOfDays = 30): void
     {
         $propertyId   = $this->credentials['property_id'] ?? null;
         $refreshToken = $this->credentials['refresh_token'] ?? null;
@@ -44,9 +47,20 @@ class GA4Connector
 
         try {
             $service = $this->buildService($refreshToken);
-            $data    = $this->fetchReport($service, $propertyId);
+            $data    = $this->fetchReport($service, $propertyId, "{$numOfDays}daysAgo");
 
             $this->storeMetrics($data);
+
+            // Fetch ecommerce funnel events
+            $funnelData = $this->fetchFunnelReport($service, $propertyId, "{$numOfDays}daysAgo");
+            $this->storeFunnelMetrics($funnelData);
+
+            Log::info('GA4Connector: sync complete', [
+                'integration_id' => $this->integration->id,
+                'num_of_days'    => $numOfDays,
+                'date_range'     => "{$numOfDays}daysAgo → yesterday",
+                'rows_returned'  => count($data),
+            ]);
 
             $syncLog->update([
                 'status'            => SyncStatus::Success,
@@ -236,6 +250,7 @@ class GA4Connector
                 ['date' => $dateKey, 'source' => 'ga4'],
                 [
                     'sessions'              => $data['sessions'],
+                    'active_users'          => $data['active_users'],
                     'new_customers'         => $data['new_users'],
                     'returning_customers'   => max(0, $data['total_users'] - $data['new_users']),
                     'revenue'               => round($data['revenue'], 2),
@@ -290,6 +305,93 @@ class GA4Connector
             ]);
 
             return 0;
+        }
+    }
+
+    /**
+     * Fetch ecommerce funnel event counts by date.
+     * Events: view_item, add_to_cart, begin_checkout, purchase
+     */
+    private function fetchFunnelReport(AnalyticsData $service, string $propertyId, string $startDate = '30daysAgo', string $endDate = 'yesterday'): array
+    {
+        $request = new RunReportRequest();
+
+        $dateRange = new DateRange();
+        $dateRange->setStartDate($startDate);
+        $dateRange->setEndDate($endDate);
+        $request->setDateRanges([$dateRange]);
+
+        // Dimensions: date, eventName
+        $dateDim = new Dimension();
+        $dateDim->setName('date');
+        $eventDim = new Dimension();
+        $eventDim->setName('eventName');
+        $request->setDimensions([$dateDim, $eventDim]);
+
+        // Metric: eventCount
+        $metric = new Metric();
+        $metric->setName('eventCount');
+        $request->setMetrics([$metric]);
+
+        // Filter to only our funnel events
+        $inList = new InListFilter();
+        $inList->setValues(['view_item', 'add_to_cart', 'begin_checkout', 'purchase']);
+
+        $filter = new Filter();
+        $filter->setFieldName('eventName');
+        $filter->setInListFilter($inList);
+
+        $filterExpr = new FilterExpression();
+        $filterExpr->setFilter($filter);
+        $request->setDimensionFilter($filterExpr);
+
+        $response = $service->properties->runReport("properties/{$propertyId}", $request);
+
+        $byDate = [];
+
+        foreach ($response->getRows() ?? [] as $row) {
+            $dims = $row->getDimensionValues();
+            $mets = $row->getMetricValues();
+
+            $rawDate   = $dims[0]->getValue();
+            $eventName = $dims[1]->getValue();
+            $count     = (int) $mets[0]->getValue();
+
+            $dateKey = substr($rawDate, 0, 4) . '-' . substr($rawDate, 4, 2) . '-' . substr($rawDate, 6, 2);
+
+            if (! isset($byDate[$dateKey])) {
+                $byDate[$dateKey] = [
+                    'view_item'      => 0,
+                    'add_to_cart'    => 0,
+                    'begin_checkout' => 0,
+                    'purchase'       => 0,
+                ];
+            }
+
+            if (isset($byDate[$dateKey][$eventName])) {
+                $byDate[$dateKey][$eventName] += $count;
+            }
+        }
+
+        return $byDate;
+    }
+
+    /**
+     * Merge funnel event counts into the metadata_json of existing commerce_metrics rows.
+     */
+    private function storeFunnelMetrics(array $byDate): void
+    {
+        foreach ($byDate as $dateKey => $events) {
+            $metric = $this->integration->client->commerceMetrics()
+                ->where('date', $dateKey)
+                ->where('source', 'ga4')
+                ->first();
+
+            if ($metric) {
+                $meta = $metric->metadata_json ?? [];
+                $meta['funnel'] = $events;
+                $metric->update(['metadata_json' => $meta]);
+            }
         }
     }
 

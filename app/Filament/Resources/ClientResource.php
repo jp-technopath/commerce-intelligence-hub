@@ -72,63 +72,18 @@ class ClientResource extends Resource
                                 ->rows(4)
                                 ->columnSpanFull(),
 
-                            // Commerce Metrics
-                            Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.commerce')
-                                ->label('Commerce Metrics to Monitor')
+                            // Findings Comparison Period
+                            Forms\Components\Select::make('findings_comparison_period')
+                                ->label('Findings Comparison Period')
+                                ->helperText('How the findings engine compares metrics: current N days vs prior N days.')
                                 ->options([
-                                    'revenue'        => 'Revenue',
-                                    'orders'         => 'Orders',
-                                    'conversion_rate' => 'Conversion Rate',
-                                    'aov'            => 'Average Order Value',
-                                    'sessions'       => 'Sessions',
-                                    'new_customers'  => 'New Customers',
-                                    'return_rate'    => 'Customer Return Rate',
+                                    7  => 'Week over Week (7 days)',
+                                    14 => 'Bi-weekly (14 days)',
+                                    30 => 'Month over Month (30 days)',
                                 ])
-                                ->default(['revenue', 'orders', 'conversion_rate', 'aov', 'sessions', 'new_customers', 'return_rate'])
-                                ->columns(3)
-                                ->helperText('Uncheck metrics you don\'t want the engine to monitor for this client.'),
-
-                            // Behavioral Metrics
-                            Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.behavioral')
-                                ->label('Behavioral Metrics to Monitor')
-                                ->options([
-                                    'rage_clicks'    => 'Rage Clicks',
-                                    'dead_clicks'    => 'Dead Clicks',
-                                    'quick_backs'    => 'Quick Backs',
-                                    'script_errors'  => 'Script Errors',
-                                    'error_clicks'   => 'Error Clicks',
-                                    'friction_score' => 'Friction Score',
-                                ])
-                                ->default(['rage_clicks', 'dead_clicks', 'quick_backs', 'script_errors', 'error_clicks', 'friction_score'])
-                                ->columns(3),
-
-                            // Performance Metrics
-                            Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.performance')
-                                ->label('Performance Metrics to Monitor')
-                                ->options([
-                                    'lcp'            => 'LCP (Largest Contentful Paint)',
-                                    'inp'            => 'INP (Interaction to Next Paint)',
-                                    'cls'            => 'CLS (Cumulative Layout Shift)',
-                                    'ttfb'           => 'TTFB (Time to First Byte)',
-                                    'page_load_time' => 'Page Load Time',
-                                    'bounce_rate'    => 'Bounce Rate',
-                                ])
-                                ->default(['lcp', 'inp', 'cls', 'ttfb', 'page_load_time', 'bounce_rate'])
-                                ->columns(3)
-                                ->helperText('Core Web Vitals and page speed metrics from GA4 & Clarity.'),
-
-                            // Inventory Metrics
-                            Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.inventory')
-                                ->label('Inventory Metrics to Monitor')
-                                ->options([
-                                    'out_of_stock_count' => 'Out of Stock Count',
-                                    'low_stock_count'    => 'Low Stock Count',
-                                    'out_of_stock_rate'  => 'Out of Stock Rate',
-                                    'inventory_turnover' => 'Inventory Turnover',
-                                ])
-                                ->default(['out_of_stock_count', 'low_stock_count', 'out_of_stock_rate', 'inventory_turnover'])
-                                ->columns(2)
-                                ->helperText('Stock and inventory metrics from Adobe Commerce / Shopify.'),
+                                ->default(7)
+                                ->required()
+                                ->columnSpan(1),
 
                             // Threshold Overrides
                             Forms\Components\Repeater::make('monitoring_config.thresholds')
@@ -183,17 +138,6 @@ class ClientResource extends Resource
                                 ->addActionLabel('Add Threshold Override')
                                 ->collapsible()
                                 ->cloneable(),
-
-                            // Comparison Period
-                            Forms\Components\Select::make('monitoring_config.comparison_period_days')
-                                ->label('Comparison Period')
-                                ->options([
-                                    '7'  => '7 Days',
-                                    '14' => '14 Days',
-                                    '30' => '30 Days',
-                                ])
-                                ->default('7')
-                                ->helperText('How far back the engine looks when comparing current vs previous metrics.'),
                         ]),
 
                 ])

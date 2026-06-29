@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ClientStatus;
+use App\Models\Integration;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -19,6 +20,7 @@ class Client extends Model
         'notes',
         'business_context',
         'monitoring_config',
+        'findings_comparison_period',
     ];
 
     protected $casts = [
@@ -26,45 +28,37 @@ class Client extends Model
         'monitoring_config' => 'array',
     ];
 
-    // ── All available metrics (used as defaults when no config is set) ────
-
-    public const ALL_COMMERCE_METRICS = [
-        'revenue', 'orders', 'conversion_rate', 'aov', 'sessions', 'new_customers', 'return_rate',
-    ];
-
-    public const ALL_BEHAVIORAL_METRICS = [
-        'rage_clicks', 'dead_clicks', 'quick_backs', 'script_errors', 'error_clicks', 'friction_score',
-    ];
-
-    public const ALL_PERFORMANCE_METRICS = [
-        'lcp', 'inp', 'cls', 'ttfb', 'page_load_time', 'bounce_rate',
-    ];
-
-    public const ALL_INVENTORY_METRICS = [
-        'out_of_stock_count', 'low_stock_count', 'out_of_stock_rate', 'inventory_turnover',
-    ];
-
     // ── Monitoring config helpers ────────────────────────────────────────
 
     /**
-     * Get enabled metrics for a type ('commerce', 'behavioral', 'performance', or 'inventory').
-     * Returns all metrics when no config is set (backward compatible).
+     * Get all monitored metrics for a given type by aggregating across active integrations.
+     * Each integration only contributes metrics for its applicable categories.
      */
-    public function getMonitoredMetrics(string $type): array
+    public function getMonitoredMetricsForType(string $type): array
     {
-        $config = $this->monitoring_config['enabled_metrics'][$type] ?? null;
+        $metrics = $this->integrations()
+            ->where('status', 'active')
+            ->get()
+            ->flatMap(fn (Integration $integration) => $integration->getMonitoredMetrics($type))
+            ->unique()
+            ->values()
+            ->toArray();
 
-        if ($config === null) {
-            return match ($type) {
-                'commerce'    => self::ALL_COMMERCE_METRICS,
-                'behavioral'  => self::ALL_BEHAVIORAL_METRICS,
-                'performance' => self::ALL_PERFORMANCE_METRICS,
-                'inventory'   => self::ALL_INVENTORY_METRICS,
-                default       => [],
-            };
+        // Fall back to all metrics if no integrations are configured
+        if (empty($metrics)) {
+            return Integration::getAllMetricsForCategory($type);
         }
 
-        return $config;
+        return $metrics;
+    }
+
+    /**
+     * Get comparison period for the findings engine.
+     * Uses the client-level setting, falls back to 7 days.
+     */
+    public function getComparisonPeriodForType(string $type): int
+    {
+        return $this->findings_comparison_period ?? 7;
     }
 
     /**
@@ -100,14 +94,6 @@ class Client extends Model
         }
 
         return null;
-    }
-
-    /**
-     * Get comparison period in days (7, 14, or 30). Default: 7.
-     */
-    public function getComparisonPeriod(): int
-    {
-        return (int) ($this->monitoring_config['comparison_period_days'] ?? 7);
     }
 
     /**
@@ -175,5 +161,10 @@ class Client extends Model
     public function inventoryMetrics(): HasMany
     {
         return $this->hasMany(InventoryMetric::class);
+    }
+
+    public function emailMarketingMetrics(): HasMany
+    {
+        return $this->hasMany(EmailMarketingMetric::class);
     }
 }

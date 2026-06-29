@@ -21,6 +21,7 @@ class CommerceMetric extends Model
         'average_order_value',
         'aov',
         'sessions',
+        'active_users',
         'new_customers',
         'returning_customers',
         'source_breakdown_json',

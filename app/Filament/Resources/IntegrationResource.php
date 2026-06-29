@@ -229,6 +229,101 @@ class IntegrationResource extends Resource
                         ->columnSpanFull(),
                 ])
                 ->collapsed(),
+
+            // ── Metrics to Monitor ──────────────────────────────────────────
+            Forms\Components\Section::make('Metrics to Monitor')
+                ->description('Select which metrics this integration should monitor. Only categories applicable to the selected integration type are shown.')
+                ->schema([
+                    // Commerce Metrics (Shopify, Adobe Commerce, GA4)
+                    Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.commerce')
+                        ->label('Commerce Metrics')
+                        ->options([
+                            'revenue'         => 'Revenue',
+                            'orders'          => 'Orders',
+                            'conversion_rate' => 'Conversion Rate',
+                            'aov'             => 'Average Order Value',
+                            'sessions'        => 'Sessions',
+                            'new_customers'   => 'New Customers',
+                            'return_rate'     => 'Customer Return Rate',
+                        ])
+                        ->default(['revenue', 'orders', 'conversion_rate', 'aov', 'sessions', 'new_customers', 'return_rate'])
+                        ->columns(3)
+                        ->visible(fn (Forms\Get $get) => in_array('commerce', \App\Enums\IntegrationType::tryFrom($get('integration_type'))?->metricCategories() ?? [])),
+
+                    // Behavioral Metrics (Clarity)
+                    Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.behavioral')
+                        ->label('Behavioral Metrics')
+                        ->options([
+                            'rage_clicks'    => 'Rage Clicks',
+                            'dead_clicks'    => 'Dead Clicks',
+                            'quick_backs'    => 'Quick Backs',
+                            'script_errors'  => 'Script Errors',
+                            'error_clicks'   => 'Error Clicks',
+                            'friction_score' => 'Friction Score',
+                        ])
+                        ->default(['rage_clicks', 'dead_clicks', 'quick_backs', 'script_errors', 'error_clicks', 'friction_score'])
+                        ->columns(3)
+                        ->visible(fn (Forms\Get $get) => in_array('behavioral', \App\Enums\IntegrationType::tryFrom($get('integration_type'))?->metricCategories() ?? [])),
+
+                    // Performance Metrics (GA4, New Relic)
+                    Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.performance')
+                        ->label('Performance Metrics')
+                        ->options([
+                            'lcp'            => 'LCP (Largest Contentful Paint)',
+                            'inp'            => 'INP (Interaction to Next Paint)',
+                            'cls'            => 'CLS (Cumulative Layout Shift)',
+                            'ttfb'           => 'TTFB (Time to First Byte)',
+                            'page_load_time' => 'Page Load Time',
+                            'bounce_rate'    => 'Bounce Rate',
+                        ])
+                        ->default(['lcp', 'inp', 'cls', 'ttfb', 'page_load_time', 'bounce_rate'])
+                        ->columns(3)
+                        ->helperText('Core Web Vitals and page speed metrics.')
+                        ->visible(fn (Forms\Get $get) => in_array('performance', \App\Enums\IntegrationType::tryFrom($get('integration_type'))?->metricCategories() ?? [])),
+
+                    // Inventory Metrics (Shopify, Adobe Commerce)
+                    Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.inventory')
+                        ->label('Inventory Metrics')
+                        ->options([
+                            'out_of_stock_count' => 'Out of Stock Count',
+                            'low_stock_count'    => 'Low Stock Count',
+                            'out_of_stock_rate'  => 'Out of Stock Rate',
+                            'inventory_turnover' => 'Inventory Turnover',
+                        ])
+                        ->default(['out_of_stock_count', 'low_stock_count', 'out_of_stock_rate', 'inventory_turnover'])
+                        ->columns(2)
+                        ->visible(fn (Forms\Get $get) => in_array('inventory', \App\Enums\IntegrationType::tryFrom($get('integration_type'))?->metricCategories() ?? [])),
+
+                    // Email Marketing Metrics (Klaviyo)
+                    Forms\Components\CheckboxList::make('monitoring_config.enabled_metrics.email_marketing')
+                        ->label('Email Marketing Metrics')
+                        ->options([
+                            'open_rate'    => 'Open Rate',
+                            'click_rate'   => 'Click Rate',
+                            'conversions'  => 'Conversions',
+                            'revenue'      => 'Revenue',
+                            'unsubscribes' => 'Unsubscribes',
+                            'bounces'      => 'Bounces',
+                        ])
+                        ->default(['open_rate', 'click_rate', 'conversions', 'revenue', 'unsubscribes', 'bounces'])
+                        ->columns(3)
+                        ->visible(fn (Forms\Get $get) => in_array('email_marketing', \App\Enums\IntegrationType::tryFrom($get('integration_type'))?->metricCategories() ?? [])),
+
+                    // Comparison Period
+                    Forms\Components\Select::make('monitoring_config.comparison_period_days')
+                        ->label('Comparison Period')
+                        ->options([
+                            '7'  => '7 Days',
+                            '14' => '14 Days',
+                            '30' => '30 Days',
+                            '60' => '60 Days',
+                            '90' => '90 Days',
+                        ])
+                        ->default('7')
+                        ->helperText('How far back the engine looks when comparing current vs previous metrics for this integration.'),
+                ])
+                ->visible(fn (Forms\Get $get) => $get('integration_type') !== null)
+                ->collapsible(),
         ]);
     }
 
@@ -269,18 +364,44 @@ class IntegrationResource extends Resource
                         fn ($case) => [$case->value => $case->label()]
                     )),
             ])
+            ->headerActions([
+                Tables\Actions\Action::make('sync_all')
+                    ->label('Sync All Integrations')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('primary')
+                    ->requiresConfirmation()
+                    ->modalHeading('Sync All Integrations')
+                    ->modalDescription('This will queue a sync job for every active integration. Are you sure?')
+                    ->action(function (): void {
+                        $integrations = Integration::where('status', IntegrationStatus::Active->value)->get();
+                        $count = 0;
+
+                        foreach ($integrations as $integration) {
+                            // Sync enough data to cover current + prior comparison period
+                            $days = $integration->getComparisonPeriod() * 2;
+                            TriggerIntegrationSync::dispatch($integration, $days);
+                            $count++;
+                        }
+
+                        Notification::make()
+                            ->title('All syncs queued')
+                            ->body("{$count} integration sync(s) have been queued.")
+                            ->success()
+                            ->send();
+                    }),
+            ])
             ->actions([
                 Tables\Actions\Action::make('sync')
                     ->label('Sync Now')
                     ->icon('heroicon-o-arrow-path')
                     ->color('primary')
                     ->action(function (Integration $record): void {
-                        // First sync gets 30 days of historical data
-                        $days = $record->last_sync_at ? 1 : 30;
+                        // Sync enough data to cover current + prior comparison period
+                        $days = $record->getComparisonPeriod() * 2;
                         TriggerIntegrationSync::dispatch($record, $days);
                         Notification::make()
                             ->title('Sync queued')
-                            ->body("Sync for {$record->integration_type?->label()} queued" . ($days > 1 ? " (30-day backfill)" : "") . ".")
+                            ->body("Sync for {$record->integration_type?->label()} queued ({$days}-day window).")
                             ->success()
                             ->send();
                     }),

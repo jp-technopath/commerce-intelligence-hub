@@ -19,6 +19,7 @@ class Integration extends Model
         'status',
         'credentials_json',
         'settings_json',
+        'monitoring_config',
         'last_sync_at',
     ];
 
@@ -27,8 +28,84 @@ class Integration extends Model
         'status'            => IntegrationStatus::class,
         'credentials_json'  => 'encrypted:array',
         'settings_json'     => 'array',
+        'monitoring_config'  => 'array',
         'last_sync_at'      => 'datetime',
     ];
+
+    // ── All available metrics per category ────────────────────────────────
+
+    public const ALL_COMMERCE_METRICS = [
+        'revenue', 'orders', 'conversion_rate', 'aov', 'sessions', 'new_customers', 'return_rate',
+    ];
+
+    public const ALL_BEHAVIORAL_METRICS = [
+        'rage_clicks', 'dead_clicks', 'quick_backs', 'script_errors', 'error_clicks', 'friction_score',
+    ];
+
+    public const ALL_PERFORMANCE_METRICS = [
+        'lcp', 'inp', 'cls', 'ttfb', 'page_load_time', 'bounce_rate',
+    ];
+
+    public const ALL_INVENTORY_METRICS = [
+        'out_of_stock_count', 'low_stock_count', 'out_of_stock_rate', 'inventory_turnover',
+    ];
+
+    public const ALL_EMAIL_MARKETING_METRICS = [
+        'open_rate', 'click_rate', 'conversions', 'revenue', 'unsubscribes', 'bounces',
+    ];
+
+    // ── Monitoring config helpers ────────────────────────────────────────
+
+    /**
+     * Get the metric categories applicable to this integration type.
+     */
+    public function getApplicableMetricCategories(): array
+    {
+        return $this->integration_type?->metricCategories() ?? [];
+    }
+
+    /**
+     * Get enabled metrics for a category (e.g. 'commerce', 'behavioral').
+     * Returns all metrics when no config is set (backward compatible).
+     */
+    public function getMonitoredMetrics(string $type): array
+    {
+        // Only return metrics if this integration type supports the requested category
+        if (! in_array($type, $this->getApplicableMetricCategories())) {
+            return [];
+        }
+
+        $config = $this->monitoring_config['enabled_metrics'][$type] ?? null;
+
+        if ($config === null) {
+            return self::getAllMetricsForCategory($type);
+        }
+
+        return $config;
+    }
+
+    /**
+     * Get all available metrics for a category.
+     */
+    public static function getAllMetricsForCategory(string $type): array
+    {
+        return match ($type) {
+            'commerce'         => self::ALL_COMMERCE_METRICS,
+            'behavioral'       => self::ALL_BEHAVIORAL_METRICS,
+            'performance'      => self::ALL_PERFORMANCE_METRICS,
+            'inventory'        => self::ALL_INVENTORY_METRICS,
+            'email_marketing'  => self::ALL_EMAIL_MARKETING_METRICS,
+            default            => [],
+        };
+    }
+
+    /**
+     * Get comparison period in days. Default: 7.
+     */
+    public function getComparisonPeriod(): int
+    {
+        return (int) ($this->monitoring_config['comparison_period_days'] ?? 7);
+    }
 
     public function client(): BelongsTo
     {

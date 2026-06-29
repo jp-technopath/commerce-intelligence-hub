@@ -107,7 +107,7 @@
 
         <div style="display: flex; align-items: center; gap: 0.25rem; padding: 0.25rem; border-radius: 0.625rem; background: white; border: 1px solid rgba(148,163,184,0.15); box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
              class="dark:!bg-slate-800 dark:!border-slate-700">
-            @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days'] as $val => $lbl)
+            @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days', '60' => '60 Days', '90' => '90 Days'] as $val => $lbl)
                 <button
                     wire:click="$set('period', '{{ $val }}')"
                     style="padding: 0.375rem 0.875rem; font-size: 0.75rem; font-weight: 600; border-radius: 0.5rem; border: none; cursor: pointer; transition: all 0.2s;
@@ -122,26 +122,8 @@
         </div>
     </div>
 
-    {{-- ── Funnel Stage: Acquisition ──────────────────────────────────────── --}}
-    @php $acquisitionKpis = $this->getAcquisitionKpis(); @endphp
-    @if(count($acquisitionKpis) > 0)
-        <div style="margin-bottom: 2.5rem;">
-            <div class="funnel-header">
-                <div class="funnel-icon" style="background: rgba(59,130,246,0.1);">📊</div>
-                <div>
-                    <h3 style="font-size: 0.9375rem; font-weight: 800; margin: 0;" class="text-gray-900 dark:text-white">Acquisition</h3>
-                    <span style="font-size: 0.6875rem; font-weight: 500; color: #94a3b8;">Last {{ $period }} days vs prior {{ $period }} days</span>
-                </div>
-            </div>
-            <div class="kpi-grid">
-                @foreach($acquisitionKpis as $kpi)
-                    @include('filament.pages.partials.kpi-card', $kpi)
-                @endforeach
-            </div>
-        </div>
-    @endif
 
-    {{-- ── Funnel Stage: Conversion ───────────────────────────────────────── --}}
+    {{-- ── 1. Conversion ───────────────────────────────────────────────────── --}}
     @php $conversionKpis = $this->getConversionKpis(); @endphp
     @if(count($conversionKpis) > 0)
         <div style="margin-bottom: 2.5rem;">
@@ -156,6 +138,101 @@
                 @foreach($conversionKpis as $kpi)
                     @include('filament.pages.partials.kpi-card', $kpi)
                 @endforeach
+            </div>
+        </div>
+    @endif
+
+    {{-- ── Purchase Journey Funnel ─────────────────────────────────────────── --}}
+    @php $funnel = $this->getPurchaseFunnelData(); @endphp
+    @if(!empty($funnel['stages']))
+        <div style="margin-bottom: 2.5rem;">
+            <div class="funnel-header">
+                <div class="funnel-icon" style="background: rgba(99,102,241,0.1);">🔄</div>
+                <div>
+                    <h3 style="font-size: 0.9375rem; font-weight: 800; margin: 0;" class="text-gray-900 dark:text-white">Purchase Journey</h3>
+                    <span style="font-size: 0.6875rem; font-weight: 500; color: #94a3b8;">Ecommerce funnel — Last {{ $period }} days (GA4)</span>
+                </div>
+            </div>
+
+            {{-- Funnel visualization --}}
+            <div style="
+                background: white;
+                border: 1px solid #e2e8f0;
+                border-radius: 0.75rem;
+                padding: 1.5rem;
+                margin-top: 0.75rem;
+            " class="dark:bg-gray-800 dark:border-gray-700">
+                @php
+                    $stages = $funnel['stages'];
+                    $maxCount = max(array_column($stages, 'count'));
+                @endphp
+
+                @foreach($stages as $i => $stage)
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: {{ $i < count($stages) - 1 ? '0.25rem' : '0' }};">
+                        {{-- Label --}}
+                        <div style="min-width: 120px; text-align: right;">
+                            <div style="font-size: 0.8125rem; font-weight: 600;" class="text-gray-700 dark:text-gray-200">{{ $stage['label'] }}</div>
+                        </div>
+
+                        {{-- Bar --}}
+                        <div style="flex: 1; position: relative;">
+                            <div style="
+                                height: 36px;
+                                background: {{ $stage['color'] }};
+                                border-radius: 6px;
+                                width: {{ $maxCount > 0 ? round($stage['count'] / $maxCount * 100) : 0 }}%;
+                                min-width: 60px;
+                                display: flex;
+                                align-items: center;
+                                padding: 0 12px;
+                                transition: width 0.5s ease;
+                            ">
+                                <span style="font-size: 0.8125rem; font-weight: 700; color: white; white-space: nowrap;">
+                                    {{ number_format($stage['count']) }}
+                                </span>
+                            </div>
+                        </div>
+
+                        {{-- Rate from previous stage --}}
+                        <div style="min-width: 100px;">
+                            @if($i > 0)
+                                <div style="font-size: 0.75rem; font-weight: 600; color: #ef4444;">
+                                    ↓ {{ $stage['drop_off'] }}% drop-off
+                                </div>
+                            @else
+                                <div style="font-size: 0.75rem; font-weight: 500; color: #94a3b8;">100%</div>
+                            @endif
+                        </div>
+                    </div>
+
+                    {{-- Arrow between stages --}}
+                    @if($i < count($stages) - 1)
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.25rem;">
+                            <div style="min-width: 120px;"></div>
+                            <div style="padding-left: 8px;">
+                                <span style="font-size: 0.6875rem; color: #94a3b8;">▼ {{ $stage['pass_through'] }}% continue</span>
+                            </div>
+                            <div style="min-width: 100px;"></div>
+                        </div>
+                    @endif
+                @endforeach
+
+                {{-- Overall conversion summary --}}
+                <div style="
+                    margin-top: 1rem;
+                    padding-top: 1rem;
+                    border-top: 1px solid #e2e8f0;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                " class="dark:border-gray-600">
+                    <span style="font-size: 0.8125rem; font-weight: 500;" class="text-gray-500 dark:text-gray-400">
+                        Overall: View → Purchase
+                    </span>
+                    <span style="font-size: 0.9375rem; font-weight: 700;" class="text-gray-900 dark:text-white">
+                        {{ $funnel['overall_rate'] }}% conversion
+                    </span>
+                </div>
             </div>
         </div>
     @endif
@@ -179,7 +256,26 @@
         </div>
     @endif
 
-    {{-- ── Funnel Stage: UX & Friction ────────────────────────────────────── --}}
+    {{-- ── 4. Acquisition ──────────────────────────────────────────────────── --}}
+    @php $acquisitionKpis = $this->getAcquisitionKpis(); @endphp
+    @if(count($acquisitionKpis) > 0)
+        <div style="margin-bottom: 2.5rem;">
+            <div class="funnel-header">
+                <div class="funnel-icon" style="background: rgba(59,130,246,0.1);">📊</div>
+                <div>
+                    <h3 style="font-size: 0.9375rem; font-weight: 800; margin: 0;" class="text-gray-900 dark:text-white">Acquisition</h3>
+                    <span style="font-size: 0.6875rem; font-weight: 500; color: #94a3b8;">Last {{ $period }} days vs prior {{ $period }} days</span>
+                </div>
+            </div>
+            <div class="kpi-grid">
+                @foreach($acquisitionKpis as $kpi)
+                    @include('filament.pages.partials.kpi-card', $kpi)
+                @endforeach
+            </div>
+        </div>
+    @endif
+
+    {{-- ── 5. UX & Friction ────────────────────────────────────────────────── --}}
     @php $frictionKpis = $this->getFrictionKpis(); @endphp
     @if(count($frictionKpis) > 0)
         <div style="margin-bottom: 2.5rem;">
@@ -217,7 +313,26 @@
         </div>
     @endif
 
-    {{-- ── Funnel Stage: Inventory ─────────────────────────────────────────── --}}
+    {{-- ── 7. Email Marketing ──────────────────────────────────────────────── --}}
+    @php $emailKpis = $this->getEmailMarketingKpis(); @endphp
+    @if(count($emailKpis) > 0)
+        <div style="margin-bottom: 2.5rem;">
+            <div class="funnel-header">
+                <div class="funnel-icon" style="background: rgba(139,92,246,0.1);">📧</div>
+                <div>
+                    <h3 style="font-size: 0.9375rem; font-weight: 800; margin: 0;" class="text-gray-900 dark:text-white">Email Marketing</h3>
+                    <span style="font-size: 0.6875rem; font-weight: 500; color: #94a3b8;">Flows & campaigns from Klaviyo</span>
+                </div>
+            </div>
+            <div class="kpi-grid">
+                @foreach($emailKpis as $kpi)
+                    @include('filament.pages.partials.kpi-card', array_merge($kpi, ['invert' => $kpi['invert'] ?? false]))
+                @endforeach
+            </div>
+        </div>
+    @endif
+
+    {{-- ── 8. Inventory ────────────────────────────────────────────────────── --}}
     @php $inventoryKpis = $this->getInventoryKpis(); @endphp
     @if(count($inventoryKpis) > 0)
         <div style="margin-bottom: 2.5rem;">

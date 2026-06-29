@@ -46,4 +46,16 @@ enum IntegrationType: string
             self::Klaviyo       => 'success',
         };
     }
+
+    public function metricCategories(): array
+    {
+        return match ($this) {
+            self::Shopify       => ['commerce', 'inventory'],
+            self::AdobeCommerce => ['commerce', 'inventory'],
+            self::GA4           => ['commerce', 'performance'],
+            self::Clarity       => ['behavioral'],
+            self::NewRelic      => ['performance'],
+            self::Klaviyo       => ['email_marketing'],
+        };
+    }
 }
