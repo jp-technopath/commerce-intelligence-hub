@@ -10,11 +10,22 @@ use Illuminate\Support\Facades\Schema;
  * but a partial index is more semantically correct: only calendar-sourced
  * meetings (where all three identity fields are non-null) should be deduplicated.
  * Manual meetings (where these fields are null) are unaffected.
+ * 
+ * Note: MySQL does not support partial unique indexes with a WHERE clause.
+ * However, in MySQL, a standard UNIQUE constraint naturally allows multiple NULL 
+ * values across nullable columns. Therefore, on MySQL (used in Laravel Cloud), 
+ * we safely skip dropping and recreating this index.
  */
 return new class extends Migration
 {
     public function up(): void
     {
+        $driver = DB::getDriverName();
+
+        if ($driver === 'mysql') {
+            return;
+        }
+
         // Drop the existing regular unique constraint
         Schema::table('client_meetings', function ($table) {
             $table->dropUnique('client_meetings_scanner_calendar_event_unique');
@@ -32,6 +43,12 @@ return new class extends Migration
 
     public function down(): void
     {
+        $driver = DB::getDriverName();
+
+        if ($driver === 'mysql') {
+            return;
+        }
+
         // Drop the partial index
         DB::statement('DROP INDEX IF EXISTS client_meetings_scanner_calendar_event_unique');
 
