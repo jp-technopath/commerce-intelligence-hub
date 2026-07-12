@@ -261,25 +261,17 @@ class FindingResource extends Resource
                         ->markdown(),
                 ]),
 
-            Infolists\Components\Section::make('AI Analysis')
+            Infolists\Components\Section::make('AI Investigation Report')
+                ->icon('heroicon-o-sparkles')
+                ->iconColor('warning')
                 ->visible(fn (Finding $record) => $record->recommendations()->exists())
                 ->schema([
                     Infolists\Components\RepeatableEntry::make('recommendations')
                         ->hiddenLabel()
                         ->schema([
-                            Infolists\Components\TextEntry::make('ai_summary')
-                                ->label('Executive Summary')
-                                ->markdown()
-                                ->columnSpanFull(),
-
-                            Infolists\Components\TextEntry::make('recommendation_text')
-                                ->label('Recommended Actions')
-                                ->markdown()
-                                ->columnSpanFull(),
-
-                            Infolists\Components\TextEntry::make('confidence_reasoning')
-                                ->label('Confidence Reasoning')
-                                ->markdown()
+                            Infolists\Components\ViewEntry::make('formatted_report')
+                                ->hiddenLabel()
+                                ->view('filament.infolists.investigation-report')
                                 ->columnSpanFull(),
 
                             Infolists\Components\TextEntry::make('model_used')

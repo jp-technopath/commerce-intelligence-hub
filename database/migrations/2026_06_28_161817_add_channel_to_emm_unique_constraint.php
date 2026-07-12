@@ -10,10 +10,10 @@ return new class extends Migration
     public function up(): void
     {
         // Safely drop the old constraint if it still exists
-        // (it may have been dropped in a prior failed run)
         $indexExists = DB::select("
-            SHOW INDEX FROM `email_marketing_metrics`
-            WHERE Key_name = 'emm_unique_metric'
+            SELECT 1 FROM pg_indexes
+            WHERE tablename = 'email_marketing_metrics'
+              AND indexname = 'emm_unique_metric'
         ");
 
         if (! empty($indexExists)) {
@@ -22,18 +22,13 @@ return new class extends Migration
             });
         }
 
-        // Use raw SQL with prefix lengths to stay within MySQL's 3072-byte key limit
-        DB::statement('
-            ALTER TABLE `email_marketing_metrics`
-            ADD UNIQUE `emm_unique_metric` (
-                `client_id`,
-                `date`,
-                `source`(50),
-                `type`(50),
-                `channel`(30),
-                `campaign_name`(100)
-            )
-        ');
+        // Create the unique constraint with channel included
+        Schema::table('email_marketing_metrics', function (Blueprint $table) {
+            $table->unique(
+                ['client_id', 'date', 'source', 'type', 'channel', 'campaign_name'],
+                'emm_unique_metric'
+            );
+        });
     }
 
     public function down(): void

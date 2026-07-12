@@ -167,4 +167,9 @@ class Client extends Model
     {
         return $this->hasMany(EmailMarketingMetric::class);
     }
+
+    public function clientMeetings(): HasMany
+    {
+        return $this->hasMany(ClientMeeting::class);
+    }
 }

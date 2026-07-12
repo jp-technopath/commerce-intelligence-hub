@@ -7,6 +7,8 @@ use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -24,6 +26,9 @@ class User extends Authenticatable implements FilamentUser
         'name',
         'email',
         'password',
+        'google_id',
+        'avatar_url',
+        'is_admin',
     ];
 
     /**
@@ -45,7 +50,8 @@ class User extends Authenticatable implements FilamentUser
     {
         return [
             'email_verified_at' => 'datetime',
-            'password' => 'hashed',
+            'password'          => 'hashed',
+            'is_admin'          => 'boolean',
         ];
     }
 
@@ -55,5 +61,75 @@ class User extends Authenticatable implements FilamentUser
     public function canAccessPanel(Panel $panel): bool
     {
         return true;
+    }
+
+    // ── Meeting Agent Relationships ──────────────────────────────────────
+
+    public function ownedMeetings(): HasMany
+    {
+        return $this->hasMany(ClientMeeting::class, 'internal_owner_id');
+    }
+
+    public function connectedAccounts(): HasMany
+    {
+        return $this->hasMany(ConnectedAccount::class);
+    }
+
+    // ── Google Workspace Helpers ─────────────────────────────────────────
+
+    public function googleWorkspaceAccount(): ?ConnectedAccount
+    {
+        return $this->connectedAccounts()
+            ->active()
+            ->provider('google_workspace')
+            ->first();
+    }
+
+    public function hasGoogleWorkspace(): bool
+    {
+        return $this->googleWorkspaceAccount() !== null;
+    }
+
+    public function hasMeetingAgentScope(string $scope): bool
+    {
+        return $this->googleWorkspaceAccount()?->hasScope($scope) ?? false;
+    }
+
+    // ── Roles and Permissions Helpers ─────────────────────────────────────
+
+    /**
+     * The roles that belong to the user.
+     */
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class);
+    }
+
+    /**
+     * Check if the user has a specific role.
+     */
+    public function hasRole(string|array $role): bool
+    {
+        if (is_array($role)) {
+            return $this->roles()->whereIn('name', $role)->exists();
+        }
+
+        return $this->roles()->where('name', $role)->exists();
+    }
+
+    /**
+     * Check if the user has a specific permission (via roles).
+     */
+    public function hasPermission(string $permission): bool
+    {
+        if ($this->is_admin) {
+            return true;
+        }
+
+        return $this->roles()
+            ->whereHas('permissions', function ($query) use ($permission) {
+                $query->where('name', $permission);
+            })
+            ->exists();
     }
 }

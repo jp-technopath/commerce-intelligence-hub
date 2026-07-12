@@ -31,7 +31,34 @@ class ListFindings extends ListRecords
                         ->helperText('Select a client to run change detection and AI analysis for.'),
                     Forms\Components\Toggle::make('include_ai')
                         ->label('Generate AI recommendations for new findings')
+                        ->live()
                         ->default(true),
+                    Forms\Components\Select::make('model')
+                        ->label('AI Model')
+                        ->options(function () {
+                            $models = config('meeting_agent.ai.openrouter_models', []);
+                            $options = [];
+                            foreach ($models as $model) {
+                                $cleanModel = ltrim($model, '~');
+                                $label = $model;
+                                if (str_starts_with($model, '~')) {
+                                    $label = $cleanModel . ' (Recommended)';
+                                }
+                                $options[$model] = $label;
+                            }
+                            return $options;
+                        })
+                        ->default(function () {
+                            $models = config('meeting_agent.ai.openrouter_models', []);
+                            foreach ($models as $model) {
+                                if (str_starts_with($model, '~')) {
+                                    return $model;
+                                }
+                            }
+                            return config('meeting_agent.ai.openrouter_model', 'openai/gpt-4o');
+                        })
+                        ->visible(fn (Forms\Get $get) => $get('include_ai') && config('meeting_agent.ai.provider') === 'openrouter')
+                        ->required(fn (Forms\Get $get) => $get('include_ai') && config('meeting_agent.ai.provider') === 'openrouter'),
                 ])
                 ->modalHeading('Run Intelligence Analysis')
                 ->modalDescription('Analyzes recent metric changes and generates findings with severity and recommendations.')
@@ -50,7 +77,7 @@ class ListFindings extends ListRecords
                             ->whereDoesntHave('recommendations')
                             ->where('detected_at', '>=', now()->subHours(1))
                             ->get()
-                            ->each(fn ($finding) => $analyst->analyse($finding));
+                            ->each(fn ($finding) => $analyst->analyse($finding, $data['model'] ?? null));
                     }
 
                     if ($newFindings > 0) {
@@ -72,35 +99,26 @@ class ListFindings extends ListRecords
                 ->label('Refresh All Clients')
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
-                ->requiresConfirmation()
                 ->modalHeading('Refresh Findings for All Clients')
-                ->modalDescription('This will run change detection across all active clients. This may take a few minutes.')
+                ->modalDescription('This will run change detection across all active clients to find signals and anomalies in the synced data. This may take a few minutes.')
+                ->modalSubmitActionLabel('Refresh All')
                 ->action(function (): void {
                     $clients = Client::where('status', 'active')->get();
                     $engine  = new ChangeDetectionEngine();
-                    $analyst = new AIAnalyst();
                     $total   = 0;
 
                     foreach ($clients as $client) {
                         try {
                             $newFindings = $engine->run($client);
                             $total += $newFindings;
-
-                            if ($newFindings > 0) {
-                                $client->findings()
-                                    ->whereDoesntHave('recommendations')
-                                    ->where('detected_at', '>=', now()->subHours(1))
-                                    ->get()
-                                    ->each(fn ($f) => $analyst->analyse($f));
-                            }
                         } catch (\Exception $e) {
                             // Continue with other clients
                         }
                     }
 
                     Notification::make()
-                        ->title('Analysis Complete')
-                        ->body("{$total} new finding(s) across {$clients->count()} clients.")
+                        ->title('Refresh Complete')
+                        ->body("{$total} new signal finding(s) detected across {$clients->count()} clients.")
                         ->success()
                         ->send();
                 }),

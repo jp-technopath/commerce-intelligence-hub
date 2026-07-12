@@ -6,7 +6,6 @@ use App\Enums\FindingStatus;
 use App\Filament\Resources\FindingResource;
 use App\Models\Finding;
 use App\Models\InvestigationNote;
-use App\Services\Intelligence\AIAnalyst;
 use App\Services\Intelligence\AIInvestigator;
 use Filament\Actions;
 use Filament\Forms;
@@ -128,15 +127,55 @@ class ViewFinding extends ViewRecord
                 ->icon('heroicon-o-sparkles')
                 ->color('warning')
                 ->visible(fn () => ! $this->record->recommendations()->exists())
-                ->action(function (): void {
-                    $result = (new AIAnalyst())->analyse($this->record);
-                    if ($result) {
-                        Notification::make()->title('AI analysis generated')->success()->send();
+                ->form(fn () => [
+                    Forms\Components\Select::make('model')
+                        ->label('AI Model')
+                        ->options(function () {
+                            $models = config('meeting_agent.ai.openrouter_models', []);
+                            $options = [];
+                            foreach ($models as $model) {
+                                $cleanModel = ltrim($model, '~');
+                                $label = $model;
+                                if (str_starts_with($model, '~')) {
+                                    $label = $cleanModel . ' (Recommended)';
+                                }
+                                $options[$model] = $label;
+                            }
+                            return $options;
+                        })
+                        ->default(function () {
+                            $models = config('meeting_agent.ai.openrouter_models', []);
+                            foreach ($models as $model) {
+                                if (str_starts_with($model, '~')) {
+                                    return $model;
+                                }
+                            }
+                            return config('meeting_agent.ai.openrouter_model', 'openai/gpt-4o');
+                        })
+                        ->visible(fn () => config('meeting_agent.ai.provider') === 'openrouter')
+                        ->required(fn () => config('meeting_agent.ai.provider') === 'openrouter'),
+                ])
+                ->modalHeading('🧠 Generate AI Analysis')
+                ->modalDescription('This will gather live data from all connected integrations (GA4, Adobe Commerce, Clarity, New Relic, Klaviyo), cross-reference the data, and generate a comprehensive AI analysis. This may take 30-60 seconds.')
+                ->modalSubmitActionLabel('Start Analysis')
+                ->action(function (array $data): void {
+                    \App\Jobs\Intelligence\GenerateAIAnalysis::dispatchSync(
+                        finding: $this->record,
+                        model: $data['model'] ?? null
+                    );
+
+                    if ($this->record->fresh()->recommendations()->exists()) {
+                        Notification::make()
+                            ->title('AI analysis generated')
+                            ->body('Live data from all integrations was cross-referenced to produce the analysis. Check the AI Recommendations section below.')
+                            ->success()
+                            ->duration(8000)
+                            ->send();
                         $this->redirect(FindingResource::getUrl('view', ['record' => $this->record]));
                     } else {
                         Notification::make()
                             ->title('AI analysis failed')
-                            ->body('Check that GEMINI_API_KEY is configured in .env')
+                            ->body('Check that your AI provider API key is configured correctly and integrations are connected.')
                             ->warning()
                             ->send();
                     }

@@ -33,3 +33,8 @@ Schedule::job(new RunNightlyAnalysis())
     ->name('nightly-intelligence-analysis')
     ->withoutOverlapping(60);
 
+// Customer meeting calendar scan — checks connected Google Calendars for upcoming meetings
+Schedule::command('customer-meetings:scan-upcoming')
+    ->hourly()
+    ->name('customer-meetings:scan-upcoming')
+    ->withoutOverlapping(30);

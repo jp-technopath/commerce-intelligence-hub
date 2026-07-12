@@ -19,6 +19,18 @@ Route::middleware(['web', 'auth'])->group(function () {
         ->name('google.oauth.revoke');
 });
 
+// Google Sign-in (unauthenticated users)
+Route::get('/google/login', [GoogleOAuthController::class, 'redirectLogin'])
+    ->name('google.login');
+
+// Google Workspace connect (authenticated users only)
+Route::middleware(['web', 'auth'])->group(function () {
+    Route::get('/google/workspace/connect', [GoogleOAuthController::class, 'redirectWorkspace'])
+        ->name('google.workspace.connect');
+    Route::get('/google/workspace/revoke', [GoogleOAuthController::class, 'revokeWorkspace'])
+        ->name('google.workspace.revoke');
+});
+
 // Google OAuth callback — must be outside auth middleware (Google redirects here unauthenticated)
 Route::get('/google/oauth/callback', [GoogleOAuthController::class, 'callback'])
     ->name('google.oauth.callback');

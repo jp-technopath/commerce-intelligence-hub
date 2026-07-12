@@ -17,11 +17,16 @@ use Illuminate\Support\Facades\Log;
  * performance metrics (response time, throughput, errors, Apdex)
  * and store them as PerformanceMetric records.
  *
+ * Also supports NerdGraph/NRQL for querying application logs
+ * (error, warning, critical) to support AI-driven investigations.
+ *
  * API docs: https://docs.newrelic.com/docs/apis/rest-api-v2/
+ * NerdGraph docs: https://docs.newrelic.com/docs/apis/nerdgraph/
  */
 class NewRelicConnector
 {
-    private const BASE_URL = 'https://api.newrelic.com/v2';
+    private const BASE_URL      = 'https://api.newrelic.com/v2';
+    private const NERDGRAPH_URL = 'https://api.newrelic.com/graphql';
 
     private Integration $integration;
     private array $credentials;
@@ -195,8 +200,201 @@ class NewRelicConnector
         }
     }
 
+    /**
+     * Fetch error/warning logs via NerdGraph NRQL for the investigation window.
+     *
+     * Returns structured log entries with timestamp, level, message, and error class.
+     * Limited to 100 most recent error/warning/critical logs.
+     *
+     * @return array{logs: array, error_summary: array, total_errors: int}
+     */
+    public function fetchLogs(Carbon $from, Carbon $to, int $limit = 100): array
+    {
+        $apiKey = $this->credentials['api_key'] ?? null;
+        if (! $apiKey) {
+            return ['logs' => [], 'error_summary' => [], 'total_errors' => 0];
+        }
+
+        try {
+            $accountId = $this->resolveAccountId($apiKey);
+            if (! $accountId) {
+                Log::warning('NewRelicConnector::fetchLogs — could not resolve account ID', [
+                    'integration_id' => $this->integration->id,
+                ]);
+                return ['logs' => [], 'error_summary' => [], 'total_errors' => 0];
+            }
+
+            $fromTs = $from->startOfDay()->timestamp;
+            $toTs   = $to->endOfDay()->timestamp;
+
+            // Query 1: Recent error/warning log entries
+            $logsNrql = "SELECT timestamp, level, message, error.class, error.message, entity.name "
+                . "FROM Log "
+                . "WHERE level IN ('ERROR', 'WARN', 'CRITICAL', 'FATAL', 'error', 'warn', 'critical', 'fatal') "
+                . "SINCE {$fromTs} UNTIL {$toTs} "
+                . "LIMIT {$limit}";
+
+            $logResults = $this->nrqlQuery($apiKey, $accountId, $logsNrql);
+
+            // Query 2: Error count summary by level
+            $summaryNrql = "SELECT count(*) FROM Log "
+                . "WHERE level IN ('ERROR', 'WARN', 'CRITICAL', 'FATAL', 'error', 'warn', 'critical', 'fatal') "
+                . "FACET level "
+                . "SINCE {$fromTs} UNTIL {$toTs}";
+
+            $summaryResults = $this->nrqlQuery($apiKey, $accountId, $summaryNrql);
+
+            // Query 3: Error count by error class (top 10)
+            $classNrql = "SELECT count(*) FROM Log "
+                . "WHERE level IN ('ERROR', 'CRITICAL', 'FATAL', 'error', 'critical', 'fatal') "
+                . "FACET error.class "
+                . "SINCE {$fromTs} UNTIL {$toTs} "
+                . "LIMIT 10";
+
+            $classResults = $this->nrqlQuery($apiKey, $accountId, $classNrql);
+
+            // Parse logs
+            $logs = collect($logResults)
+                ->map(fn ($row) => array_filter([
+                    'timestamp'    => isset($row['timestamp']) ? Carbon::createFromTimestampMs($row['timestamp'])->format('Y-m-d H:i:s') : null,
+                    'level'        => $row['level'] ?? null,
+                    'message'      => $this->truncateLogMessage($row['message'] ?? $row['error.message'] ?? ''),
+                    'error_class'  => $row['error.class'] ?? null,
+                    'entity'       => $row['entity.name'] ?? null,
+                ], fn ($v) => $v !== null && $v !== ''))
+                ->values()
+                ->toArray();
+
+            // Parse error summary
+            $errorSummary = collect($summaryResults)
+                ->map(fn ($row) => [
+                    'level' => $row['level'] ?? $row['facet'] ?? 'unknown',
+                    'count' => $row['count'] ?? 0,
+                ])
+                ->toArray();
+
+            // Parse error classes
+            $errorClasses = collect($classResults)
+                ->map(fn ($row) => [
+                    'error_class' => $row['error.class'] ?? $row['facet'] ?? 'unknown',
+                    'count'       => $row['count'] ?? 0,
+                ])
+                ->toArray();
+
+            $totalErrors = collect($errorSummary)->sum('count');
+
+            Log::info('NewRelicConnector::fetchLogs success', [
+                'integration_id' => $this->integration->id,
+                'logs_found'     => count($logs),
+                'total_errors'   => $totalErrors,
+            ]);
+
+            return [
+                'logs'           => $logs,
+                'error_summary'  => $errorSummary,
+                'error_classes'  => $errorClasses,
+                'total_errors'   => $totalErrors,
+            ];
+
+        } catch (\Exception $e) {
+            Log::warning('NewRelicConnector::fetchLogs failed', [
+                'integration_id' => $this->integration->id,
+                'error'          => $this->sanitiseError($e->getMessage(), $apiKey),
+            ]);
+            return ['logs' => [], 'error_summary' => [], 'total_errors' => 0];
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
-    // Private: API call
+    // Private: NerdGraph / NRQL
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Execute an NRQL query via NerdGraph.
+     */
+    private function nrqlQuery(string $apiKey, int $accountId, string $nrql): array
+    {
+        $query = <<<'GRAPHQL'
+{
+  actor {
+    nrql(accounts: %d, query: "%s") {
+      results
+    }
+  }
+}
+GRAPHQL;
+
+        $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'API-Key'      => $apiKey,
+            ])
+            ->timeout(30)
+            ->post(self::NERDGRAPH_URL, [
+                'query' => sprintf($query, $accountId, addslashes($nrql)),
+            ]);
+
+        $response->throw();
+
+        return $response->json('data.actor.nrql.results') ?? [];
+    }
+
+    /**
+     * Discover the New Relic account ID via NerdGraph.
+     * Caches the result in credentials_json to avoid repeated lookups.
+     */
+    private function resolveAccountId(string $apiKey): ?int
+    {
+        // Check if already stored
+        if (! empty($this->credentials['account_id'])) {
+            return (int) $this->credentials['account_id'];
+        }
+
+        $query = '{ actor { accounts { id name } } }';
+
+        $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'API-Key'      => $apiKey,
+            ])
+            ->timeout(15)
+            ->post(self::NERDGRAPH_URL, ['query' => $query]);
+
+        $accounts = $response->json('data.actor.accounts') ?? [];
+
+        if (empty($accounts)) {
+            return null;
+        }
+
+        $accountId = (int) $accounts[0]['id'];
+
+        // Cache the account ID in credentials for future calls
+        $creds = $this->integration->credentials_json ?? [];
+        $creds['account_id'] = $accountId;
+        $this->integration->update(['credentials_json' => $creds]);
+        $this->credentials['account_id'] = $accountId;
+
+        Log::info('NewRelicConnector: discovered and cached account ID', [
+            'integration_id' => $this->integration->id,
+            'account_id'     => $accountId,
+            'account_name'   => $accounts[0]['name'] ?? 'unknown',
+        ]);
+
+        return $accountId;
+    }
+
+    /**
+     * Truncate log messages to avoid sending huge strings to the AI.
+     */
+    private function truncateLogMessage(string $message, int $maxLength = 300): string
+    {
+        $message = trim($message);
+        if (strlen($message) <= $maxLength) {
+            return $message;
+        }
+        return substr($message, 0, $maxLength) . '…';
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private: REST API v2 call
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
