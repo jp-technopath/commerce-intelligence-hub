@@ -57,11 +57,11 @@ class ListClientMeetings extends ListRecords
                         return;
                     }
 
-                    ScanUpcomingClientMeetings::dispatch($user);
+                    ScanUpcomingClientMeetings::dispatchSync();
 
                     Notification::make()
-                        ->title('Calendar scan started')
-                        ->body('Scanning your calendar for upcoming customer meetings. Refresh the page in a moment to see results.')
+                        ->title('Calendar Scan Complete')
+                        ->body('Successfully scanned and synced upcoming customer meetings from your Google Calendar.')
                         ->success()
                         ->send();
                 })
