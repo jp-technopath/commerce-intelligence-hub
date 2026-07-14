@@ -47,6 +47,10 @@ class ViewClientMeeting extends ViewRecord
     {
         return $infolist
             ->schema([
+                ViewEntry::make('polling_indicator')
+                    ->view('filament.resources.client-meeting-resource.entries.polling-indicator')
+                    ->columnSpanFull(),
+
                 Tabs::make('MeetingTabs')
                     ->tabs([
                         $this->meetingInfoTab(),
@@ -160,7 +164,8 @@ class ViewClientMeeting extends ViewRecord
     {
         return Tabs\Tab::make('Pre-Meeting Prep')
             ->icon('heroicon-o-document-text')
-            ->badge(fn ($record) => $record->prep ? '✓' : null)
+            ->badge(fn ($record) => $record->prep ? ($record->prep->ai_error ? '⚠' : '✓') : null)
+            ->badgeColor(fn ($record) => $record->prep?->ai_error ? 'danger' : 'success')
             ->schema(function () {
                 /** @var \App\Models\ClientMeeting $record */
                 $record = $this->getRecord();
@@ -174,6 +179,44 @@ class ViewClientMeeting extends ViewRecord
                                     ->default('No meeting prep has been generated yet. Use the "Generate Prep" button in the header.')
                                     ->columnSpanFull(),
                             ]),
+                    ];
+                }
+
+                if ($record->prep->ai_error) {
+                    return [
+                        Section::make('AI Generation Failed')
+                            ->description('An error occurred during meeting prep generation.')
+                            ->icon('heroicon-o-exclamation-triangle')
+                            ->schema([
+                                TextEntry::make('prep.ai_error')
+                                    ->label('Error Message')
+                                    ->color('danger')
+                                    ->weight('bold')
+                                    ->columnSpanFull(),
+                                TextEntry::make('prep_error_instructions')
+                                    ->label('')
+                                    ->default('Please try generating the prep again by clicking the "Generate Prep" button in the page header. If the issue persists, please check your AI provider configuration or select a different model in the "Generate Prep" modal.')
+                                    ->columnSpanFull(),
+                            ]),
+
+                        Section::make('AI Generation Info')
+                            ->icon('heroicon-o-cpu-chip')
+                            ->schema([
+                                Grid::make(3)
+                                    ->schema([
+                                        TextEntry::make('prep.ai_provider')
+                                            ->label('Provider'),
+
+                                        TextEntry::make('prep.ai_model')
+                                            ->label('Model'),
+
+                                        TextEntry::make('prep.generated_at')
+                                            ->label('Failed At')
+                                            ->dateTime('M j, Y g:i A'),
+                                    ]),
+                            ])
+                            ->collapsible()
+                            ->collapsed(),
                     ];
                 }
 
@@ -286,7 +329,8 @@ class ViewClientMeeting extends ViewRecord
     {
         return Tabs\Tab::make('Follow-Up')
             ->icon('heroicon-o-chat-bubble-left-right')
-            ->badge(fn ($record) => $record->followUp ? '✓' : null)
+            ->badge(fn ($record) => $record->followUp ? ($record->followUp->ai_error ? '⚠' : '✓') : null)
+            ->badgeColor(fn ($record) => $record->followUp?->ai_error ? 'danger' : 'success')
             ->schema(function () {
                 /** @var \App\Models\ClientMeeting $record */
                 $record = $this->getRecord();
@@ -300,6 +344,44 @@ class ViewClientMeeting extends ViewRecord
                                     ->default('No follow-up has been generated yet. Add meeting notes in the "Meeting Notes" tab, then use the "Generate Follow-Up" button.')
                                     ->columnSpanFull(),
                             ]),
+                    ];
+                }
+
+                if ($record->followUp->ai_error) {
+                    return [
+                        Section::make('AI Generation Failed')
+                            ->description('An error occurred during follow-up generation.')
+                            ->icon('heroicon-o-exclamation-triangle')
+                            ->schema([
+                                TextEntry::make('followUp.ai_error')
+                                    ->label('Error Message')
+                                    ->color('danger')
+                                    ->weight('bold')
+                                    ->columnSpanFull(),
+                                TextEntry::make('followup_error_instructions')
+                                    ->label('')
+                                    ->default('Please try generating the follow-up again by clicking the "Generate Follow-Up" button in the page header. If the issue persists, please check your AI provider configuration or select a different model in the "Generate Follow-Up" modal.')
+                                    ->columnSpanFull(),
+                            ]),
+
+                        Section::make('AI Generation Info')
+                            ->icon('heroicon-o-cpu-chip')
+                            ->schema([
+                                Grid::make(3)
+                                    ->schema([
+                                        TextEntry::make('followUp.ai_provider')
+                                            ->label('Provider'),
+
+                                        TextEntry::make('followUp.ai_model')
+                                            ->label('Model'),
+
+                                        TextEntry::make('followUp.generated_at')
+                                            ->label('Failed At')
+                                            ->dateTime('M j, Y g:i A'),
+                                    ]),
+                            ])
+                            ->collapsible()
+                            ->collapsed(),
                     ];
                 }
 
