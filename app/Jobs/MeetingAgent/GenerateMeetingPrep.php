@@ -108,6 +108,9 @@ class GenerateMeetingPrep implements ShouldQueue
                 ]
             );
 
+            // Reset meeting status back to Detected so it's not stuck in PrepPending
+            $meeting->update(['status' => MeetingStatus::Detected]);
+
             throw $e;
         }
     }

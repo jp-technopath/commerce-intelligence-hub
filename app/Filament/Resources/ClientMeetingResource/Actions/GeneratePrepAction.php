@@ -70,6 +70,14 @@ class GeneratePrepAction extends Action
             ->action(function (array $data) {
                 $record = $this->getRecord();
 
+                // Clear previous AI error so that the UI can start fresh and enable polling
+                if ($record->prep) {
+                    $record->prep->update(['ai_error' => null]);
+                }
+
+                // Set meeting status to PrepPending to initiate polling and show the loading indicator
+                $record->update(['status' => \App\Enums\MeetingStatus::PrepPending]);
+
                 GenerateMeetingPrep::dispatch(
                     clientMeetingId: $record->getKey(),
                     jiraProjectKey: $data['jira_project_key'],

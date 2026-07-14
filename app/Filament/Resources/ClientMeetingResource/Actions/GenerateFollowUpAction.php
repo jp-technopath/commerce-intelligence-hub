@@ -123,6 +123,9 @@ class GenerateFollowUpAction extends Action
                 $transcript = $data['transcript'] ?? '';
 
                 if ($followUp) {
+                    // Clear previous AI error so that the UI can start fresh and hide old errors
+                    $followUp->update(['ai_error' => null]);
+
                     if (filled($followUp->raw_notes)) {
                         $notes = $followUp->raw_notes;
                     }
