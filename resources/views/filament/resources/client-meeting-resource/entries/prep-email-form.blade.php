@@ -36,6 +36,7 @@
 @endphp
 
 <div
+    wire:key="prep-email-form-{{ $prep?->id ?? 'none' }}-{{ $prep?->updated_at?->timestamp ?? 'none' }}"
     class="space-y-4"
     x-data="{
         recipient: @js($recipientEmail),

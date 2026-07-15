@@ -41,6 +41,13 @@ class ViewClientMeeting extends ViewRecord
         ];
     }
 
+    public function hydrate(): void
+    {
+        if ($this->record) {
+            $this->record->refresh();
+        }
+    }
+
     // ── Infolist ────────────────────────────────────────────────────────
 
     public function infolist(Infolist $infolist): Infolist
@@ -406,12 +413,13 @@ class ViewClientMeeting extends ViewRecord
                         ->schema([
                             TextEntry::make('followUp.decisions')
                                 ->label('')
+                                ->getStateUsing(fn ($record) => is_array($record->followUp?->decisions) ? $record->followUp->decisions : array_filter(array_map('trim', explode("\n", $record->followUp?->decisions ?? ''))))
                                 ->listWithLineBreaks()
                                 ->bulleted()
                                 ->columnSpanFull(),
                         ])
                         ->collapsible()
-                        ->visible(fn () => ! empty($record->followUp->decisions)),
+                        ->visible(fn () => filled($record->followUp?->decisions)),
 
                     // Open Questions
                     Section::make('Open Questions')
@@ -419,12 +427,13 @@ class ViewClientMeeting extends ViewRecord
                         ->schema([
                             TextEntry::make('followUp.open_questions')
                                 ->label('')
+                                ->getStateUsing(fn ($record) => is_array($record->followUp?->open_questions) ? $record->followUp->open_questions : array_filter(array_map('trim', explode("\n", $record->followUp?->open_questions ?? ''))))
                                 ->listWithLineBreaks()
                                 ->bulleted()
                                 ->columnSpanFull(),
                         ])
                         ->collapsible()
-                        ->visible(fn () => ! empty($record->followUp->open_questions)),
+                        ->visible(fn () => filled($record->followUp?->open_questions)),
 
                     // Follow-Up Email — Inline Composer
                     Section::make('Follow-Up Email')

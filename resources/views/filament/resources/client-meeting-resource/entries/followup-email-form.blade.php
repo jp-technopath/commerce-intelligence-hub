@@ -36,6 +36,7 @@
 @endphp
 
 <div
+    wire:key="followup-email-form-{{ $followUp?->id ?? 'none' }}-{{ $followUp?->updated_at?->timestamp ?? 'none' }}"
     class="space-y-4"
     x-data="{
         recipient: @js($recipientEmail),
