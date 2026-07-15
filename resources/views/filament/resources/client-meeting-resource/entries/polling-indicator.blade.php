@@ -1,5 +1,5 @@
 @php
-    $record = $this->getRecord()->refresh();
+    $record = $getRecord()->refresh();
     $hasError = $record->prep?->ai_error !== null;
     $shouldPoll = $record->status === \App\Enums\MeetingStatus::PrepPending && ! $hasError;
 @endphp
