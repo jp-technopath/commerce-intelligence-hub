@@ -45,6 +45,9 @@ class ViewClientMeeting extends ViewRecord
 
     public function infolist(Infolist $infolist): Infolist
     {
+        // Freshly reload the record and its relationships from the database on every render/polling request
+        $this->getRecord()->refresh();
+
         return $infolist
             ->schema([
                 ViewEntry::make('polling_indicator')
