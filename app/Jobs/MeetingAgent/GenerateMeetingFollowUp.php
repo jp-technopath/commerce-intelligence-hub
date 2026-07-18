@@ -93,6 +93,9 @@ class GenerateMeetingFollowUp implements ShouldQueue
                 ]
             );
 
+            // Reset meeting status to PrepGenerated so it doesn't get stuck in FollowUpPending
+            $meeting->update(['status' => MeetingStatus::PrepGenerated]);
+
             throw $e;
         }
     }

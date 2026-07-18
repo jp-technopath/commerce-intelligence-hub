@@ -15,18 +15,33 @@ use RuntimeException;
  */
 class JiraService
 {
-    private string $baseUrl;
-    private string $email;
-    private string $token;
+    private ?string $baseUrl = null;
+    private ?string $email = null;
+    private ?string $token = null;
 
-    public function __construct(?string $baseUrl = null, ?string $email = null, ?string $token = null)
-    {
-        $this->baseUrl = rtrim($baseUrl ?? config('meeting_agent.jira.base_url', ''), '/');
-        $this->email = $email ?? config('meeting_agent.jira.email', '');
-        $this->token = $token ?? config('meeting_agent.jira.api_token', '');
+    private ?string $accessToken = null;
+    private ?string $cloudId = null;
+    private bool $isOAuth = false;
 
-        if (empty($this->baseUrl)) {
-            throw new RuntimeException('Jira is not configured. Set JIRA_BASE_URL in your environment.');
+    public function __construct(
+        ?string $baseUrl = null,
+        ?string $email = null,
+        ?string $token = null,
+        ?string $accessToken = null,
+        ?string $cloudId = null
+    ) {
+        if ($accessToken && $cloudId) {
+            $this->accessToken = $accessToken;
+            $this->cloudId = $cloudId;
+            $this->isOAuth = true;
+        } else {
+            $this->baseUrl = rtrim($baseUrl ?? config('meeting_agent.jira.base_url', ''), '/');
+            $this->email = $email ?? config('meeting_agent.jira.email', '');
+            $this->token = $token ?? config('meeting_agent.jira.api_token', '');
+
+            if (empty($this->baseUrl)) {
+                throw new RuntimeException('Jira is not configured. Set JIRA_BASE_URL in your environment.');
+            }
         }
     }
 
@@ -45,9 +60,19 @@ class JiraService
             $body['nextPageToken'] = $nextPageToken;
         }
 
-        $response = Http::timeout(30)
-            ->withBasicAuth($this->email, $this->token)
-            ->post($this->baseUrl . '/rest/api/3/search/jql', $body);
+        $url = $this->isOAuth
+            ? "https://api.atlassian.com/ex/jira/{$this->cloudId}/rest/api/3/search/jql"
+            : $this->baseUrl . '/rest/api/3/search/jql';
+
+        $request = Http::timeout(30);
+
+        if ($this->isOAuth) {
+            $request = $request->withToken($this->accessToken);
+        } else {
+            $request = $request->withBasicAuth($this->email, $this->token);
+        }
+
+        $response = $request->post($url, $body);
 
         if (! $response->successful()) {
             Log::error('JiraService: search failed', [
@@ -176,5 +201,99 @@ class JiraService
         $groups['snapshot_at'] = now()->toISOString();
 
         return $groups;
+    }
+
+    /**
+     * Search for a Jira user by query (name or email) and return their accountId if found.
+     */
+    public function findUser(string $query): ?string
+    {
+        $url = $this->isOAuth
+            ? "https://api.atlassian.com/ex/jira/{$this->cloudId}/rest/api/3/user/search"
+            : $this->baseUrl . '/rest/api/3/user/search';
+
+        $request = Http::timeout(30);
+
+        if ($this->isOAuth) {
+            $request = $request->withToken($this->accessToken);
+        } else {
+            $request = $request->withBasicAuth($this->email, $this->token);
+        }
+
+        $response = $request->get($url, ['query' => $query]);
+
+        if ($response->successful()) {
+            $users = $response->json();
+            if (!empty($users) && isset($users[0]['accountId'])) {
+                return $users[0]['accountId'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Create a new issue in Jira.
+     */
+    public function createIssue(
+        string $projectKey,
+        string $summary,
+        ?string $description = null,
+        ?string $assigneeAccountId = null,
+        string $issueType = 'Task'
+    ): array {
+        $url = $this->isOAuth
+            ? "https://api.atlassian.com/ex/jira/{$this->cloudId}/rest/api/3/issue"
+            : $this->baseUrl . '/rest/api/3/issue';
+
+        $fields = [
+            'project'   => ['key' => $projectKey],
+            'summary'   => $summary,
+            'issuetype' => ['name' => $issueType],
+        ];
+
+        if (!empty($description)) {
+            $fields['description'] = [
+                'type'    => 'doc',
+                'version' => 1,
+                'content' => [
+                    [
+                        'type'    => 'paragraph',
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => $description,
+                            ],
+                        ],
+                    ],
+                ],
+            ];
+        }
+
+        if ($assigneeAccountId) {
+            $fields['assignee'] = ['accountId' => $assigneeAccountId];
+        }
+
+        $body = ['fields' => $fields];
+
+        $request = Http::timeout(30);
+
+        if ($this->isOAuth) {
+            $request = $request->withToken($this->accessToken);
+        } else {
+            $request = $request->withBasicAuth($this->email, $this->token);
+        }
+
+        $response = $request->post($url, $body);
+
+        if (! $response->successful()) {
+            Log::error('JiraService: create issue failed', [
+                'status' => $response->status(),
+                'body'   => substr($response->body(), 0, 500),
+            ]);
+            throw new RuntimeException('Jira API create issue failed with status ' . $response->status());
+        }
+
+        return $response->json();
     }
 }

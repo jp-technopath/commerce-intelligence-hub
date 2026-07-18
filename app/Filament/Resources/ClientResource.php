@@ -45,6 +45,12 @@ class ClientResource extends Resource
                                         ->maxLength(255)
                                         ->placeholder('Shopify, Adobe Commerce, etc.'),
 
+                                    Forms\Components\TextInput::make('jira_project_key')
+                                        ->label('Jira Project Key')
+                                        ->placeholder('e.g. TECH')
+                                        ->maxLength(50)
+                                        ->nullable(),
+
                                     Forms\Components\Select::make('status')
                                         ->options(collect(ClientStatus::cases())->mapWithKeys(
                                             fn ($case) => [$case->value => $case->label()]

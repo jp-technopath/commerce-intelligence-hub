@@ -95,6 +95,21 @@ class User extends Authenticatable implements FilamentUser
         return $this->googleWorkspaceAccount()?->hasScope($scope) ?? false;
     }
 
+    // ── Jira Integration Helpers ─────────────────────────────────────────
+
+    public function jiraAccount(): ?ConnectedAccount
+    {
+        return $this->connectedAccounts()
+            ->active()
+            ->provider('jira')
+            ->first();
+    }
+
+    public function hasJira(): bool
+    {
+        return $this->jiraAccount() !== null;
+    }
+
     // ── Roles and Permissions Helpers ─────────────────────────────────────
 
     /**

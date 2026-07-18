@@ -59,6 +59,12 @@ class AdminPanelProvider extends PanelProvider
             ->authMiddleware([
                 Authenticate::class,
             ])
+            ->userMenuItems([
+                \Filament\Navigation\UserMenuItem::make()
+                    ->label('My Profile')
+                    ->url(fn (): string => \App\Filament\Pages\MyProfile::getUrl())
+                    ->icon('heroicon-o-user'),
+            ])
             ->navigationGroups([
                 'Dashboard',
                 'Clients',

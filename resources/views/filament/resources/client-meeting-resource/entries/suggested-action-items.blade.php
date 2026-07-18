@@ -40,7 +40,10 @@
                 <button
                     type="button"
                     wire:click="acceptSuggestedItem({{ $index }})"
-                    class="inline-flex items-center gap-x-1 rounded-lg bg-success-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-success-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-success-600"
+                    style="background-color: #2563eb; color: #ffffff; transition: background-color 0.2s;"
+                    onmouseover="this.style.backgroundColor='#1d4ed8'"
+                    onmouseout="this.style.backgroundColor='#2563eb'"
+                    class="inline-flex items-center gap-x-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                 >
                     <x-heroicon-m-check class="h-4 w-4" />
                     Accept

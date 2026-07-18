@@ -39,7 +39,16 @@ class ClientMeetingResource extends Resource
                         ->relationship('client', 'name')
                         ->searchable()
                         ->preload()
-                        ->nullable(),
+                        ->nullable()
+                        ->live()
+                        ->afterStateUpdated(function (Forms\Get $get, Forms\Set $set, ?string $state) {
+                            if ($state) {
+                                $client = \App\Models\Client::find($state);
+                                if ($client && ! empty($client->jira_project_key)) {
+                                    $set('project_key', $client->jira_project_key);
+                                }
+                            }
+                        }),
 
                     Forms\Components\TextInput::make('project_key')
                         ->label('Jira Project Key')

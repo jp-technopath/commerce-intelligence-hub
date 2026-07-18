@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\ClientMeetingResource\Actions;
 
+use App\Filament\Resources\ClientMeetingResource;
 use App\Jobs\MeetingAgent\GenerateMeetingPrep;
 use Filament\Actions\Action;
 use Filament\Forms;
@@ -91,6 +92,8 @@ class GeneratePrepAction extends Action
                     ->body('This page will update when complete. Processing may take a minute.')
                     ->success()
                     ->send();
+
+                $this->redirect(ClientMeetingResource::getUrl('view', ['record' => $record, 'tab' => 'pre-meeting-prep-tab']));
             })
             ->disabled(function () {
                 $provider = config('meeting_agent.ai.provider');

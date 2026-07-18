@@ -40,7 +40,7 @@ class GenerateMeetingPrep implements ShouldQueue
 
     public function handle(): void
     {
-        $meeting = ClientMeeting::with('client')->findOrFail($this->clientMeetingId);
+        $meeting = ClientMeeting::with(['client', 'owner'])->findOrFail($this->clientMeetingId);
 
         Log::info('GenerateMeetingPrep: starting', [
             'meeting_id'   => $this->clientMeetingId,
@@ -49,8 +49,30 @@ class GenerateMeetingPrep implements ShouldQueue
         ]);
 
         try {
-            // Fetch Jira snapshot
-            $jiraService = app(JiraService::class);
+            // Fetch Jira snapshot using user OAuth context if available
+            $meetingOwner = $meeting->owner;
+            $jiraAccount = $meetingOwner?->jiraAccount();
+
+            if ($jiraAccount) {
+                try {
+                    $accessToken = $jiraAccount->refreshJiraTokenIfNeeded();
+                    $cloudId = $jiraAccount->getCredential('cloud_id');
+
+                    $jiraService = new JiraService(
+                        accessToken: $accessToken,
+                        cloudId: $cloudId
+                    );
+                } catch (\Exception $tokenEx) {
+                    Log::warning('GenerateMeetingPrep: OAuth token refresh failed, falling back to global Jira credentials.', [
+                        'user_id' => $meetingOwner?->id,
+                        'error'   => $tokenEx->getMessage(),
+                    ]);
+                    $jiraService = app(JiraService::class);
+                }
+            } else {
+                $jiraService = app(JiraService::class);
+            }
+
             $since = $this->sinceDateString ? Carbon::parse($this->sinceDateString) : null;
 
             if ($this->customJql) {

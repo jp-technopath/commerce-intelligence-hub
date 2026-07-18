@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\GoogleOAuthController;
+use App\Http\Controllers\JiraOAuthController;
 use Illuminate\Support\Facades\Route;
 
 // Redirect root to the Filament admin panel
@@ -34,3 +35,15 @@ Route::middleware(['web', 'auth'])->group(function () {
 // Google OAuth callback — must be outside auth middleware (Google redirects here unauthenticated)
 Route::get('/google/oauth/callback', [GoogleOAuthController::class, 'callback'])
     ->name('google.oauth.callback');
+
+// Jira Workspace connect (authenticated users only)
+Route::middleware(['web', 'auth'])->group(function () {
+    Route::get('/jira/oauth/connect', [JiraOAuthController::class, 'redirect'])
+        ->name('jira.oauth.connect');
+    Route::get('/jira/oauth/revoke', [JiraOAuthController::class, 'revoke'])
+        ->name('jira.oauth.revoke');
+});
+
+// Jira OAuth callback — must be outside auth middleware
+Route::get('/jira/oauth/callback', [JiraOAuthController::class, 'callback'])
+    ->name('jira.oauth.callback');

@@ -16,6 +16,7 @@ class Client extends Model
         'name',
         'industry',
         'platform_type',
+        'jira_project_key',
         'status',
         'notes',
         'business_context',

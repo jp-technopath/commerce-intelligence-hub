@@ -9,6 +9,7 @@ use App\Filament\Resources\ClientMeetingResource\Actions\CreateGmailDraftAction;
 use App\Filament\Resources\ClientMeetingResource\Actions\GenerateFollowUpAction;
 use App\Filament\Resources\ClientMeetingResource\Actions\GeneratePrepAction;
 use App\Models\MeetingActionItem;
+use App\Services\MeetingAgent\JiraService;
 use App\Services\MeetingAgent\GoogleDriveService;
 use Filament\Actions;
 use Filament\Forms;
@@ -54,6 +55,7 @@ class ViewClientMeeting extends ViewRecord
     {
         // Freshly reload the record and its relationships from the database on every render/polling request
         $this->getRecord()->refresh();
+        $this->getRecord()->load(['prep', 'followUp']);
 
         return $infolist
             ->schema([
@@ -589,6 +591,101 @@ class ViewClientMeeting extends ViewRecord
             ->send();
     }
 
+    public function createJiraTaskForActionItem(int $itemId): void
+    {
+        $item = MeetingActionItem::findOrFail($itemId);
+
+        try {
+            /** @var \App\Models\User $user */
+            $user = auth()->user();
+            $jiraAccount = $user?->jiraAccount();
+
+            if ($jiraAccount) {
+                $accessToken = $jiraAccount->refreshJiraTokenIfNeeded();
+                $cloudId = $jiraAccount->getCredential('cloud_id');
+
+                $jiraService = new JiraService(
+                    accessToken: $accessToken,
+                    cloudId: $cloudId
+                );
+            } else {
+                $jiraService = app(JiraService::class);
+            }
+
+            $meeting = $item->meeting;
+            $projectKey = $meeting->project_key ?: ($meeting->client?->jira_project_key ?: 'KAN');
+
+            $assigneeAccountId = null;
+            if ($item->owner_name) {
+                $assigneeAccountId = $jiraService->findUser($item->owner_name);
+            }
+
+            $description = $item->description;
+
+            // Generate an enriched description using AI based on meeting follow-up notes and transcript
+            $followUp = $item->followUp ?: $meeting->followUp;
+            if ($followUp && (!empty($followUp->raw_notes) || !empty($followUp->transcript_text) || !empty($followUp->summary))) {
+                try {
+                    /** @var \App\Services\MeetingAgent\AiProviderService $aiProvider */
+                    $aiProvider = app(\App\Services\MeetingAgent\AiProviderService::class);
+                    
+                    $systemPrompt = "You are a professional Business Analyst and Project Manager. Your task is to generate a comprehensive, structured Jira issue description for a task named \"{$item->title}\".\n" .
+                        "You must enrich the description by extracting all relevant details, contexts, technical considerations, and actionable steps specifically relating to this action item from the provided meeting notes, transcript, and summary.\n" .
+                        "Provide clear headings (e.g., Overview, Context & Details, Action Steps, Acceptance Criteria) in Jira/Atlassian compatible Markdown/text formatting.\n" .
+                        "Keep your output detailed, professional, and directly focused on this specific action item. Avoid irrelevant generic information.";
+
+                    $context = "Action Item Title: " . $item->title . "\n" .
+                        "Action Item Original Description: " . ($item->description ?: 'None') . "\n\n" .
+                        "Meeting Title: " . $meeting->title . "\n" .
+                        "--- MEETING SUMMARY ---\n" . ($followUp->summary ?? 'None') . "\n\n" .
+                        "--- MEETING RAW NOTES ---\n" . ($followUp->raw_notes ?? 'None') . "\n\n" .
+                        "--- MEETING TRANSCRIPT ---\n" . (\Illuminate\Support\Str::limit($followUp->transcript_text ?? '', 8000) ?: 'None');
+
+                    $enrichedDescription = $aiProvider->complete($systemPrompt, $context);
+                    if (!empty(trim($enrichedDescription))) {
+                        $description = $enrichedDescription;
+                    }
+                } catch (\Exception $aiException) {
+                    // Fall back to original description if AI fails
+                    \Illuminate\Support\Facades\Log::warning('Enriching Jira description via AI failed: ' . $aiException->getMessage());
+                }
+            }
+
+            $response = $jiraService->createIssue(
+                projectKey: $projectKey,
+                summary: $item->title,
+                description: $description,
+                assigneeAccountId: $assigneeAccountId
+            );
+
+            $issueKey = $response['key'] ?? null;
+            if ($issueKey) {
+                $item->update([
+                    'jira_issue_key' => $issueKey,
+                ]);
+            }
+
+            Notification::make()
+                ->title('Jira Task Created')
+                ->body("Task {$issueKey} was successfully created in project {$projectKey}.")
+                ->success()
+                ->send();
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Failed to create Jira task for action item', [
+                'action_item_id' => $itemId,
+                'error'          => $e->getMessage(),
+            ]);
+
+            Notification::make()
+                ->title('Jira Task Creation Failed')
+                ->body('Error: ' . $e->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+        }
+    }
+
     /**
      * Pull meeting transcript and notes from Google Drive.
      * Searches for Google Meet transcript docs matching the meeting title.
@@ -775,6 +872,116 @@ class ViewClientMeeting extends ViewRecord
         } catch (\RuntimeException $e) {
             Notification::make()
                 ->title('Draft creation failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    }
+
+    /**
+     * Send the prep email immediately.
+     */
+    public function sendPrepEmail(string $to, string $subject, string $body, array $cc = []): void
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $record = $this->getRecord();
+
+        $gmailScope = config('meeting_agent.google.scopes.gmail_compose');
+        if (! $user->hasMeetingAgentScope($gmailScope)) {
+            Notification::make()
+                ->title('Missing Gmail permission')
+                ->body('Your Google Workspace account does not have the Gmail compose permission.')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $gmailService = new \App\Services\MeetingAgent\GmailSenderService($user);
+
+            $gmailService->sendEmail(
+                to: $to,
+                subject: $subject,
+                body: $body,
+                cc: $cc,
+            );
+
+            if ($record->prep) {
+                $record->prep->update([
+                    'email_sent_at' => now(),
+                    'edited_status_email_subject' => $subject,
+                    'edited_status_email_body' => $body,
+                    'email_to' => $to,
+                    'email_cc' => $cc,
+                ]);
+            }
+
+            Notification::make()
+                ->title('Email sent successfully')
+                ->body('The prep status report has been sent directly to recipients.')
+                ->success()
+                ->send();
+
+        } catch (\RuntimeException $e) {
+            Notification::make()
+                ->title('Email dispatch failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    }
+
+    /**
+     * Send the follow-up email immediately.
+     */
+    public function sendFollowUpEmail(string $to, string $subject, string $body, array $cc = []): void
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $record = $this->getRecord();
+
+        $gmailScope = config('meeting_agent.google.scopes.gmail_compose');
+        if (! $user->hasMeetingAgentScope($gmailScope)) {
+            Notification::make()
+                ->title('Missing Gmail permission')
+                ->body('Your Google Workspace account does not have the Gmail compose permission.')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $gmailService = new \App\Services\MeetingAgent\GmailSenderService($user);
+
+            $gmailService->sendEmail(
+                to: $to,
+                subject: $subject,
+                body: $body,
+                cc: $cc,
+            );
+
+            if ($record->followUp) {
+                $record->followUp->update([
+                    'email_sent_at' => now(),
+                    'edited_followup_email_subject' => $subject,
+                    'edited_followup_email_body' => $body,
+                    'email_to' => $to,
+                    'email_cc' => $cc,
+                ]);
+            }
+
+            Notification::make()
+                ->title('Email sent successfully')
+                ->body('The follow-up email has been sent directly to recipients.')
+                ->success()
+                ->send();
+
+        } catch (\RuntimeException $e) {
+            Notification::make()
+                ->title('Email dispatch failed')
                 ->body($e->getMessage())
                 ->danger()
                 ->send();

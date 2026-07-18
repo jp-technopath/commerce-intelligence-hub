@@ -257,4 +257,100 @@ class JiraServiceTest extends TestCase
 
         $service->searchIssues('project = TEST');
     }
+
+    // ── OAuth 2.0 Integration Tests ────────────────────────────────────
+
+    public function test_jira_service_instantiates_with_oauth_credentials(): void
+    {
+        // No global config loaded, base_url is null
+        config(['meeting_agent.jira.base_url' => null]);
+
+        // This should not throw since OAuth parameters are supplied
+        $service = new JiraService(
+            accessToken: 'oauth-token-123',
+            cloudId: 'cloud-id-456'
+        );
+
+        $this->assertInstanceOf(JiraService::class, $service);
+    }
+
+    public function test_search_issues_sends_correct_bearer_token_and_oauth_url(): void
+    {
+        Http::fake([
+            'api.atlassian.com/*' => Http::response([
+                'issues' => [],
+                'total'  => 0,
+            ], 200),
+        ]);
+
+        $service = new JiraService(
+            accessToken: 'oauth-token-123',
+            cloudId: 'cloud-id-456'
+        );
+
+        $service->searchIssues('project = TEST');
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'https://api.atlassian.com/ex/jira/cloud-id-456/rest/api/3/search/jql')
+                && $request->hasHeader('Authorization', 'Bearer oauth-token-123')
+                && $request['jql'] === 'project = TEST';
+        });
+    }
+
+    public function test_find_user_returns_account_id(): void
+    {
+        $this->fakeJiraConfig();
+
+        Http::fake([
+            'test-jira.atlassian.net/*' => Http::response([
+                [
+                    'accountId'   => 'acc-id-111',
+                    'displayName' => 'Nick Barretta',
+                ]
+            ], 200),
+        ]);
+
+        $service = new JiraService();
+        $accountId = $service->findUser('Nick Barretta');
+
+        $this->assertSame('acc-id-111', $accountId);
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), '/rest/api/3/user/search')
+                && str_contains($request->url(), 'Nick')
+                && str_contains($request->url(), 'Barretta');
+        });
+    }
+
+    public function test_create_issue_submits_correct_payload(): void
+    {
+        $this->fakeJiraConfig();
+
+        Http::fake([
+            'test-jira.atlassian.net/*' => Http::response([
+                'id'   => '10050',
+                'key'  => 'TEST-123',
+                'self' => 'https://test-jira.atlassian.net/rest/api/3/issue/10050'
+            ], 201),
+        ]);
+
+        $service = new JiraService();
+        $response = $service->createIssue(
+            projectKey: 'TEST',
+            summary: 'My test task',
+            description: 'This is a description',
+            assigneeAccountId: 'acc-id-111'
+        );
+
+        $this->assertSame('TEST-123', $response['key']);
+
+        Http::assertSent(function ($request) {
+            $data = json_decode($request->body(), true);
+            return str_contains($request->url(), '/rest/api/3/issue')
+                && ($data['fields']['project']['key'] ?? null) === 'TEST'
+                && ($data['fields']['summary'] ?? null) === 'My test task'
+                && ($data['fields']['assignee']['accountId'] ?? null) === 'acc-id-111'
+                && ($data['fields']['description']['content'][0]['content'][0]['text'] ?? null) === 'This is a description';
+        });
+    }
 }

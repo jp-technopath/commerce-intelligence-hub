@@ -44,9 +44,12 @@ return [
     |
     */
     'jira' => [
-        'base_url'  => env('JIRA_BASE_URL'),
-        'email'     => env('JIRA_EMAIL'),
-        'api_token' => env('JIRA_API_TOKEN'),
+        'base_url'      => env('JIRA_BASE_URL'),
+        'email'         => env('JIRA_EMAIL'),
+        'api_token'     => env('JIRA_API_TOKEN'),
+        'client_id'     => env('JIRA_CLIENT_ID'),
+        'client_secret' => env('JIRA_CLIENT_SECRET'),
+        'redirect_uri'  => env('JIRA_REDIRECT_URI'),
         'status_mappings' => [
             'completed'            => ['Done', 'Closed', 'Resolved', 'Complete', 'Ready For Invoicing'],
             'in_progress'          => ['In Progress', 'Development', 'In Dev', 'IN PROGRESS', 'Ready For Dev', 'Rework'],

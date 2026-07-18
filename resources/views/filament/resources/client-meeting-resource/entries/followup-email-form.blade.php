@@ -44,9 +44,10 @@
         ccList: @js($ccEmails),
         subject: @js($subject),
         creatingDraft: false,
+        sendingEmail: false,
         hasDraft: @js($hasDraft),
 
-        get isBusy() { return this.creatingDraft; },
+        get isBusy() { return this.creatingDraft || this.sendingEmail; },
         get canSubmit() { return this.recipient && this.subject && !this.isBusy; },
 
         addCc() {
@@ -94,6 +95,20 @@
                 console.error(e);
             }
             this.creatingDraft = false;
+        },
+
+        async sendEmail() {
+            if (!confirm('Are you sure you want to send this follow-up email directly to ' + this.recipient + '?')) {
+                return;
+            }
+            this.sendingEmail = true;
+            const bodyHtml = this.$refs.followUpEditor.innerHTML;
+            try {
+                await $wire.sendFollowUpEmail(this.recipient, this.subject, bodyHtml, this.ccList);
+            } catch (e) {
+                console.error(e);
+            }
+            this.sendingEmail = false;
         }
     }"
 >
@@ -211,6 +226,27 @@
                     </svg>
                 </template>
                 <span x-text="creatingDraft ? 'Saving Draft...' : (hasDraft ? 'Update Draft' : 'Save as Draft')"></span>
+            </button>
+
+            {{-- Send Email --}}
+            <button
+                type="button"
+                @click="sendEmail()"
+                :disabled="!canSubmit"
+                class="inline-flex items-center gap-x-2 rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-primary-500 dark:hover:bg-primary-400"
+            >
+                <template x-if="sendingEmail">
+                    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </template>
+                <template x-if="!sendingEmail">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                    </svg>
+                </template>
+                <span x-text="sendingEmail ? 'Sending Email...' : 'Send Email'"></span>
             </button>
         @else
             <p class="text-sm text-danger-600 dark:text-danger-400">

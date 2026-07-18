@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\ClientMeetingResource\Actions;
 
+use App\Filament\Resources\ClientMeetingResource;
 use App\Jobs\MeetingAgent\GenerateMeetingFollowUp;
 use Filament\Actions\Action;
 use Filament\Forms;
@@ -134,6 +135,9 @@ class GenerateFollowUpAction extends Action
                     }
                 }
 
+                // Set meeting status to FollowUpPending to initiate polling and show the loading indicator
+                $record->update(['status' => \App\Enums\MeetingStatus::FollowUpPending]);
+
                 GenerateMeetingFollowUp::dispatch(
                     clientMeetingId: $record->getKey(),
                     notes: $notes ?: '',
@@ -146,6 +150,8 @@ class GenerateFollowUpAction extends Action
                     ->body('This page will update when complete. Processing may take a minute.')
                     ->success()
                     ->send();
+
+                $this->redirect(ClientMeetingResource::getUrl('view', ['record' => $record, 'tab' => 'follow-up-tab']));
             })
             ->disabled(function () {
                 $provider = config('meeting_agent.ai.provider');

@@ -73,24 +73,99 @@ class GoogleCalendarService
      */
     public function isLikelyClientMeeting(Event $event): bool
     {
-        $companyDomains = config('meeting_agent.calendar.company_domains', []);
-        $excludePatterns = config('meeting_agent.calendar.exclude_patterns', []);
-        $includeHashtag = config('meeting_agent.calendar.include_hashtag', '#client');
+        $settings = isset($this->account) ? ($this->account->settings_json ?? []) : [];
+
+        $scanMode = $settings['scan_mode'] ?? 'auto';
+        
+        $includeKeywords = $settings['include_keywords'] ?? null;
+        if ($includeKeywords === null) {
+            $includeKeywords = ['#client', '#customer', '#customer-meeting'];
+            $configHashtag = config('meeting_agent.calendar.include_hashtag');
+            if ($configHashtag && ! in_array(strtolower($configHashtag), array_map('strtolower', $includeKeywords), true)) {
+                $includeKeywords[] = $configHashtag;
+            }
+        }
+
+        $excludeKeywords = $settings['exclude_keywords'] ?? [];
+        $skipInternal = $settings['skip_internal'] ?? false;
+        $skipWithoutExternal = $settings['skip_without_external'] ?? false;
 
         $title = $event->getSummary() ?? '';
         $description = $event->getDescription() ?? '';
         $titleAndDesc = $title . ' ' . $description;
 
-        // Check for explicit include hashtags
-        $includeHashtags = ['#client', '#customer', '#customer-meeting'];
-        if ($includeHashtag && ! in_array(strtolower($includeHashtag), $includeHashtags, true)) {
-            $includeHashtags[] = $includeHashtag;
-        }
+        $companyDomains = config('meeting_agent.calendar.company_domains', []);
 
-        foreach ($includeHashtags as $hashtag) {
+        // 1. Explicit inclusion hashtags take absolute highest priority (override exclusions and attendee skips)
+        foreach ($includeKeywords as $hashtag) {
+            if (empty($hashtag)) {
+                continue;
+            }
             if (stripos($titleAndDesc, $hashtag) !== false) {
                 return true;
             }
+        }
+
+        // 2. Check exclusion keywords/regex
+        if (! empty($excludeKeywords)) {
+            foreach ($excludeKeywords as $kw) {
+                if (empty($kw)) {
+                    continue;
+                }
+                // Support regex if formatted like /pattern/i, otherwise use literal case-insensitive match
+                if (str_starts_with($kw, '/') && preg_match('/\/[a-zA-Z]*$/', $kw)) {
+                    if (@preg_match($kw, $title)) {
+                        return false;
+                    }
+                } else {
+                    if (stripos($title, $kw) !== false) {
+                        return false;
+                    }
+                }
+            }
+        } else {
+            // Fallback to static exclusion patterns from config if no custom keywords are saved
+            $excludePatterns = config('meeting_agent.calendar.exclude_patterns', []);
+            foreach ($excludePatterns as $pattern) {
+                if (preg_match($pattern, $title)) {
+                    return false;
+                }
+            }
+        }
+
+        // Parse attendees to check internal/external status
+        $attendees = $event->getAttendees() ?? [];
+        $hasExternalAttendee = false;
+        $hasOnlyInternal = true;
+
+        foreach ($attendees as $attendee) {
+            $email = $attendee->getEmail() ?? '';
+            $domain = substr(strrchr($email, '@'), 1);
+
+            if ($domain) {
+                $isInternal = in_array(strtolower($domain), array_map('strtolower', $companyDomains), true);
+                if (! $isInternal) {
+                    $hasExternalAttendee = true;
+                    $hasOnlyInternal = false;
+                }
+            }
+        }
+
+        // 3. Skip meetings without external attendees (if option is enabled)
+        if ($skipWithoutExternal && ! $hasExternalAttendee) {
+            return false;
+        }
+
+        // 4. Skip internal-only meetings (if option is enabled)
+        if ($skipInternal && ! empty($attendees) && $hasOnlyInternal) {
+            return false;
+        }
+
+        // 5. Scanning mode logic
+        if ($scanMode === 'hashtag') {
+            // Must contain at least one inclusion keyword / hashtag
+            // (We already checked hashtags in Step 1, but if we got here, none matched)
+            return false;
         }
 
         // Check for known client names in title/description
@@ -101,28 +176,12 @@ class GoogleCalendarService
             }
         }
 
-        // Check exclusion patterns
-        foreach ($excludePatterns as $pattern) {
-            if (preg_match($pattern, $title)) {
-                return false;
-            }
+        // If has external attendees, scan it!
+        if ($hasExternalAttendee) {
+            return true;
         }
 
-        // Check for external attendees (not in company domains)
-        $attendees = $event->getAttendees() ?? [];
-        $hasExternalAttendee = false;
-
-        foreach ($attendees as $attendee) {
-            $email = $attendee->getEmail() ?? '';
-            $domain = substr(strrchr($email, '@'), 1);
-
-            if ($domain && ! in_array(strtolower($domain), array_map('strtolower', $companyDomains), true)) {
-                $hasExternalAttendee = true;
-                break;
-            }
-        }
-
-        // By default, if the meeting has survived the exclusion patterns, sync it automatically!
+        // By default, if there are no external attendees and no keywords matched, return true unless skip_without_external is enabled (which we handled above)
         return true;
     }
 
@@ -230,6 +289,19 @@ class GoogleCalendarService
         $endDateTime = $event->getEnd()?->getDateTime() ?? $event->getEnd()?->getDate();
         $timezone = $event->getStart()?->getTimeZone() ?? config('app.timezone', 'UTC');
 
+        $existingMeeting = ClientMeeting::where('scanned_by_user_id', $this->user->id)
+            ->where('google_calendar_id', 'primary')
+            ->where('google_event_id', $event->getId())
+            ->first();
+
+        $projectKey = $existingMeeting?->project_key;
+        if (empty($projectKey) && $clientId) {
+            $clientModel = Client::find($clientId);
+            if ($clientModel && ! empty($clientModel->jira_project_key)) {
+                $projectKey = $clientModel->jira_project_key;
+            }
+        }
+
         $meeting = ClientMeeting::updateOrCreate(
             [
                 'scanned_by_user_id' => $this->user->id,
@@ -243,6 +315,7 @@ class GoogleCalendarService
                 'meeting_end_at'     => $endDateTime ? Carbon::parse($endDateTime) : null,
                 'timezone'           => $timezone,
                 'client_id'          => $clientId,
+                'project_key'        => $projectKey,
                 'internal_owner_id'  => $this->user->id,
                 'external_attendees' => $externalAttendees,
                 'internal_attendees' => $internalAttendees,

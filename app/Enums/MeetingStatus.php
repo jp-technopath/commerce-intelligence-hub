@@ -10,6 +10,7 @@ enum MeetingStatus: string
     case PrepGenerated     = 'prep_generated';
     case DraftCreated      = 'draft_created';
     case Completed         = 'completed';
+    case FollowUpPending   = 'followup_pending';
     case FollowUpGenerated = 'followup_generated';
     case Canceled          = 'canceled';
 
@@ -22,6 +23,7 @@ enum MeetingStatus: string
             self::PrepGenerated     => 'Prep Generated',
             self::DraftCreated      => 'Draft Created',
             self::Completed         => 'Completed',
+            self::FollowUpPending   => 'Follow-Up Pending',
             self::FollowUpGenerated => 'Follow-Up Generated',
             self::Canceled          => 'Canceled',
         };
@@ -36,6 +38,7 @@ enum MeetingStatus: string
             self::PrepGenerated     => 'primary',
             self::DraftCreated      => 'success',
             self::Completed         => 'success',
+            self::FollowUpPending   => 'gray',
             self::FollowUpGenerated => 'primary',
             self::Canceled          => 'danger',
         };
@@ -50,6 +53,7 @@ enum MeetingStatus: string
             self::PrepGenerated     => 'heroicon-o-document-check',
             self::DraftCreated      => 'heroicon-o-envelope',
             self::Completed         => 'heroicon-o-check-circle',
+            self::FollowUpPending   => 'heroicon-o-clock',
             self::FollowUpGenerated => 'heroicon-o-chat-bubble-left-right',
             self::Canceled          => 'heroicon-o-x-circle',
         };
