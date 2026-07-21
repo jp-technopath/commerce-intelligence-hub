@@ -97,7 +97,9 @@
                         </p>
                         <a
                             href="{{ $ws['revoke_url'] }}"
-                            class="mt-3 inline-flex items-center gap-x-2 rounded-lg bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                            style="display: inline-flex; align-items: center; gap: 0.5rem; border-radius: 0.5rem; background-color: #dc2626; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; color: white; text-decoration: none; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.2s;"
+                            onmouseover="this.style.backgroundColor='#b91c1c'"
+                            onmouseout="this.style.backgroundColor='#dc2626'"
                         >
                             Disconnect
                         </a>

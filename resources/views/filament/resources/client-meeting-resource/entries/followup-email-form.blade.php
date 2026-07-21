@@ -212,7 +212,10 @@
                 type="button"
                 @click="createDraft()"
                 :disabled="!canSubmit"
-                class="inline-flex items-center gap-x-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                style="background-color: #374151; color: #ffffff; border: none; transition: background-color 0.2s;"
+                onmouseover="this.style.backgroundColor='#1f2937'"
+                onmouseout="this.style.backgroundColor='#374151'"
+                class="inline-flex items-center gap-x-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 <template x-if="creatingDraft">
                     <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">

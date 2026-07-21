@@ -51,7 +51,10 @@
                 <button
                     type="button"
                     wire:click="dismissSuggestedItem({{ $index }})"
-                    class="inline-flex items-center gap-x-1 rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-gray-300 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:ring-gray-600 dark:hover:bg-gray-600"
+                    style="background-color: #374151; color: #ffffff; border: none; transition: background-color 0.2s;"
+                    onmouseover="this.style.backgroundColor='#1f2937'"
+                    onmouseout="this.style.backgroundColor='#374151'"
+                    class="inline-flex items-center gap-x-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
                 >
                     <x-heroicon-m-x-mark class="h-4 w-4" />
                     Dismiss
