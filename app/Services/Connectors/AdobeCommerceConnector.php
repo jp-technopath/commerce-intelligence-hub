@@ -327,11 +327,11 @@ class AdobeCommerceConnector
         $creds = $this->integration->credentials_json ?? [];
 
         if (! $this->hasRequiredCredentials($creds)) {
-            return ['success' => false, 'message' => 'Missing base_url, admin_username, or admin_password.'];
+            return ['success' => false, 'message' => 'Missing Store Base URL, or credentials (admin username/password or Integration Access Token).'];
         }
 
         try {
-            $token   = $this->getAdminToken($creds);
+            $token   = $this->getAdminToken($creds, forceRefresh: true);
             $baseUrl = rtrim($creds['base_url'], '/');
 
             $from = now()->subDays(1)->startOfDay()->toIso8601String();
@@ -355,6 +355,14 @@ class AdobeCommerceConnector
 
     private function getAdminToken(array $creds, bool $forceRefresh = false): string
     {
+        // 1. If an explicit Integration Access Token / Bearer Token is provided, use it directly
+        if (! empty($creds['access_token'])) {
+            return trim($creds['access_token']);
+        }
+        if (! empty($creds['bearer_token'])) {
+            return trim($creds['bearer_token']);
+        }
+
         $cacheKey = 'adobe_token:' . $this->integration->id;
 
         if ($forceRefresh) {
@@ -362,35 +370,50 @@ class AdobeCommerceConnector
         }
 
         return Cache::remember($cacheKey, 3600, function () use ($creds) {
-            $baseUrl  = rtrim($creds['base_url'], '/');
-            $endpoint = $baseUrl . '/rest/V1/integration/admin/token';
+            $baseUrl   = rtrim($creds['base_url'], '/');
+            $endpoints = [
+                $baseUrl . '/rest/V1/integration/admin/token',
+                $baseUrl . '/rest/all/V1/integration/admin/token',
+                $baseUrl . '/rest/default/V1/integration/admin/token',
+            ];
 
-            $response = Http::timeout(30)
-                ->withHeaders([
-                    'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Content-Type' => 'application/json',
-                    'Accept'       => 'application/json',
-                ])
-                ->post($endpoint, [
-                    'username' => $creds['admin_username'],
-                    'password' => $creds['admin_password'],
-                ]);
+            $lastError = null;
 
-            if (! $response->successful()) {
-                $status = $response->status();
-                if ($status === 403 || $status === 401) {
-                    throw new \RuntimeException("Adobe Commerce authentication failed (HTTP {$status}). Check admin credentials.");
+            foreach ($endpoints as $endpoint) {
+                try {
+                    $response = Http::timeout(30)
+                        ->withHeaders([
+                            'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Content-Type' => 'application/json',
+                            'Accept'       => 'application/json',
+                        ])
+                        ->post($endpoint, [
+                            'username' => $creds['admin_username'] ?? '',
+                            'password' => $creds['admin_password'] ?? '',
+                        ]);
+
+                    if ($response->successful()) {
+                        $token = trim($response->body(), " \t\n\r\0\x0B\"");
+                        if (! empty($token)) {
+                            return $token;
+                        }
+                    }
+
+                    $status  = $response->status();
+                    $jsonMsg = $response->json('message');
+                    $detail  = is_string($jsonMsg) ? $jsonMsg : $response->body();
+
+                    if ($status === 403 || $status === 401) {
+                        $lastError = "Adobe Commerce authentication failed (HTTP {$status}). {$detail}";
+                    } else {
+                        $lastError = "Adobe Commerce token error (HTTP {$status}): {$detail}";
+                    }
+                } catch (\Exception $e) {
+                    $lastError = $e->getMessage();
                 }
-                throw new \RuntimeException("Adobe Commerce token error (HTTP {$status}): " . $response->body());
             }
 
-            $token = trim($response->body(), " \t\n\r\0\x0B\"");
-
-            if (empty($token)) {
-                throw new \RuntimeException('Adobe Commerce returned empty admin token.');
-            }
-
-            return $token;
+            throw new \RuntimeException($lastError ?? 'Adobe Commerce authentication failed. Check credentials.');
         });
     }
 
@@ -398,6 +421,12 @@ class AdobeCommerceConnector
     {
         $allOrders = [];
         $page      = 1;
+
+        $endpoints = [
+            $baseUrl . '/rest/V1/orders',
+            $baseUrl . '/rest/all/V1/orders',
+            $baseUrl . '/rest/default/V1/orders',
+        ];
 
         do {
             $queryParams = [
@@ -411,19 +440,27 @@ class AdobeCommerceConnector
                 'searchCriteria[currentPage]'                                => $page,
             ];
 
-            $endpoint = $baseUrl . '/rest/V1/orders?' . http_build_query($queryParams);
+            $response = null;
+            $lastException = null;
 
-            $response = Http::timeout(30)
-                ->withHeaders([
-                    'Authorization' => "Bearer {$token}",
-                    'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept'        => 'application/json',
-                ])
-                ->get($endpoint);
+            foreach ($endpoints as $endpointUrl) {
+                $url = $endpointUrl . '?' . http_build_query($queryParams);
 
-            if (! $response->successful()) {
-                $status = $response->status();
-                $body   = $response->body();
+                $resp = Http::timeout(30)
+                    ->withHeaders([
+                        'Authorization' => "Bearer {$token}",
+                        'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept'        => 'application/json',
+                    ])
+                    ->get($url);
+
+                if ($resp->successful()) {
+                    $response = $resp;
+                    break;
+                }
+
+                $status = $resp->status();
+                $body   = $resp->body();
 
                 if ($status === 401 && ! $isRetry) {
                     Log::warning('AdobeCommerceConnector: 401 token expired, clearing token cache and retrying');
@@ -432,14 +469,13 @@ class AdobeCommerceConnector
                     return $this->fetchOrders($baseUrl, $newToken, $from, $to, $limit, isRetry: true);
                 }
 
-                if ($status === 403) {
-                    throw new \RuntimeException('Adobe Commerce WAF/Security Block (403 Access Denied). Check Cloudflare or security firewall settings.');
-                }
-
-                $jsonMsg = $response->json('message');
+                $jsonMsg = $resp->json('message');
                 $errMsg  = is_string($jsonMsg) ? $jsonMsg : (strlen($body) < 200 ? $body : "HTTP {$status}");
+                $lastException = new \RuntimeException("Adobe Commerce API error (HTTP {$status}): {$errMsg}");
+            }
 
-                throw new \RuntimeException("Adobe Commerce API error (HTTP {$status}): {$errMsg}");
+            if (! $response || ! $response->successful()) {
+                throw $lastException ?? new \RuntimeException('Adobe Commerce API request failed.');
             }
 
             $data       = $response->json();
@@ -456,9 +492,14 @@ class AdobeCommerceConnector
 
     private function hasRequiredCredentials(array $creds): bool
     {
-        return ! empty($creds['base_url'])
-            && ! empty($creds['admin_username'])
-            && ! empty($creds['admin_password']);
+        if (empty($creds['base_url'])) {
+            return false;
+        }
+
+        $hasToken    = ! empty($creds['access_token']) || ! empty($creds['bearer_token']);
+        $hasUserPass = ! empty($creds['admin_username']) && ! empty($creds['admin_password']);
+
+        return $hasToken || $hasUserPass;
     }
 
     private function sanitiseError(string $message, array $creds): string

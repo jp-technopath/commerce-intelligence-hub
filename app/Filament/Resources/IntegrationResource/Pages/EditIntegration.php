@@ -29,6 +29,9 @@ class EditIntegration extends EditRecord
                     [IntegrationType::GA4, IntegrationType::Clarity, IntegrationType::AdobeCommerce, IntegrationType::NewRelic, IntegrationType::Klaviyo]
                 ))
                 ->action(function (): void {
+                    // Save form changes first so credentials on record in DB are updated with user inputs
+                    $this->save(shouldRedirect: false);
+
                     $type = $this->record->integration_type;
 
                     $result = match ($type) {

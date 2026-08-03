@@ -288,15 +288,22 @@ class IntegrationResource extends Resource
                     ->helperText('e.g. your-store.myshopify.com')
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'shopify'),
 
-                // ── Adobe Commerce (Admin REST API) ──────────────────────
+                // ── Adobe Commerce (Admin REST API or Integration Token) ──
                 Forms\Components\TextInput::make('adobe_base_url')
                     ->label('Store Base URL')
                     ->helperText('e.g. https://your-store.com (no trailing slash)')
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
 
+                Forms\Components\TextInput::make('adobe_access_token')
+                    ->label('Integration Access Token (Optional)')
+                    ->helperText('Generated in Magento Admin → System → Integrations → Add New Integration. Bypasses 2FA & password locks.')
+                    ->password()
+                    ->revealable()
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
+
                 Forms\Components\TextInput::make('adobe_admin_username')
                     ->label('Admin Username')
-                    ->helperText('Magento admin user with REST API access')
+                    ->helperText('Magento admin user with REST API access (if not using Integration Access Token above)')
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
 
                 Forms\Components\TextInput::make('adobe_admin_password')
@@ -482,6 +489,7 @@ class IntegrationResource extends Resource
         if ($integrationType === 'adobe_commerce') {
             $data['credentials_json'] = array_merge($existing, array_filter([
                 'base_url'       => $data['adobe_base_url'] ?? null,
+                'access_token'   => $data['adobe_access_token'] ?? null,
                 'admin_username' => $data['adobe_admin_username'] ?? null,
                 'admin_password' => $data['adobe_admin_password'] ?? null,
             ]));
@@ -506,6 +514,7 @@ class IntegrationResource extends Resource
             $data['ga4_service_account_json'],
             $data['shopify_access_token'],
             $data['shopify_shop_domain'],
+            $data['adobe_access_token'],
             $data['adobe_bearer_token'],
             $data['adobe_base_url'],
             $data['adobe_admin_username'],
@@ -544,6 +553,7 @@ class IntegrationResource extends Resource
 
         if ($type === 'adobe_commerce') {
             $data['adobe_base_url']        = $credentials['base_url'] ?? null;
+            $data['adobe_access_token']    = $credentials['access_token'] ?? $credentials['bearer_token'] ?? null;
             $data['adobe_admin_username']  = $credentials['admin_username'] ?? null;
             $data['adobe_admin_password']  = $credentials['admin_password'] ?? null;
         }
