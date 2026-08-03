@@ -504,7 +504,8 @@ class AdobeCommerceConnector
 
         // Detect Cloudflare WAF Managed Challenge
         if (str_contains($body, 'Just a moment...') || str_contains($body, 'challenges.cloudflare.com') || str_contains($body, '_cf_chl_opt')) {
-            return "Cloudflare WAF Security Challenge (HTTP {$status}). Target store (www.tgoldkamp.com) Cloudflare firewall blocked the server API request. Please add a Cloudflare WAF exception rule for path '/rest/*' or whitelist the Technopath server IP address.";
+            $serverIp = $this->getServerPublicIp();
+            return "Cloudflare WAF Security Challenge (HTTP {$status}). Target store (www.tgoldkamp.com) Cloudflare firewall blocked the API request. Production server outbound IP: {$serverIp}. Ensure IP {$serverIp} is whitelisted in Cloudflare (Security > WAF > Tools > IP Access Rules) or set rule Action to 'Skip' / 'Bypass'.";
         }
 
         $jsonMsg = $response->json('message');
@@ -520,6 +521,21 @@ class AdobeCommerceConnector
         }
 
         return strlen($body) < 200 ? $body : "HTTP {$status}";
+    }
+
+    private function getServerPublicIp(): string
+    {
+        return Cache::remember('server_public_ip', 86400, function () {
+            try {
+                $resp = Http::timeout(3)->get('https://api.ipify.org');
+                if ($resp->successful()) {
+                    return trim($resp->body());
+                }
+            } catch (\Exception $e) {
+                // Ignore
+            }
+            return request()->server('SERVER_ADDR') ?? 'unknown';
+        });
     }
 
     private function sanitiseError(string $message, array $creds): string
