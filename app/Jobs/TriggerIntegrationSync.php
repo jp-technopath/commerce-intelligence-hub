@@ -69,8 +69,6 @@ class TriggerIntegrationSync implements ShouldQueue
                 'integration_id' => $this->integration->id,
                 'error'          => $e->getMessage(),
             ]);
-
-            throw $e;
         }
     }
 

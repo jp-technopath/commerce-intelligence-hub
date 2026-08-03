@@ -66,14 +66,21 @@ class NewRelicConnector
 
             for ($d = $numOfDays; $d >= 1; $d--) {
                 $date = Carbon::today()->subDays($d);
-                $from = $date->copy()->startOfDay()->toIso8601String();
-                $to   = $date->copy()->endOfDay()->toIso8601String();
+                try {
+                    $from = $date->copy()->startOfDay()->toIso8601String();
+                    $to   = $date->copy()->endOfDay()->toIso8601String();
 
-                $raw    = $this->fetchMetricsData($applicationId, $apiKey, $from, $to);
-                $parsed = $this->parseMetrics($raw);
+                    $raw    = $this->fetchMetricsData($applicationId, $apiKey, $from, $to);
+                    $parsed = $this->parseMetrics($raw);
 
-                $this->storeMetrics($parsed, $date->toDateString());
-                $recordsProcessed++;
+                    $this->storeMetrics($parsed, $date->toDateString());
+                    $recordsProcessed++;
+                } catch (\Exception $de) {
+                    Log::warning("NewRelicConnector: daily fetch failed for {$date->toDateString()}", [
+                        'integration_id' => $this->integration->id,
+                        'message'        => $this->sanitiseError($de->getMessage(), $apiKey),
+                    ]);
+                }
             }
 
             Log::info('NewRelicConnector: sync complete', [
@@ -83,7 +90,7 @@ class NewRelicConnector
             ]);
 
             $syncLog->update([
-                'status'            => SyncStatus::Success,
+                'status'            => $recordsProcessed > 0 ? SyncStatus::Success : SyncStatus::Failed,
                 'records_processed' => $recordsProcessed,
                 'completed_at'      => now(),
             ]);
