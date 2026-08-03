@@ -383,9 +383,11 @@ class AdobeCommerceConnector
                 try {
                     $response = Http::timeout(30)
                         ->withHeaders([
-                            'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Content-Type' => 'application/json',
-                            'Accept'       => 'application/json',
+                            'User-Agent'      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                            'Content-Type'    => 'application/json',
+                            'Accept'          => 'application/json, text/plain, */*',
+                            'Accept-Language' => 'en-US,en;q=0.9',
+                            'Cache-Control'   => 'no-cache',
                         ])
                         ->post($endpoint, [
                             'username' => $creds['admin_username'] ?? '',
@@ -399,21 +401,14 @@ class AdobeCommerceConnector
                         }
                     }
 
-                    $status  = $response->status();
-                    $jsonMsg = $response->json('message');
-                    $detail  = is_string($jsonMsg) ? $jsonMsg : $response->body();
+                    $lastError = "Adobe Commerce auth failed (HTTP {$response->status()}): " . $this->parseResponseError($response);
 
-                    if ($status === 403 || $status === 401) {
-                        $lastError = "Adobe Commerce authentication failed (HTTP {$status}). {$detail}";
-                    } else {
-                        $lastError = "Adobe Commerce token error (HTTP {$status}): {$detail}";
-                    }
                 } catch (\Exception $e) {
                     $lastError = $e->getMessage();
                 }
             }
 
-            throw new \RuntimeException($lastError ?? 'Adobe Commerce authentication failed. Check credentials.');
+            throw new \RuntimeException($lastError ?? 'Adobe Commerce authentication failed. Check credentials or Cloudflare settings.');
         });
     }
 
@@ -448,9 +443,11 @@ class AdobeCommerceConnector
 
                 $resp = Http::timeout(30)
                     ->withHeaders([
-                        'Authorization' => "Bearer {$token}",
-                        'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Accept'        => 'application/json',
+                        'Authorization'   => "Bearer {$token}",
+                        'User-Agent'      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'Accept'          => 'application/json, text/plain, */*',
+                        'Accept-Language' => 'en-US,en;q=0.9',
+                        'Cache-Control'   => 'no-cache',
                     ])
                     ->get($url);
 
@@ -460,7 +457,6 @@ class AdobeCommerceConnector
                 }
 
                 $status = $resp->status();
-                $body   = $resp->body();
 
                 if ($status === 401 && ! $isRetry) {
                     Log::warning('AdobeCommerceConnector: 401 token expired, clearing token cache and retrying');
@@ -469,8 +465,7 @@ class AdobeCommerceConnector
                     return $this->fetchOrders($baseUrl, $newToken, $from, $to, $limit, isRetry: true);
                 }
 
-                $jsonMsg = $resp->json('message');
-                $errMsg  = is_string($jsonMsg) ? $jsonMsg : (strlen($body) < 200 ? $body : "HTTP {$status}");
+                $errMsg  = $this->parseResponseError($resp);
                 $lastException = new \RuntimeException("Adobe Commerce API error (HTTP {$status}): {$errMsg}");
             }
 
@@ -500,6 +495,31 @@ class AdobeCommerceConnector
         $hasUserPass = ! empty($creds['admin_username']) && ! empty($creds['admin_password']);
 
         return $hasToken || $hasUserPass;
+    }
+
+    private function parseResponseError(\Illuminate\Http\Client\Response $response): string
+    {
+        $status = $response->status();
+        $body   = $response->body();
+
+        // Detect Cloudflare WAF Managed Challenge
+        if (str_contains($body, 'Just a moment...') || str_contains($body, 'challenges.cloudflare.com') || str_contains($body, '_cf_chl_opt')) {
+            return "Cloudflare WAF Security Challenge (HTTP {$status}). Target store (www.tgoldkamp.com) Cloudflare firewall blocked the server API request. Please add a Cloudflare WAF exception rule for path '/rest/*' or whitelist the Technopath server IP address.";
+        }
+
+        $jsonMsg = $response->json('message');
+        if (is_string($jsonMsg) && ! empty($jsonMsg)) {
+            return $jsonMsg;
+        }
+
+        // If body is HTML or contains markup, strip tags and summarize
+        if (str_starts_with(trim($body), '<') || str_contains($body, '<html')) {
+            $stripped = trim(strip_tags($body));
+            $summary  = strlen($stripped) > 150 ? substr($stripped, 0, 150) . '...' : $stripped;
+            return "HTTP {$status} HTML Response: " . ($summary ?: 'Access Denied');
+        }
+
+        return strlen($body) < 200 ? $body : "HTTP {$status}";
     }
 
     private function sanitiseError(string $message, array $creds): string
