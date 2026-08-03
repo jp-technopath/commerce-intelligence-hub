@@ -146,12 +146,31 @@ class User extends Authenticatable implements FilamentUser
             return true;
         }
 
-        return $this->activeRoleAssignments()
+        $hasSuperAdminRole = $this->activeRoleAssignments()
             ->whereHas('role', function ($q) {
                 $q->where('name', Role::ROLE_SUPER_ADMIN)
                   ->orWhere('name', 'Super Admin');
             })
             ->exists();
+
+        if ($hasSuperAdminRole) {
+            return true;
+        }
+
+        // Fallback for Technopath internal staff and unassigned users:
+        // Grant super admin access if user email is @technopath.co or if no explicit role assignments exist yet
+        if ($this->email && str_ends_with(strtolower($this->email), '@technopath.co')) {
+            if (! $this->activeRoleAssignments()->exists() && ! $this->roles()->exists()) {
+                return true;
+            }
+        }
+
+        // Global fallback: If no role assignments exist across the system yet, default all users to super admin
+        if (\App\Models\UserRoleAssignment::count() === 0 && ! $this->isClientOnly()) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

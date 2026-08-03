@@ -24,11 +24,12 @@ class AgencyDashboard extends BaseDashboard
             return true;
         }
 
-        // Hide Agency Dashboard from client portal users
+        // Hide Agency Dashboard strictly from client-only portal users
         if ($user->isClientOnly()) {
             return false;
         }
 
-        return $user->hasPermission('dashboard.view');
+        // Allow access to Agency Dashboard for all authenticated internal agency users
+        return true;
     }
 }
