@@ -22,6 +22,7 @@ class ListFindings extends ListRecords
                 ->label('Run Analysis')
                 ->icon('heroicon-o-sparkles')
                 ->color('primary')
+                ->visible(fn () => ! auth()->user()?->isClientOnly())
                 ->form([
                     Forms\Components\Select::make('client_id')
                         ->label('Client')
@@ -99,6 +100,7 @@ class ListFindings extends ListRecords
                 ->label('Refresh All Clients')
                 ->icon('heroicon-o-arrow-path')
                 ->color('gray')
+                ->visible(fn () => ! auth()->user()?->isClientOnly())
                 ->modalHeading('Refresh Findings for All Clients')
                 ->modalDescription('This will run change detection across all active clients to find signals and anomalies in the synced data. This may take a few minutes.')
                 ->modalSubmitActionLabel('Refresh All')

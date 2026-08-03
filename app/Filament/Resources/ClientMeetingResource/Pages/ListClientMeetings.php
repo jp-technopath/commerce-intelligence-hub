@@ -42,6 +42,7 @@ class ListClientMeetings extends ListRecords
                 ->icon('heroicon-o-calendar-days')
                 ->color('info')
                 ->requiresConfirmation()
+                ->visible(fn () => ! auth()->user()?->isClientOnly())
                 ->modalHeading('Scan Google Calendar')
                 ->modalDescription('This will scan your Google Calendar for upcoming customer meetings in the next 7 days.')
                 ->modalSubmitActionLabel('Scan Now')
@@ -68,7 +69,8 @@ class ListClientMeetings extends ListRecords
                 })
                 ->disabled(fn () => ! auth()->user()->hasGoogleWorkspace()),
 
-            Actions\CreateAction::make(),
+            Actions\CreateAction::make()
+                ->visible(fn () => ! auth()->user()?->isClientOnly()),
         ];
     }
 

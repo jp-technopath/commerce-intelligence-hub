@@ -27,7 +27,7 @@ class KnowledgeBaseResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $count = IntelligenceMemory::count();
+        $count = static::getEloquentQuery()->count();
         return $count > 0 ? (string) $count : null;
     }
 
@@ -94,7 +94,20 @@ class KnowledgeBaseResource extends Resource
 
                 Tables\Filters\SelectFilter::make('client_id')
                     ->label('Client')
-                    ->options(Client::pluck('name', 'id'))
+                    ->options(function () {
+                        /** @var User|null $user */
+                        $user = \Illuminate\Support\Facades\Auth::user();
+                        if (! $user) return [];
+
+                        $query = Client::query();
+                        if (! $user->isSuperAdmin()) {
+                            $assignedClientIds = $user->getAssignedClientIds();
+                            if (! in_array('*', $assignedClientIds)) {
+                                $query->whereIn('id', $assignedClientIds);
+                            }
+                        }
+                        return $query->pluck('name', 'id')->toArray();
+                    })
                     ->searchable(),
             ])
             ->actions([
@@ -196,7 +209,20 @@ class KnowledgeBaseResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with('client');
+        $query = parent::getEloquentQuery()->with('client');
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+
+        if (! $user || $user->isSuperAdmin()) {
+            return $query;
+        }
+
+        $assignedClientIds = $user->getAssignedClientIds();
+
+        return $query->where(function ($q) use ($assignedClientIds) {
+            $q->whereIn('client_id', $assignedClientIds)
+              ->orWhereNull('client_id');
+        });
     }
 
     public static function canCreate(): bool

@@ -339,8 +339,9 @@ class ChangeDetectionEngine
         $days = $client->getComparisonPeriodForType('commerce');
 
         $periodLabel = match($days) {
-            30 => 'month-over-month',
-            14 => 'bi-weekly',
+            365 => 'year-over-year',
+            30  => 'month-over-month',
+            14  => 'bi-weekly',
             default => 'week-over-week',
         };
 

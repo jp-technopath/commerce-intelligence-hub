@@ -2,19 +2,20 @@
 
 namespace App\Services\Connectors;
 
+use App\Enums\SyncStatus;
+use App\Models\AnalyticsPurchaseEvent;
 use App\Models\Integration;
 use App\Models\SyncLog;
-use App\Enums\SyncStatus;
+use Carbon\Carbon;
 use Google\Client as GoogleClient;
 use Google\Service\AnalyticsData;
 use Google\Service\AnalyticsData\DateRange;
 use Google\Service\AnalyticsData\Dimension;
+use Google\Service\AnalyticsData\Filter;
+use Google\Service\AnalyticsData\FilterExpression;
+use Google\Service\AnalyticsData\InListFilter;
 use Google\Service\AnalyticsData\Metric;
 use Google\Service\AnalyticsData\RunReportRequest;
-use Google\Service\AnalyticsData\FilterExpression;
-use Google\Service\AnalyticsData\Filter;
-use Google\Service\AnalyticsData\InListFilter;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class GA4Connector
@@ -28,9 +29,6 @@ class GA4Connector
         $this->credentials = $integration->credentials_json ?? [];
     }
 
-    /**
-     * Run a full sync for this integration.
-     */
     public function sync(SyncLog $syncLog, int $numOfDays = 30): void
     {
         $propertyId   = $this->credentials['property_id'] ?? null;
@@ -47,18 +45,22 @@ class GA4Connector
 
         try {
             $service = $this->buildService($refreshToken);
-            $data    = $this->fetchReport($service, $propertyId, "{$numOfDays}daysAgo");
+            $startDate = "{$numOfDays}daysAgo";
+            $endDate   = "yesterday";
 
+            $data = $this->fetchReport($service, $propertyId, $startDate, $endDate);
             $this->storeMetrics($data);
 
-            // Fetch ecommerce funnel events
-            $funnelData = $this->fetchFunnelReport($service, $propertyId, "{$numOfDays}daysAgo");
+            // Fetch transaction-level purchase events for reconciliation
+            $this->fetchPurchaseTransactions($service, $propertyId, $startDate, $endDate);
+
+            // Fetch ecommerce funnel participation events
+            $funnelData = $this->fetchFunnelReport($service, $propertyId, $startDate, $endDate);
             $this->storeFunnelMetrics($funnelData);
 
             Log::info('GA4Connector: sync complete', [
                 'integration_id' => $this->integration->id,
                 'num_of_days'    => $numOfDays,
-                'date_range'     => "{$numOfDays}daysAgo → yesterday",
                 'rows_returned'  => count($data),
             ]);
 
@@ -85,10 +87,6 @@ class GA4Connector
         }
     }
 
-    /**
-     * Build an authenticated Google AnalyticsData service using REST (not gRPC).
-     * Google\Client handles Web Application OAuth2 refresh tokens natively.
-     */
     private function buildService(string $refreshToken): AnalyticsData
     {
         $client = new GoogleClient();
@@ -97,8 +95,6 @@ class GA4Connector
         $client->setAccessType('offline');
         $client->setScopes([AnalyticsData::ANALYTICS_READONLY]);
 
-        // Set the full token array — Google\Client needs expires_in + created
-        // to know if it needs to refresh. Setting them to 0 forces a refresh.
         $client->setAccessToken([
             'access_token'  => 'placeholder',
             'refresh_token' => $refreshToken,
@@ -106,7 +102,6 @@ class GA4Connector
             'created'       => 0,
         ]);
 
-        // Force refresh to get a valid access token
         $newToken = $client->fetchAccessTokenWithRefreshToken($refreshToken);
 
         if (isset($newToken['error'])) {
@@ -115,25 +110,16 @@ class GA4Connector
             );
         }
 
-        // Validate that the Analytics scope was granted
         $grantedScope = $newToken['scope'] ?? '';
         if (! str_contains($grantedScope, 'analytics.readonly')) {
             throw new \RuntimeException(
-                'SCOPE_MISSING: The authorized Google account does not have the Analytics scope. '
-                . 'Please disconnect and re-authorize, making sure to check the Analytics checkbox on the Google consent screen. '
-                . 'Granted scopes: ' . $grantedScope
+                'SCOPE_MISSING: The authorized Google account does not have the Analytics scope.'
             );
         }
 
         return new AnalyticsData($client);
     }
 
-    /**
-     * Fetch a GA4 report broken down by date + channel.
-     *
-     * @param  string  $startDate  GA4 date string (e.g. '30daysAgo' or 'YYYY-MM-DD')
-     * @param  string  $endDate    GA4 date string (e.g. 'yesterday' or 'YYYY-MM-DD')
-     */
     private function fetchReport(AnalyticsData $service, string $propertyId, string $startDate = '30daysAgo', string $endDate = 'yesterday'): array
     {
         $request = new RunReportRequest();
@@ -165,11 +151,11 @@ class GA4Connector
 
         $byDate = [];
 
-        foreach ($response->getRows() as $row) {
+        foreach ($response->getRows() ?? [] as $row) {
             $dimensions = $row->getDimensionValues();
             $metrics    = $row->getMetricValues();
 
-            $date    = $dimensions[0]->getValue();  // YYYYMMDD
+            $date    = $dimensions[0]->getValue();
             $channel = $dimensions[1]->getValue();
 
             $dateKey = substr($date, 0, 4) . '-' . substr($date, 4, 2) . '-' . substr($date, 6, 2);
@@ -237,8 +223,72 @@ class GA4Connector
     }
 
     /**
-     * Upsert fetched data into commerce_metrics.
+     * Fetch purchase transactions for reconciliation and store in analytics_purchase_events.
      */
+    private function fetchPurchaseTransactions(AnalyticsData $service, string $propertyId, string $startDate, string $endDate): void
+    {
+        try {
+            $request = new RunReportRequest();
+
+            $dateRange = new DateRange();
+            $dateRange->setStartDate($startDate);
+            $dateRange->setEndDate($endDate);
+            $request->setDateRanges([$dateRange]);
+
+            $dateDim = new Dimension();
+            $dateDim->setName('date');
+            $txDim = new Dimension();
+            $txDim->setName('transactionId');
+            $request->setDimensions([$dateDim, $txDim]);
+
+            $revenueMetric = new Metric();
+            $revenueMetric->setName('purchaseRevenue');
+            $request->setMetrics([$revenueMetric]);
+
+            $response = $service->properties->runReport("properties/{$propertyId}", $request);
+
+            $seenInRun = [];
+
+            foreach ($response->getRows() ?? [] as $row) {
+                $dims = $row->getDimensionValues();
+                $mets = $row->getMetricValues();
+
+                $rawDate = $dims[0]->getValue();
+                $txId    = trim($dims[1]->getValue());
+                $rev     = (float) $mets[0]->getValue();
+
+                if (! $txId || $txId === '(not set)') continue;
+
+                $dateKey = substr($rawDate, 0, 4) . '-' . substr($rawDate, 4, 2) . '-' . substr($rawDate, 6, 2);
+                $isDup   = isset($seenInRun[$txId]);
+                $seenInRun[$txId] = true;
+
+                AnalyticsPurchaseEvent::updateOrCreate(
+                    [
+                        'client_id'      => $this->integration->client_id,
+                        'integration_id' => $this->integration->id,
+                        'source'         => 'ga4',
+                        'transaction_id' => $txId,
+                    ],
+                    [
+                        'event_date'       => $dateKey,
+                        'event_timestamp'  => Carbon::parse($dateKey . ' 12:00:00'),
+                        'tracked_revenue'  => $rev,
+                        'currency'         => $this->integration->client->currency ?? 'USD',
+                        'is_duplicate'     => $isDup,
+                        'duplicate_reason' => $isDup ? 'multiple_events_for_same_transaction_id' : null,
+                        'collected_at'     => now(),
+                    ]
+                );
+            }
+        } catch (\Exception $e) {
+            Log::warning('GA4Connector: fetchPurchaseTransactions warning', [
+                'integration_id' => $this->integration->id,
+                'message'        => $e->getMessage(),
+            ]);
+        }
+    }
+
     private function storeMetrics(array $byDate): void
     {
         foreach ($byDate as $dateKey => $data) {
@@ -264,54 +314,32 @@ class GA4Connector
         }
     }
 
-    /**
-     * Fetch GA4 data for a specific date range (on-demand investigator use).
-     *
-     * Does NOT create a SyncLog. Returns the count of date-rows fetched,
-     * or 0 on failure.
-     */
     public function fetchForDateRange(Carbon $from, Carbon $to): int
     {
         $propertyId   = $this->credentials['property_id'] ?? null;
         $refreshToken = $this->credentials['refresh_token'] ?? null;
 
-        if (! $propertyId || ! $refreshToken) {
-            Log::warning('GA4Connector::fetchForDateRange — missing credentials', [
-                'integration_id' => $this->integration->id,
-            ]);
-            return 0;
-        }
+        if (! $propertyId || ! $refreshToken) return 0;
 
         try {
             $service = $this->buildService($refreshToken);
+            $fromStr = $from->format('Y-m-d');
+            $toStr   = $to->format('Y-m-d');
 
-            $data = $this->fetchReport(
-                $service,
-                $propertyId,
-                $from->format('Y-m-d'),
-                $to->format('Y-m-d'),
-            );
-
+            $data = $this->fetchReport($service, $propertyId, $fromStr, $toStr);
             $this->storeMetrics($data);
+            $this->fetchPurchaseTransactions($service, $propertyId, $fromStr, $toStr);
 
             return count($data);
         } catch (\Exception $e) {
             Log::error('GA4Connector::fetchForDateRange failed', [
                 'integration_id' => $this->integration->id,
-                'from'           => $from->toDateString(),
-                'to'             => $to->toDateString(),
-                'class'          => get_class($e),
                 'message'        => $e->getMessage(),
             ]);
-
             return 0;
         }
     }
 
-    /**
-     * Fetch ecommerce funnel event counts by date.
-     * Events: view_item, add_to_cart, begin_checkout, purchase
-     */
     private function fetchFunnelReport(AnalyticsData $service, string $propertyId, string $startDate = '30daysAgo', string $endDate = 'yesterday'): array
     {
         $request = new RunReportRequest();
@@ -321,19 +349,16 @@ class GA4Connector
         $dateRange->setEndDate($endDate);
         $request->setDateRanges([$dateRange]);
 
-        // Dimensions: date, eventName
         $dateDim = new Dimension();
         $dateDim->setName('date');
         $eventDim = new Dimension();
         $eventDim->setName('eventName');
         $request->setDimensions([$dateDim, $eventDim]);
 
-        // Metric: eventCount
         $metric = new Metric();
-        $metric->setName('eventCount');
+        $metric->setName('activeUsers'); // Unique active users per funnel event stage
         $request->setMetrics([$metric]);
 
-        // Filter to only our funnel events
         $inList = new InListFilter();
         $inList->setValues(['view_item', 'add_to_cart', 'begin_checkout', 'purchase']);
 
@@ -376,9 +401,6 @@ class GA4Connector
         return $byDate;
     }
 
-    /**
-     * Merge funnel event counts into the metadata_json of existing commerce_metrics rows.
-     */
     private function storeFunnelMetrics(array $byDate): void
     {
         foreach ($byDate as $dateKey => $events) {
@@ -390,14 +412,12 @@ class GA4Connector
             if ($metric) {
                 $meta = $metric->metadata_json ?? [];
                 $meta['funnel'] = $events;
+                $meta['funnel_type'] = 'user_participation';
                 $metric->update(['metadata_json' => $meta]);
             }
         }
     }
 
-    /**
-     * Normalize GA4 channel group names into short keys.
-     */
     private function normalizeChannel(string $channel): string
     {
         return match (true) {
@@ -411,9 +431,6 @@ class GA4Connector
         };
     }
 
-    /**
-     * Handle Google API service exceptions — never expose credentials in logs.
-     */
     private function handleGoogleException(\Google\Service\Exception $e, SyncLog $syncLog): void
     {
         $code = $e->getCode();
@@ -438,9 +455,6 @@ class GA4Connector
         ]);
     }
 
-    /**
-     * Quick connection test — fetches sessions for yesterday only.
-     */
     public function testConnection(): array
     {
         $propertyId   = $this->credentials['property_id'] ?? null;
@@ -476,50 +490,7 @@ class GA4Connector
                 'message' => "Connection successful. Yesterday: {$sessions} sessions.",
             ];
 
-        } catch (\Google\Service\Exception $e) {
-            Log::error('GA4Connector: testConnection failed', [
-                'integration_id' => $this->integration->id,
-                'code'           => $e->getCode(),
-                'message'        => $e->getMessage(),
-            ]);
-
-            return [
-                'success' => false,
-                'message' => match (true) {
-                    $e->getCode() === 401 => 'Authorization expired. Click "Disconnect" then "Authorize Google Account" to re-authorize.',
-                    $e->getCode() === 403 => 'Permission denied. The authorized Google account may not have access to this GA4 property (ID: ' . ($this->credentials['property_id'] ?? '?') . '). Check GA4 Admin → Property Access Management.',
-                    $e->getCode() === 404 => 'Property not found. Check the Property ID is correct.',
-                    default               => 'API error (HTTP ' . $e->getCode() . '): ' . $e->getMessage(),
-                },
-            ];
-
-        } catch (\RuntimeException $e) {
-            Log::error('GA4Connector: testConnection runtime error', [
-                'integration_id' => $this->integration->id,
-                'message'        => $e->getMessage(),
-            ]);
-
-            // Detect scope-related errors
-            if (str_contains($e->getMessage(), 'SCOPE_MISSING')) {
-                return [
-                    'success' => false,
-                    'message' => 'The Google account is connected but missing Analytics permissions. Click "Disconnect" below, then click "Authorize Google Account" again. On the Google consent screen, make sure to allow Analytics access.',
-                ];
-            }
-
-            return [
-                'success' => false,
-                'message' => $e->getMessage(),
-            ];
-
         } catch (\Exception $e) {
-            Log::error('GA4Connector: testConnection generic error', [
-                'integration_id' => $this->integration->id,
-                'class'          => get_class($e),
-                'message'        => $e->getMessage(),
-                'file'           => $e->getFile() . ':' . $e->getLine(),
-            ]);
-
             return [
                 'success' => false,
                 'message' => 'Connection error: ' . $e->getMessage(),

@@ -21,6 +21,37 @@ class IntegrationResource extends Resource
     protected static ?string $navigationGroup = 'Clients';
     protected static ?int $navigationSort = 2;
 
+    public static function canViewAny(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) return false;
+
+        if ($user->isSuperAdmin()) return true;
+
+        // Hide Integrations from client portal users
+        if ($user->isClientOnly()) {
+            return false;
+        }
+
+        return $user->hasPermission('integrations.view_any') || count($user->getAssignedClientIds()) > 0;
+    }
+
+    public static function getEloquentQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = parent::getEloquentQuery();
+        /** @var \App\Models\User|null $currentUser */
+        $currentUser = \Illuminate\Support\Facades\Auth::user();
+
+        if (! $currentUser || $currentUser->isSuperAdmin()) {
+            return $query;
+        }
+
+        $assignedClientIds = $currentUser->getAssignedClientIds();
+
+        return $query->whereIn('client_id', $assignedClientIds);
+    }
+
     public static function form(Form $form): Form
     {
         return $form->schema([
@@ -48,179 +79,7 @@ class IntegrationResource extends Resource
                 ])
                 ->columns(2),
 
-            // ── Shopify ──────────────────────────────────────────────────────
-            Forms\Components\Section::make('Credentials')
-                ->description('All credentials are stored encrypted at rest and never appear in logs or sync output.')
-                ->schema([
-                    Forms\Components\TextInput::make('shopify_access_token')
-                        ->label('Access Token')
-                        ->helperText('Custom App Access Token from your Shopify Partner dashboard.')
-                        ->password()
-                        ->revealable()
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'shopify'),
-
-                    Forms\Components\TextInput::make('shopify_shop_domain')
-                        ->label('Shop Domain')
-                        ->helperText('e.g. your-store.myshopify.com')
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'shopify'),
-
-                    // ── Adobe Commerce (Admin REST API) ──────────────────────
-                    Forms\Components\TextInput::make('adobe_base_url')
-                        ->label('Store Base URL')
-                        ->helperText('e.g. https://your-store.com (no trailing slash)')
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
-
-                    Forms\Components\TextInput::make('adobe_admin_username')
-                        ->label('Admin Username')
-                        ->helperText('Magento admin user with REST API access')
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
-
-                    Forms\Components\TextInput::make('adobe_admin_password')
-                        ->label('Admin Password')
-                        ->password()
-                        ->revealable()
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
-
-                    // ── GA4 — OAuth2 flow ─────────────────────────────────────
-                    // Step 1: Property ID (always needed)
-                    Forms\Components\TextInput::make('ga4_property_id')
-                        ->label('GA4 Property ID')
-                        ->helperText('Found in GA4 → Admin → Property Details. e.g. 123456789')
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
-                        ->columnSpanFull(),
-
-                    // Step 2: OAuth status display (read-only, shown on edit)
-                    Forms\Components\Placeholder::make('ga4_auth_status')
-                        ->label('Google Account Authorization')
-                        ->content(function (?Integration $record): \Illuminate\Support\HtmlString {
-                            if (! $record) {
-                                return new \Illuminate\Support\HtmlString(
-                                    '<p class="text-sm text-gray-500">Save this integration first, then authorize your Google account.</p>'
-                                );
-                            }
-
-                            $creds = $record->credentials_json ?? [];
-                            $authorized = ! empty($creds['refresh_token']);
-
-                            if ($authorized) {
-                                $email = $creds['authorized_email'] ?? 'Unknown';
-                                $date  = isset($creds['authorized_at'])
-                                    ? \Carbon\Carbon::parse($creds['authorized_at'])->diffForHumans()
-                                    : '';
-
-                                return new \Illuminate\Support\HtmlString(
-                                    '<div class="flex items-center gap-3">'
-                                    . '<span class="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-800">'
-                                    . '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-4.121-4.121a1 1 0 011.414-1.414L8.414 12.172l7.879-7.879a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>'
-                                    . 'Connected'
-                                    . '</span>'
-                                    . '<span class="text-sm text-gray-600">Authorized as <strong>' . e($email) . '</strong>' . ($date ? " &mdash; {$date}" : '') . '</span>'
-                                    . '</div>'
-                                );
-                            }
-
-                            return new \Illuminate\Support\HtmlString(
-                                '<div class="flex items-center gap-3">'
-                                . '<span class="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800">'
-                                . '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>'
-                                . 'Not authorized'
-                                . '</span>'
-                                . '<span class="text-sm text-gray-500">Click the button below to authorize your Google account.</span>'
-                                . '</div>'
-                            );
-                        })
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
-                        ->columnSpanFull(),
-
-                    // Step 3: Authorize / Disconnect button (shown on edit only)
-                    Forms\Components\Actions::make([
-                        Forms\Components\Actions\Action::make('authorize_google')
-                            ->label('Authorize Google Account')
-                            ->icon('heroicon-o-arrow-top-right-on-square')
-                            ->color('primary')
-                            ->url(fn (?Integration $record) => $record
-                                ? route('google.oauth.redirect', $record)
-                                : null
-                            )
-                            ->openUrlInNewTab(false)
-                            ->visible(fn (?Integration $record, Forms\Get $get) =>
-                                $get('integration_type') === 'ga4'
-                                && $record !== null
-                                && empty($record->credentials_json['refresh_token'])
-                            ),
-
-                        Forms\Components\Actions\Action::make('disconnect_google')
-                            ->label('Disconnect Google Account')
-                            ->icon('heroicon-o-x-circle')
-                            ->color('danger')
-                            ->requiresConfirmation()
-                            ->modalHeading('Disconnect Google Account')
-                            ->modalDescription('This will revoke the OAuth token and set the integration back to Pending. You will need to re-authorize to resume syncing.')
-                            ->url(fn (?Integration $record) => $record
-                                ? route('google.oauth.revoke', $record)
-                                : null
-                            )
-                            ->visible(fn (?Integration $record, Forms\Get $get) =>
-                                $get('integration_type') === 'ga4'
-                                && $record !== null
-                                && ! empty($record->credentials_json['refresh_token'])
-                            ),
-                    ])
-                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
-                    ->columnSpanFull(),
-
-                    // ── Clarity ───────────────────────────────────────────────
-                    Forms\Components\TextInput::make('clarity_bearer_token')
-                        ->label('Bearer Token')
-                        ->helperText('Generated from Clarity project settings → API access.')
-                        ->password()
-                        ->revealable()
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'clarity'),
-
-                    Forms\Components\TextInput::make('clarity_project_id')
-                        ->label('Clarity Project ID')
-                        ->helperText('Found in your Clarity project URL.')
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'clarity'),
-
-                    // ── New Relic ─────────────────────────────────────────────
-                    Forms\Components\TextInput::make('newrelic_api_key')
-                        ->label('API Key')
-                        ->helperText('New Relic User API key. Found in New Relic → API Keys → User type.')
-                        ->password()
-                        ->revealable()
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'new_relic'),
-
-                    Forms\Components\TextInput::make('newrelic_application_id')
-                        ->label('Application ID')
-                        ->helperText('Found in New Relic → APM → your app → Settings. The numeric ID in the URL.')
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'new_relic'),
-
-                    // ── Klaviyo ───────────────────────────────────────────────
-                    Forms\Components\TextInput::make('klaviyo_api_key')
-                        ->label('Private API Key')
-                        ->helperText('Found in Klaviyo → Settings → API Keys. Use a Private API key (starts with "pk_").')
-                        ->password()
-                        ->revealable()
-                        ->visible(fn (Forms\Get $get) => $get('integration_type') === 'klaviyo'),
-
-                    // ── Raw JSON (hidden for GA4 — OAuth handles it) ──────────
-                    Forms\Components\Textarea::make('credentials_json')
-                        ->label('Raw Credentials JSON (Advanced)')
-                        ->helperText('Stored encrypted at rest. For GA4 use the Authorize button above.')
-                        ->rows(3)
-                        ->columnSpanFull()
-                        ->hidden(fn (Forms\Get $get) => in_array($get('integration_type'), ['ga4', 'new_relic', 'klaviyo']))
-                        ->dehydrateStateUsing(function ($state) {
-                            if (is_array($state)) {
-                                return $state;
-                            }
-                            if (is_string($state) && str_starts_with(trim((string) $state), '{')) {
-                                $decoded = json_decode($state, true);
-                                return is_array($decoded) ? $decoded : null;
-                            }
-                            return null;
-                        }),
-                ]),
+            static::getCredentialsFormSchema(),
 
             Forms\Components\Section::make('Settings')
                 ->schema([
@@ -313,11 +172,13 @@ class IntegrationResource extends Resource
                     Forms\Components\Select::make('monitoring_config.comparison_period_days')
                         ->label('Comparison Period')
                         ->options([
-                            '7'  => '7 Days',
-                            '14' => '14 Days',
-                            '30' => '30 Days',
-                            '60' => '60 Days',
-                            '90' => '90 Days',
+                            '7'   => '7 Days',
+                            '14'  => '14 Days',
+                            '30'  => '30 Days',
+                            '60'  => '60 Days',
+                            '90'  => '90 Days',
+                            '360' => '360 Days',
+                            '365' => '12 Months (365 Days)',
                         ])
                         ->default('7')
                         ->helperText('How far back the engine looks when comparing current vs previous metrics for this integration.'),
@@ -408,6 +269,299 @@ class IntegrationResource extends Resource
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
             ]);
+    }
+
+    public static function getCredentialsFormSchema(): Forms\Components\Section
+    {
+        return Forms\Components\Section::make('Credentials')
+            ->description('All credentials are stored encrypted at rest and never appear in logs or sync output.')
+            ->schema([
+                Forms\Components\TextInput::make('shopify_access_token')
+                    ->label('Access Token')
+                    ->helperText('Custom App Access Token from your Shopify Partner dashboard.')
+                    ->password()
+                    ->revealable()
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'shopify'),
+
+                Forms\Components\TextInput::make('shopify_shop_domain')
+                    ->label('Shop Domain')
+                    ->helperText('e.g. your-store.myshopify.com')
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'shopify'),
+
+                // ── Adobe Commerce (Admin REST API) ──────────────────────
+                Forms\Components\TextInput::make('adobe_base_url')
+                    ->label('Store Base URL')
+                    ->helperText('e.g. https://your-store.com (no trailing slash)')
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
+
+                Forms\Components\TextInput::make('adobe_admin_username')
+                    ->label('Admin Username')
+                    ->helperText('Magento admin user with REST API access')
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
+
+                Forms\Components\TextInput::make('adobe_admin_password')
+                    ->label('Admin Password')
+                    ->password()
+                    ->revealable()
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
+
+                // ── GA4 — OAuth2 flow ─────────────────────────────────────
+                // Step 1: Property ID (always needed)
+                Forms\Components\TextInput::make('ga4_property_id')
+                    ->label('GA4 Property ID')
+                    ->helperText('Found in GA4 → Admin → Property Details. e.g. 123456789')
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
+                    ->columnSpanFull(),
+
+                // Step 2: OAuth status display (read-only, shown on edit)
+                Forms\Components\Placeholder::make('ga4_auth_status')
+                    ->label('Google Account Authorization')
+                    ->content(function (?Integration $record): \Illuminate\Support\HtmlString {
+                        if (! $record) {
+                            return new \Illuminate\Support\HtmlString(
+                                '<p class="text-sm text-gray-500">Save this integration first, then authorize your Google account.</p>'
+                            );
+                        }
+
+                        $creds = $record->credentials_json ?? [];
+                        $authorized = ! empty($creds['refresh_token']);
+
+                        if ($authorized) {
+                            $email = $creds['authorized_email'] ?? 'Unknown';
+                            $date  = isset($creds['authorized_at'])
+                                ? \Carbon\Carbon::parse($creds['authorized_at'])->diffForHumans()
+                                : '';
+
+                            return new \Illuminate\Support\HtmlString(
+                                '<div class="flex items-center gap-3">'
+                                . '<span class="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-800">'
+                                . '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-4.121-4.121a1 1 0 011.414-1.414L8.414 12.172l7.879-7.879a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>'
+                                . 'Connected'
+                                . '</span>'
+                                . '<span class="text-sm text-gray-600">Authorized as <strong>' . e($email) . '</strong>' . ($date ? " &mdash; {$date}" : '') . '</span>'
+                                . '</div>'
+                            );
+                        }
+
+                        return new \Illuminate\Support\HtmlString(
+                            '<div class="flex items-center gap-3">'
+                            . '<span class="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800">'
+                            . '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>'
+                            . 'Not authorized'
+                            . '</span>'
+                            . '<span class="text-sm text-gray-500">Click the button below to authorize your Google account.</span>'
+                            . '</div>'
+                        );
+                    })
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
+                    ->columnSpanFull(),
+
+                // Step 3: Authorize / Disconnect button (shown on edit only)
+                Forms\Components\Actions::make([
+                    Forms\Components\Actions\Action::make('authorize_google')
+                        ->label('Authorize Google Account')
+                        ->icon('heroicon-o-arrow-top-right-on-square')
+                        ->color('primary')
+                        ->url(fn (?Integration $record) => $record
+                            ? route('google.oauth.redirect', $record)
+                            : null
+                        )
+                        ->openUrlInNewTab(false)
+                        ->visible(fn (?Integration $record, Forms\Get $get) =>
+                            $get('integration_type') === 'ga4'
+                            && $record !== null
+                            && empty($record->credentials_json['refresh_token'])
+                        ),
+
+                    Forms\Components\Actions\Action::make('disconnect_google')
+                        ->label('Disconnect Google Account')
+                        ->icon('heroicon-o-x-circle')
+                        ->color('danger')
+                        ->requiresConfirmation()
+                        ->modalHeading('Disconnect Google Account')
+                        ->modalDescription('This will revoke the OAuth token and set the integration back to Pending. You will need to re-authorize to resume syncing.')
+                        ->url(fn (?Integration $record) => $record
+                            ? route('google.oauth.revoke', $record)
+                            : null
+                        )
+                        ->visible(fn (?Integration $record, Forms\Get $get) =>
+                            $get('integration_type') === 'ga4'
+                            && $record !== null
+                            && ! empty($record->credentials_json['refresh_token'])
+                        ),
+                ])
+                ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
+                ->columnSpanFull(),
+
+                // ── Clarity ───────────────────────────────────────────────
+                Forms\Components\TextInput::make('clarity_bearer_token')
+                    ->label('Bearer Token')
+                    ->helperText('Generated from Clarity project settings → API access.')
+                    ->password()
+                    ->revealable()
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'clarity'),
+
+                Forms\Components\TextInput::make('clarity_project_id')
+                    ->label('Clarity Project ID')
+                    ->helperText('Found in your Clarity project URL.')
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'clarity'),
+
+                // ── New Relic ─────────────────────────────────────────────
+                Forms\Components\TextInput::make('newrelic_api_key')
+                    ->label('API Key')
+                    ->helperText('New Relic User API key. Found in New Relic → API Keys → User type.')
+                    ->password()
+                    ->revealable()
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'new_relic'),
+
+                Forms\Components\TextInput::make('newrelic_application_id')
+                    ->label('Application ID')
+                    ->helperText('Found in New Relic → APM → your app → Settings. The numeric ID in the URL.')
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'new_relic'),
+
+                // ── Klaviyo ───────────────────────────────────────────────
+                Forms\Components\TextInput::make('klaviyo_api_key')
+                    ->label('Private API Key')
+                    ->helperText('Found in Klaviyo → Settings → API Keys. Use a Private API key (starts with "pk_").')
+                    ->password()
+                    ->revealable()
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'klaviyo'),
+
+                // ── Raw JSON (hidden for GA4 — OAuth handles it) ──────────
+                Forms\Components\Textarea::make('credentials_json')
+                    ->label('Raw Credentials JSON (Advanced)')
+                    ->helperText('Stored encrypted at rest. For GA4 use the Authorize button above.')
+                    ->rows(3)
+                    ->columnSpanFull()
+                    ->hidden(fn (Forms\Get $get) => in_array($get('integration_type'), ['ga4', 'new_relic', 'klaviyo']))
+                    ->dehydrateStateUsing(function ($state) {
+                        if (is_array($state)) {
+                            return $state;
+                        }
+                        if (is_string($state) && str_starts_with(trim((string) $state), '{')) {
+                            $decoded = json_decode($state, true);
+                            return is_array($decoded) ? $decoded : null;
+                        }
+                        return null;
+                    }),
+            ]);
+    }
+
+    public static function serializeCredentials(array $data, ?array $existing = []): array
+    {
+        $integrationType = $data['integration_type'] ?? null;
+        if ($integrationType instanceof \App\Enums\IntegrationType) {
+            $integrationType = $integrationType->value;
+        }
+        $existing = $existing ?? [];
+
+        if ($integrationType === 'ga4') {
+            $propertyId = $data['ga4_property_id'] ?? null;
+            if ($propertyId) {
+                $data['credentials_json'] = array_merge($existing, [
+                    'property_id' => $propertyId,
+                    'auth_method' => 'oauth2_user',
+                ]);
+            }
+        }
+
+        if ($integrationType === 'clarity') {
+            $data['credentials_json'] = array_merge($existing, array_filter([
+                'bearer_token' => $data['clarity_bearer_token'] ?? null,
+                'project_id'   => $data['clarity_project_id'] ?? null,
+            ]));
+        }
+
+        if ($integrationType === 'shopify') {
+            $data['credentials_json'] = array_merge($existing, array_filter([
+                'access_token' => $data['shopify_access_token'] ?? null,
+                'shop_domain'  => $data['shopify_shop_domain'] ?? null,
+            ]));
+        }
+
+        if ($integrationType === 'adobe_commerce') {
+            $data['credentials_json'] = array_merge($existing, array_filter([
+                'base_url'       => $data['adobe_base_url'] ?? null,
+                'admin_username' => $data['adobe_admin_username'] ?? null,
+                'admin_password' => $data['adobe_admin_password'] ?? null,
+            ]));
+        }
+
+        if ($integrationType === 'new_relic') {
+            $data['credentials_json'] = array_merge($existing, array_filter([
+                'api_key'        => $data['newrelic_api_key'] ?? null,
+                'application_id' => $data['newrelic_application_id'] ?? null,
+            ]));
+        }
+
+        if ($integrationType === 'klaviyo') {
+            $data['credentials_json'] = array_merge($existing, array_filter([
+                'api_key' => $data['klaviyo_api_key'] ?? null,
+            ]));
+        }
+
+        // Remove virtual fields that don't map to DB columns
+        unset(
+            $data['ga4_property_id'],
+            $data['ga4_service_account_json'],
+            $data['shopify_access_token'],
+            $data['shopify_shop_domain'],
+            $data['adobe_bearer_token'],
+            $data['adobe_base_url'],
+            $data['adobe_admin_username'],
+            $data['adobe_admin_password'],
+            $data['clarity_bearer_token'],
+            $data['clarity_project_id'],
+            $data['newrelic_api_key'],
+            $data['newrelic_application_id'],
+            $data['klaviyo_api_key'],
+        );
+
+        return $data;
+    }
+
+    public static function deserializeCredentials(array $data, ?array $credentials = []): array
+    {
+        $credentials = $credentials ?? [];
+        $type = $data['integration_type'] ?? null;
+        if ($type instanceof \App\Enums\IntegrationType) {
+            $type = $type->value;
+        }
+
+        if ($type === 'ga4') {
+            $data['ga4_property_id'] = $credentials['property_id'] ?? null;
+        }
+
+        if ($type === 'clarity') {
+            $data['clarity_bearer_token'] = $credentials['bearer_token'] ?? null;
+            $data['clarity_project_id']   = $credentials['project_id'] ?? null;
+        }
+
+        if ($type === 'shopify') {
+            $data['shopify_access_token'] = $credentials['access_token'] ?? null;
+            $data['shopify_shop_domain']  = $credentials['shop_domain'] ?? null;
+        }
+
+        if ($type === 'adobe_commerce') {
+            $data['adobe_base_url']        = $credentials['base_url'] ?? null;
+            $data['adobe_admin_username']  = $credentials['admin_username'] ?? null;
+            $data['adobe_admin_password']  = $credentials['admin_password'] ?? null;
+        }
+
+        if ($type === 'new_relic') {
+            $data['newrelic_api_key']        = $credentials['api_key'] ?? null;
+            $data['newrelic_application_id'] = $credentials['application_id'] ?? null;
+        }
+
+        if ($type === 'klaviyo') {
+            $data['klaviyo_api_key'] = $credentials['api_key'] ?? null;
+        }
+
+        $data['credentials_json'] = ! empty($credentials)
+            ? json_encode($credentials, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+            : null;
+
+        return $data;
     }
 
     public static function getPages(): array

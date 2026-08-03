@@ -12,7 +12,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Finding extends Model
 {
-    use HasFactory;
+    protected $attributes = [
+        'visibility_classification' => \App\Services\VisibilityService::CLASSIFICATION_CUSTOMER_VISIBLE,
+        'is_customer_visible' => true,
+    ];
 
     protected $fillable = [
         'client_id',
@@ -24,6 +27,8 @@ class Finding extends Model
         'confidence_score',
         'estimated_revenue_impact',
         'status',
+        'visibility_classification',
+        'is_customer_visible',
         'metadata_json',
         'detected_at',
     ];

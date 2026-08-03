@@ -35,6 +35,10 @@ class ViewClientMeeting extends ViewRecord
 
     protected function getHeaderActions(): array
     {
+        if (auth()->user()?->isClientOnly()) {
+            return [];
+        }
+
         return [
             GeneratePrepAction::make(),
             GenerateFollowUpAction::make(),
@@ -57,6 +61,19 @@ class ViewClientMeeting extends ViewRecord
         $this->getRecord()->refresh();
         $this->getRecord()->load(['prep', 'followUp']);
 
+        $isClientUser = auth()->user()?->isClientOnly() ?? false;
+
+        $tabs = [
+            $this->summaryTab(),
+        ];
+
+        if (! $isClientUser) {
+            $tabs[] = $this->meetingInfoTab();
+            $tabs[] = $this->preMeetingPrepTab();
+            $tabs[] = $this->meetingNotesTab();
+            $tabs[] = $this->followUpTab();
+        }
+
         return $infolist
             ->schema([
                 ViewEntry::make('polling_indicator')
@@ -64,16 +81,114 @@ class ViewClientMeeting extends ViewRecord
                     ->columnSpanFull(),
 
                 Tabs::make('MeetingTabs')
-                    ->tabs([
-                        $this->meetingInfoTab(),
-                        $this->preMeetingPrepTab(),
-                        $this->meetingNotesTab(),
-                        $this->followUpTab(),
-                    ])
+                    ->tabs($tabs)
                     ->columnSpanFull()
                     ->contained()
                     ->persistTabInQueryString(),
             ]);
+    }
+
+    // ── Tab 0: Summary ──────────────────────────────────────────────────
+
+    private function summaryTab(): Tabs\Tab
+    {
+        return Tabs\Tab::make('Summary')
+            ->icon('heroicon-o-document-chart-bar')
+            ->schema(function () {
+                /** @var \App\Models\ClientMeeting $record */
+                $record = $this->getRecord();
+
+                return [
+                    // Top Overview Banner
+                    Section::make('Meeting Overview')
+                        ->icon('heroicon-o-information-circle')
+                        ->schema([
+                            Grid::make(4)
+                                ->schema([
+                                    TextEntry::make('client.name')
+                                        ->label('Client')
+                                        ->badge()
+                                        ->color('primary')
+                                        ->default('Unmapped'),
+
+                                    TextEntry::make('meeting_start_at')
+                                        ->label('Meeting Date')
+                                        ->dateTime('M j, Y g:i A'),
+
+                                    TextEntry::make('status')
+                                        ->badge()
+                                        ->color(fn ($state) => $state?->color() ?? 'gray')
+                                        ->formatStateUsing(fn ($state) => $state?->label() ?? '—'),
+
+                                    TextEntry::make('owner.name')
+                                        ->label('Owner')
+                                        ->default('Unassigned'),
+                                ]),
+                        ]),
+
+                    // Section 1: Pre-Meeting Brief & Agenda
+                    Section::make('Pre-Meeting Brief & Agenda')
+                        ->icon('heroicon-o-clipboard-document-list')
+                        ->description('Key background context and recommended agenda items prior to the meeting.')
+                        ->schema([
+                            TextEntry::make('prep.internal_summary')
+                                ->label('Pre-Meeting Summary')
+                                ->markdown()
+                                ->default('No pre-meeting summary generated yet.')
+                                ->columnSpanFull(),
+
+                            TextEntry::make('prep.recommended_agenda')
+                                ->label('Recommended Agenda')
+                                ->listWithLineBreaks()
+                                ->bulleted()
+                                ->default('No agenda items recorded.')
+                                ->columnSpanFull(),
+                        ])
+                        ->collapsible(),
+
+                    // Section 2: Meeting Follow-Up & Decisions
+                    Section::make('Post-Meeting Follow-Up')
+                        ->icon('heroicon-o-chat-bubble-left-right')
+                        ->description('Executive summary, key decisions, and open questions from the meeting.')
+                        ->schema([
+                            TextEntry::make('followUp.summary')
+                                ->label('Meeting Summary')
+                                ->markdown()
+                                ->default('No post-meeting follow-up generated yet.')
+                                ->columnSpanFull(),
+
+                            TextEntry::make('followUp.decisions')
+                                ->label('Key Decisions')
+                                ->getStateUsing(fn ($record) => is_array($record->followUp?->decisions) ? $record->followUp->decisions : array_filter(array_map('trim', explode("\n", $record->followUp?->decisions ?? ''))))
+                                ->listWithLineBreaks()
+                                ->bulleted()
+                                ->default('None')
+                                ->columnSpanFull()
+                                ->visible(fn () => filled($record->followUp?->decisions)),
+
+                            TextEntry::make('followUp.open_questions')
+                                ->label('Open Questions')
+                                ->getStateUsing(fn ($record) => is_array($record->followUp?->open_questions) ? $record->followUp->open_questions : array_filter(array_map('trim', explode("\n", $record->followUp?->open_questions ?? ''))))
+                                ->listWithLineBreaks()
+                                ->bulleted()
+                                ->default('None')
+                                ->columnSpanFull()
+                                ->visible(fn () => filled($record->followUp?->open_questions)),
+                        ])
+                        ->collapsible(),
+
+                    // Section 3: Action Items
+                    Section::make('Action Items')
+                        ->icon('heroicon-o-clipboard-document-check')
+                        ->schema([
+                            ViewEntry::make('summary_action_items_table')
+                                ->view('filament.resources.client-meeting-resource.entries.action-items-table')
+                                ->columnSpanFull(),
+                        ])
+                        ->collapsible()
+                        ->visible(fn () => $record->actionItems()->count() > 0),
+                ];
+            });
     }
 
     // ── Tab 1: Meeting Info ─────────────────────────────────────────────

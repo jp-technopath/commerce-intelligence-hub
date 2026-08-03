@@ -3,12 +3,20 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
+use App\Models\Client;
+use App\Models\Project;
+use App\Models\Repository;
+use App\Models\Role;
 use App\Models\User;
+use App\Policies\UserPolicy;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 
 class UserResource extends Resource
@@ -16,16 +24,59 @@ class UserResource extends Resource
     protected static ?string $model = User::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-users';
-    protected static ?string $navigationGroup = 'User Management';
+    protected static ?string $navigationGroup = 'Administration';
     protected static ?int $navigationSort = 1;
+
+    public static function canViewAny(): bool
+    {
+        /** @var User|null $user */
+        $user = Auth::user();
+        if (! $user) return false;
+
+        if ($user->isSuperAdmin()) return true;
+
+        if ($user->isClientOnly()) {
+            return false;
+        }
+
+        return $user->hasPermission('users.view_any') || $user->hasPermission('users.view') || $user->hasRole(\App\Models\Role::ROLE_CUSTOMER_ADMIN);
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+        /** @var User|null $currentUser */
+        $currentUser = Auth::user();
+
+        if (! $currentUser) {
+            return $query;
+        }
+
+        if ($currentUser->isSuperAdmin()) {
+            return $query;
+        }
+
+        if ($currentUser->hasRole(Role::ROLE_CUSTOMER_ADMIN)) {
+            $clientIds = $currentUser->getAssignedClientIds();
+
+            return $query->whereHas('roleAssignments', function ($q) use ($clientIds) {
+                $q->whereIn('client_id', $clientIds);
+            });
+        }
+
+        return $query->where('id', $currentUser->id);
+    }
 
     public static function form(Form $form): Form
     {
+        /** @var User|null $currentUser */
+        $currentUser = Auth::user();
+
         return $form
             ->schema([
                 Forms\Components\Grid::make(3)
                     ->schema([
-                        // Main details column (2/3 width)
+                        // Account details (2/3 width)
                         Forms\Components\Section::make('User Account Details')
                             ->description('Basic account info needed for this user to sign in.')
                             ->schema([
@@ -46,34 +97,101 @@ class UserResource extends Resource
                                     ->dehydrated(fn ($state) => filled($state))
                                     ->dehydrateStateUsing(fn ($state) => Hash::make($state))
                                     ->required(fn (string $context): bool => $context === 'create')
-                                    ->placeholder(fn (string $context): string => $context === 'create' ? 'Password' : 'Leave empty to keep existing password')
-                                    ->helperText('Minimum 8 characters with letters and numbers.'),
+                                    ->placeholder(fn (string $context): string => $context === 'create' ? 'Password' : 'Leave empty to keep existing password'),
                             ])
                             ->columns(2)
                             ->columnSpan(2),
 
-                        // Sidebar configuration column (1/3 width)
-                        Forms\Components\Section::make('Role & Access Level')
-                            ->description('Control this user\'s scope of authority.')
+                        // Super Admin Flag (1/3 width, Super Admin only)
+                        Forms\Components\Section::make('System Super Admin')
+                            ->description('Platform-level global bypass flag.')
                             ->schema([
                                 Forms\Components\Toggle::make('is_admin')
                                     ->label('Super Administrator')
-                                    ->helperText('Grant absolute access. Bypasses all system permission boundaries.')
+                                    ->helperText('Global platform administrator.')
                                     ->default(false)
-                                    ->onIcon('heroicon-m-shield-check')
-                                    ->offIcon('heroicon-m-user')
-                                    ->onColor('danger'),
-
-                                Forms\Components\Select::make('roles')
-                                    ->relationship('roles', 'name')
-                                    ->multiple()
-                                    ->preload()
-                                    ->searchable()
-                                    ->label('Assigned Roles')
-                                    ->helperText('Select one or more functional roles to define system access levels.')
-                                    ->disabled(fn (Forms\Get $get) => $get('is_admin') === true),
+                                    ->disabled(fn () => ! $currentUser?->isSuperAdmin()),
                             ])
                             ->columnSpan(1),
+
+                        // Scoped Role Assignments Repeater (Full width)
+                        Forms\Components\Section::make('Scoped Role Assignments')
+                            ->description('Assign functional roles scoped to specific clients, projects, or repositories.')
+                            ->schema([
+                                Forms\Components\Repeater::make('roleAssignments')
+                                    ->relationship('roleAssignments')
+                                    ->schema([
+                                        Forms\Components\Select::make('role_id')
+                                            ->label('Role')
+                                            ->options(function () use ($currentUser) {
+                                                $query = Role::query();
+                                                if ($currentUser && $currentUser->hasRole(Role::ROLE_CUSTOMER_ADMIN) && ! $currentUser->isSuperAdmin()) {
+                                                    $query->whereIn('name', [Role::ROLE_CUSTOMER_ADMIN, Role::ROLE_CLIENT_USER]);
+                                                }
+                                                return $query->pluck('name', 'id')
+                                                    ->map(fn ($name) => match ($machineName = $name) {
+                                                        Role::ROLE_CLIENT_USER => 'Client',
+                                                        Role::ROLE_SUPER_ADMIN => 'Super Admin',
+                                                        Role::ROLE_CUSTOMER_ADMIN => 'Customer Admin',
+                                                        Role::ROLE_PRODUCT_OWNER => 'Product Owner',
+                                                        Role::ROLE_ANALYST => 'Analyst',
+                                                        Role::ROLE_ENGINEER => 'Engineer',
+                                                        default => $machineName,
+                                                    });
+                                            })
+                                            ->required()
+                                            ->reactive(),
+
+                                        Forms\Components\Select::make('client_id')
+                                            ->label('Client Scope')
+                                            ->options(function () use ($currentUser) {
+                                                $query = Client::query();
+                                                if ($currentUser && ! $currentUser->isSuperAdmin()) {
+                                                    $query->whereIn('id', $currentUser->getAssignedClientIds());
+                                                }
+                                                return $query->pluck('name', 'id');
+                                            })
+                                            ->searchable()
+                                            ->placeholder('Global / No Client Filter')
+                                            ->reactive(),
+
+                                        Forms\Components\Select::make('project_id')
+                                            ->label('Project Scope')
+                                            ->options(function (Get $get) use ($currentUser) {
+                                                $clientId = $get('client_id');
+                                                $query = Project::query();
+                                                if ($clientId) {
+                                                    $query->where('client_id', $clientId);
+                                                } elseif ($currentUser && ! $currentUser->isSuperAdmin()) {
+                                                    $query->whereIn('id', $currentUser->getAssignedProjectIds());
+                                                }
+                                                return $query->pluck('name', 'id');
+                                            })
+                                            ->searchable()
+                                            ->placeholder('All Client Projects'),
+
+                                        Forms\Components\Select::make('repository_id')
+                                            ->label('Repository Scope')
+                                            ->options(fn () => Repository::pluck('name', 'id'))
+                                            ->searchable()
+                                            ->placeholder('No Repo Filter'),
+
+                                        Forms\Components\DateTimePicker::make('starts_at')
+                                            ->label('Start Date'),
+
+                                        Forms\Components\DateTimePicker::make('expires_at')
+                                            ->label('Expiration Date'),
+
+                                        Forms\Components\Toggle::make('is_active')
+                                            ->label('Active')
+                                            ->default(true),
+                                    ])
+                                    ->columns(3)
+                                    ->defaultItems(1)
+                                    ->reorderable(false)
+                                    ->addActionLabel('Add Scoped Role Assignment'),
+                            ])
+                            ->columnSpan(3),
                     ]),
             ]);
     }
@@ -97,41 +215,60 @@ class UserResource extends Resource
                     ->searchable()
                     ->sortable(),
 
-                Tables\Columns\IconColumn::make('is_admin')
-                    ->label('Admin')
-                    ->boolean()
-                    ->trueIcon('heroicon-o-shield-check')
-                    ->falseIcon('heroicon-o-x-circle')
-                    ->trueColor('danger')
-                    ->falseColor('gray'),
-
-                Tables\Columns\TextColumn::make('roles.name')
-                    ->label('Roles')
+                Tables\Columns\TextColumn::make('activeRoleAssignments.role.name')
+                    ->label('Assigned Roles')
                     ->badge()
+                    ->formatStateUsing(fn ($state) => match ($state) {
+                        Role::ROLE_CLIENT_USER => 'Client',
+                        Role::ROLE_SUPER_ADMIN => 'Super Admin',
+                        Role::ROLE_CUSTOMER_ADMIN => 'Customer Admin',
+                        Role::ROLE_PRODUCT_OWNER => 'Product Owner',
+                        Role::ROLE_ANALYST => 'Analyst',
+                        Role::ROLE_ENGINEER => 'Engineer',
+                        default => $state,
+                    })
                     ->color(fn (string $state): string => match ($state) {
-                        'Super Admin' => 'danger',
-                        'Manager' => 'warning',
-                        'Viewer' => 'gray',
+                        Role::ROLE_SUPER_ADMIN => 'danger',
+                        Role::ROLE_CUSTOMER_ADMIN => 'warning',
+                        Role::ROLE_PRODUCT_OWNER => 'info',
+                        Role::ROLE_ANALYST => 'primary',
+                        Role::ROLE_ENGINEER => 'success',
+                        Role::ROLE_CLIENT_USER => 'gray',
                         default => 'primary',
                     })
                     ->wrap(),
+
+                Tables\Columns\TextColumn::make('activeRoleAssignments.client.name')
+                    ->label('Assigned Clients')
+                    ->badge()
+                    ->color('gray')
+                    ->wrap(),
+
+                Tables\Columns\IconColumn::make('is_admin')
+                    ->label('Super Admin')
+                    ->boolean()
+                    ->trueIcon('heroicon-o-shield-check')
+                    ->falseIcon('heroicon-o-x-circle'),
 
                 Tables\Columns\TextColumn::make('created_at')
                     ->dateTime('M j, Y')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
-            ->filters([
-                Tables\Filters\TernaryFilter::make('is_admin')
-                    ->label('Super Admin Status')
-                    ->boolean()
-                    ->trueLabel('Super Admins Only')
-                    ->falseLabel('Regular Users Only'),
-            ])
             ->actions([
                 Tables\Actions\EditAction::make()
                     ->slideOver(),
-                Tables\Actions\DeleteAction::make(),
+                Tables\Actions\DeleteAction::make()
+                    ->before(function (User $record, Tables\Actions\DeleteAction $action) {
+                        if (UserPolicy::isFinalCustomerAdmin($record)) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Cannot delete user')
+                                ->body('This user is the final remaining Customer Admin for their customer account.')
+                                ->danger()
+                                ->send();
+                            $action->halt();
+                        }
+                    }),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([

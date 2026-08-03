@@ -11,6 +11,11 @@ class GoogleWorkspaceStatusWidget extends Widget
 
     protected int|string|array $columnSpan = 'full';
 
+    public static function canView(): bool
+    {
+        return ! auth()->user()?->isClientOnly();
+    }
+
     /**
      * Determine the Google Workspace status for the current user.
      *

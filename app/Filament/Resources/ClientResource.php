@@ -20,6 +20,37 @@ class ClientResource extends Resource
     protected static ?int $navigationSort = 1;
     protected static ?string $recordTitleAttribute = 'name';
 
+    public static function canViewAny(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) return false;
+
+        if ($user->isSuperAdmin()) return true;
+
+        // Hide Clients management resource from client portal users
+        if ($user->isClientOnly()) {
+            return false;
+        }
+
+        return $user->hasPermission('clients.view_any') || $user->hasPermission('clients.view');
+    }
+
+    public static function getEloquentQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = parent::getEloquentQuery();
+        /** @var \App\Models\User|null $currentUser */
+        $currentUser = \Illuminate\Support\Facades\Auth::user();
+
+        if (! $currentUser || $currentUser->isSuperAdmin()) {
+            return $query;
+        }
+
+        $assignedIds = $currentUser->getAssignedClientIds();
+
+        return $query->whereIn('id', $assignedIds);
+    }
+
     public static function form(Form $form): Form
     {
         return $form->schema([
@@ -83,9 +114,10 @@ class ClientResource extends Resource
                                 ->label('Findings Comparison Period')
                                 ->helperText('How the findings engine compares metrics: current N days vs prior N days.')
                                 ->options([
-                                    7  => 'Week over Week (7 days)',
-                                    14 => 'Bi-weekly (14 days)',
-                                    30 => 'Month over Month (30 days)',
+                                    7   => 'Week over Week (7 days)',
+                                    14  => 'Bi-weekly (14 days)',
+                                    30  => 'Month over Month (30 days)',
+                                    365 => 'Year over Year / 12 Months (365 days)',
                                 ])
                                 ->default(7)
                                 ->required()

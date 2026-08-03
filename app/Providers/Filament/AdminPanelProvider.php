@@ -32,12 +32,24 @@ class AdminPanelProvider extends PanelProvider
             ->colors([
                 'primary' => Color::Blue,
             ])
-            ->brandName('Commerce Intelligence Hub')
-            ->favicon(null)
+            ->brandName('Technopath Forge')
+            ->brandLogo(asset('images/technopath-brand-logo-sharp.png'))
+            ->darkModeBrandLogo(asset('images/technopath-brand-logo-dark.png'))
+            ->brandLogoHeight('2.5rem')
+            ->sidebarCollapsibleOnDesktop()
+            ->maxContentWidth('max-w-[85%]')
+            ->renderHook(
+                \Filament\View\PanelsRenderHook::SIDEBAR_NAV_START,
+                fn (): string => \Illuminate\Support\Facades\Blade::render('@include("filament.components.sidebar-search")')
+            )
+            ->renderHook(
+                \Filament\View\PanelsRenderHook::HEAD_END,
+                fn (): string => \Illuminate\Support\Facades\Blade::render('@include("filament.components.sidebar-custom-styles")')
+            )
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
-                Pages\Dashboard::class,
+                \App\Filament\Pages\AgencyDashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([
@@ -66,11 +78,22 @@ class AdminPanelProvider extends PanelProvider
                     ->icon('heroicon-o-user'),
             ])
             ->navigationGroups([
-                'Dashboard',
-                'Clients',
-                'Meetings',
-                'Intelligence',
-                'System',
+                \Filament\Navigation\NavigationGroup::make('Dashboard')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Clients')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Intelligence')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Delivery')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Deployments')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Financials')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Meetings')
+                    ->collapsible(),
+                \Filament\Navigation\NavigationGroup::make('Administration')
+                    ->collapsible(),
             ]);
     }
 }

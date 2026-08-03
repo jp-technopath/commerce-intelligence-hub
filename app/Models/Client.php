@@ -17,6 +17,8 @@ class Client extends Model
         'industry',
         'platform_type',
         'jira_project_key',
+        'timezone',
+        'currency',
         'status',
         'notes',
         'business_context',
@@ -117,6 +119,11 @@ class Client extends Model
     public function integrations(): HasMany
     {
         return $this->hasMany(Integration::class);
+    }
+
+    public function projects(): HasMany
+    {
+        return $this->hasMany(Project::class);
     }
 
     public function commerceMetrics(): HasMany

@@ -14,10 +14,40 @@ use Filament\Tables\Table;
 class DeploymentResource extends Resource
 {
     protected static ?string $model = Deployment::class;
-    protected static ?string $navigationIcon = 'heroicon-o-arrow-up-circle';
-    protected static ?string $navigationGroup = 'Intelligence';
-    protected static ?int $navigationSort = 10;
-    protected static ?string $navigationLabel = 'Deployments';
+    protected static ?string $navigationIcon = 'heroicon-o-queue-list';
+    protected static ?string $navigationGroup = 'Deployments';
+    protected static ?int $navigationSort = 1;
+    protected static ?string $navigationLabel = 'Release History';
+
+    public static function canViewAny(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = \Illuminate\Support\Facades\Auth::user();
+        if (! $user) return false;
+
+        if ($user->isSuperAdmin()) return true;
+
+        if ($user->isClientOnly()) {
+            return false;
+        }
+
+        return $user->hasPermission('deployments.view_any') || $user->hasPermission('deployments.view');
+    }
+
+    public static function getEloquentQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = parent::getEloquentQuery();
+        /** @var \App\Models\User|null $currentUser */
+        $currentUser = \Illuminate\Support\Facades\Auth::user();
+
+        if (! $currentUser || $currentUser->isSuperAdmin()) {
+            return $query;
+        }
+
+        $assignedClientIds = $currentUser->getAssignedClientIds();
+
+        return $query->whereIn('client_id', $assignedClientIds);
+    }
 
     public static function form(Form $form): Form
     {

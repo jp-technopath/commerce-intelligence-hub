@@ -13,11 +13,15 @@ class Deployment extends Model
 
     protected $fillable = [
         'client_id',
+        'project_id',
+        'user_id',
         'title',
         'deployment_type',
         'description',
         'deployed_by',
         'deployed_at',
+        'visibility_classification',
+        'is_customer_visible',
         'metadata_json',
     ];
 

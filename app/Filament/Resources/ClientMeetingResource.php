@@ -147,7 +147,19 @@ class ClientMeetingResource extends Resource
                     )),
 
                 Tables\Filters\SelectFilter::make('client_id')
-                    ->relationship('client', 'name')
+                    ->relationship('client', 'name', function ($query) {
+                        /** @var User|null $user */
+                        $user = \Illuminate\Support\Facades\Auth::user();
+                        if (! $user) return $query;
+
+                        if (! $user->isSuperAdmin()) {
+                            $assignedClientIds = $user->getAssignedClientIds();
+                            if (! in_array('*', $assignedClientIds)) {
+                                $query->whereIn('id', $assignedClientIds);
+                            }
+                        }
+                        return $query;
+                    })
                     ->label('Client'),
 
                 Tables\Filters\SelectFilter::make('internal_owner_id')
@@ -161,11 +173,13 @@ class ClientMeetingResource extends Resource
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
-                Tables\Actions\EditAction::make(),
+                Tables\Actions\EditAction::make()
+                    ->visible(fn () => ! auth()->user()?->isClientOnly()),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
+                    Tables\Actions\DeleteBulkAction::make()
+                        ->visible(fn () => ! auth()->user()?->isClientOnly()),
                 ]),
             ])
             ->defaultSort('meeting_start_at', 'desc');
@@ -179,12 +193,21 @@ class ClientMeetingResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         $query = parent::getEloquentQuery();
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
 
-        if (! auth()->user()?->is_admin) {
-            $query->where('internal_owner_id', auth()->id());
+        if (! $user || $user->isSuperAdmin()) {
+            return $query;
         }
 
-        return $query;
+        $assignedClientIds = array_diff($user->getAssignedClientIds(), ['*']);
+
+        return $query->where(function ($q) use ($user, $assignedClientIds) {
+            $q->where('internal_owner_id', $user->id);
+            if (! empty($assignedClientIds)) {
+                $q->orWhereIn('client_id', $assignedClientIds);
+            }
+        });
     }
 
     public static function getPages(): array

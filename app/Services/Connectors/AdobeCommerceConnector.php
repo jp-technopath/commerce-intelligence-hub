@@ -3,9 +3,13 @@
 namespace App\Services\Connectors;
 
 use App\Enums\SyncStatus;
+use App\Models\CommerceCustomerPurchaseFact;
 use App\Models\CommerceMetric;
+use App\Models\CommerceOrder;
 use App\Models\Integration;
 use App\Models\SyncLog;
+use App\Services\Metrics\ValidOrderFilter;
+use App\Services\Security\CustomerIdentityHasher;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -19,15 +23,17 @@ use Illuminate\Support\Facades\Log;
  *
  * Then uses that token to pull order/revenue data from:
  *   GET /rest/V1/orders (with filters for date range)
- *
- * Credentials stored in credentials_json:
- *   - base_url       (e.g. https://your-store.com)
- *   - admin_username
- *   - admin_password
  */
 class AdobeCommerceConnector
 {
-    public function __construct(private readonly Integration $integration) {}
+    private ValidOrderFilter $orderFilter;
+    private CustomerIdentityHasher $identityHasher;
+
+    public function __construct(private readonly Integration $integration)
+    {
+        $this->orderFilter    = new ValidOrderFilter();
+        $this->identityHasher = new CustomerIdentityHasher();
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Public API
@@ -54,6 +60,9 @@ class AdobeCommerceConnector
 
             // Fetch orders for the period
             $orders = $this->fetchOrders($baseUrl, $token, $from, $to);
+
+            // Persist order line items & facts
+            $this->storeOrdersAndFacts($orders);
 
             // Aggregate daily metrics
             $dailyMetrics = $this->aggregateByDay($orders);
@@ -89,6 +98,8 @@ class AdobeCommerceConnector
             ]);
 
         } catch (\Exception $e) {
+            Cache::forget('adobe_token:' . $this->integration->id);
+
             $safe = $this->sanitiseError($e->getMessage(), $creds);
 
             Log::error('AdobeCommerceConnector: sync error', [
@@ -104,182 +115,105 @@ class AdobeCommerceConnector
         }
     }
 
-    public function testConnection(): array
-    {
-        $creds = $this->integration->credentials_json ?? [];
-
-        if (! $this->hasRequiredCredentials($creds)) {
-            return ['success' => false, 'message' => 'Missing base URL, admin username, or admin password.'];
-        }
-
-        try {
-            $token   = $this->getAdminToken($creds);
-            $baseUrl = rtrim($creds['base_url'], '/');
-
-            // Quick health check — fetch store info
-            $response = Http::withToken($token)
-                ->timeout(15)
-                ->get("{$baseUrl}/rest/V1/store/storeConfigs");
-
-            if ($response->successful()) {
-                $stores = $response->json();
-                $name   = $stores[0]['base_url'] ?? $baseUrl;
-                return ['success' => true, 'message' => "Connected — Authenticated to {$name}"];
-            }
-
-            return ['success' => false, 'message' => "Authenticated but store API returned HTTP {$response->status()}."];
-
-        } catch (\Exception $e) {
-            $msg = $e->getMessage();
-
-            if (str_contains($msg, '401') || str_contains($msg, 'credentials')) {
-                return ['success' => false, 'message' => 'Authentication failed. Check admin username and password.'];
-            }
-
-            return [
-                'success' => false,
-                'message' => 'Connection error: ' . $this->sanitiseError($msg, $creds),
-            ];
-        }
-    }
-
     /**
-     * Fetch and store commerce metrics for an explicit date range.
-     *
-     * Unlike sync(), this method does NOT create or update a SyncLog.
-     * Returns the total number of daily records stored, or 0 on failure.
+     * Persist order records into commerce_orders and update customer purchase facts.
      */
-    public function fetchForDateRange(Carbon $from, Carbon $to): int
+    private function storeOrdersAndFacts(array $orders): void
     {
-        $creds = $this->integration->credentials_json ?? [];
+        $client = $this->integration->client;
 
-        if (! $this->hasRequiredCredentials($creds)) {
-            return 0;
-        }
+        foreach ($orders as $order) {
+            $entityId   = (string) ($order['entity_id'] ?? $order['increment_id'] ?? '');
+            if (! $entityId) continue;
 
-        try {
-            $token   = $this->getAdminToken($creds);
-            $baseUrl = rtrim($creds['base_url'], '/');
+            $status     = strtolower($order['status'] ?? 'unknown');
+            $grandTotal = (float) ($order['grand_total'] ?? 0);
+            $totalRef   = (float) ($order['total_refunded'] ?? 0);
+            $tax        = (float) ($order['tax_amount'] ?? 0);
+            $shipping   = (float) ($order['shipping_amount'] ?? 0);
+            $discount   = (float) (abs($order['discount_amount'] ?? 0));
+            $createdAt  = Carbon::parse($order['created_at'] ?? now());
+            $custEmail  = $order['customer_email'] ?? null;
+            $custId     = isset($order['customer_id']) ? (string) $order['customer_id'] : null;
 
-            $orders = $this->fetchOrders(
-                $baseUrl,
-                $token,
-                $from->toIso8601String(),
-                $to->toIso8601String()
+            $identityHash = $this->identityHasher->hashCustomerIdentity($client, $custId, $custEmail);
+
+            $isFullyRefunded = ($grandTotal > 0 && $totalRef >= $grandTotal);
+            $orderPayload = [
+                'status'            => $status,
+                'is_fully_refunded' => $isFullyRefunded,
+            ];
+
+            $isValid = $this->orderFilter->isValidOrder($orderPayload, $this->integration);
+            $exclusionReason = $this->orderFilter->getExclusionReason($orderPayload, $this->integration);
+
+            $netRevenue = $isValid ? max(0.0, $grandTotal - $totalRef) : 0.0;
+
+            CommerceOrder::updateOrCreate(
+                [
+                    'client_id'          => $this->integration->client_id,
+                    'integration_id'     => $this->integration->id,
+                    'source'             => 'adobe_commerce',
+                    'source_order_id'    => $entityId,
+                ],
+                [
+                    'source_increment_id'     => $order['increment_id'] ?? null,
+                    'order_status'            => $status,
+                    'customer_identity_hash'  => $identityHash,
+                    'registered_customer_id'  => $custId,
+                    'order_date'              => $createdAt,
+                    'refund_date'             => $totalRef > 0 ? now() : null,
+                    'gross_revenue'           => $grandTotal,
+                    'refunded_revenue'        => $totalRef,
+                    'net_revenue'             => $netRevenue,
+                    'tax_amount'              => $tax,
+                    'shipping_amount'         => $shipping,
+                    'discount_amount'         => $discount,
+                    'currency'                => $order['order_currency_code'] ?? 'USD',
+                    'base_currency'           => $order['base_currency_code'] ?? 'USD',
+                    'reporting_currency'      => $client->currency ?? 'USD',
+                    'exchange_rate'           => (float) ($order['store_to_base_rate'] ?? 1.0),
+                    'is_valid'                => $isValid,
+                    'exclusion_reason'        => $exclusionReason,
+                    'source_updated_at'       => isset($order['updated_at']) ? Carbon::parse($order['updated_at']) : null,
+                    'financial_last_changed_at' => now(),
+                    'collected_at'            => now(),
+                    'metadata_json'           => [
+                        'customer_group_id' => $order['customer_group_id'] ?? null,
+                    ],
+                ]
             );
 
-            $dailyMetrics = $this->aggregateByDay($orders);
+            // Update customer purchase facts for valid orders
+            if ($isValid && $identityHash) {
+                $fact = CommerceCustomerPurchaseFact::firstOrNew([
+                    'client_id'              => $client->id,
+                    'customer_identity_hash' => $identityHash,
+                ]);
 
-            $totalRecords = 0;
-            foreach ($dailyMetrics as $date => $metrics) {
-                CommerceMetric::updateOrCreate(
-                    [
-                        'client_id' => $this->integration->client_id,
-                        'date'      => $date,
-                        'source'    => 'adobe_commerce',
-                    ],
-                    $metrics
-                );
-                $totalRecords++;
+                if (! $fact->exists) {
+                    $fact->customer_id                = $custId;
+                    $fact->first_valid_order_at       = $createdAt;
+                    $fact->latest_valid_order_at      = $createdAt;
+                    $fact->lifetime_valid_order_count = 1;
+                    $fact->lifetime_net_revenue       = $netRevenue;
+                    $fact->is_registered_customer     = ($custId !== null);
+                } else {
+                    if ($createdAt->lt($fact->first_valid_order_at)) {
+                        $fact->first_valid_order_at = $createdAt;
+                    }
+                    if ($createdAt->gt($fact->latest_valid_order_at)) {
+                        $fact->latest_valid_order_at = $createdAt;
+                    }
+                    $fact->lifetime_valid_order_count += 1;
+                    $fact->lifetime_net_revenue       += $netRevenue;
+                }
+
+                $fact->refreshed_at = now();
+                $fact->save();
             }
-
-            return $totalRecords;
-
-        } catch (\Exception $e) {
-            Log::error('AdobeCommerceConnector: fetchForDateRange error', [
-                'integration_id' => $this->integration->id,
-                'message'        => $this->sanitiseError($e->getMessage(), $creds),
-            ]);
-
-            return 0;
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private: Authentication
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * POST /rest/V1/integration/admin/token
-     * Returns a bearer token string valid for ~4 hours.
-     * Tokens are cached for 3 hours to avoid unnecessary re-auth.
-     */
-    private function getAdminToken(array $creds): string
-    {
-        $cacheKey = 'adobe_token:' . $this->integration->id;
-
-        return Cache::remember($cacheKey, now()->addHours(3), function () use ($creds) {
-            $baseUrl  = rtrim($creds['base_url'], '/');
-            $response = Http::timeout(15)
-                ->post("{$baseUrl}/rest/V1/integration/admin/token", [
-                    'username' => $creds['admin_username'],
-                    'password' => $creds['admin_password'],
-                ]);
-
-            if (! $response->successful()) {
-                $body = $response->json('message') ?? $response->body();
-                throw new \RuntimeException(
-                    "Adobe Commerce auth failed (HTTP {$response->status()}): {$body}"
-                );
-            }
-
-            // Response is a quoted string token
-            $token = trim($response->body(), '"');
-
-            if (empty($token)) {
-                throw new \RuntimeException('Adobe Commerce returned empty token.');
-            }
-
-            return $token;
-        });
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private: Data fetching
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * GET /rest/V1/orders with date range filter.
-     * Uses searchCriteria to filter by created_at.
-     */
-    private function fetchOrders(string $baseUrl, string $token, string $from, string $to): array
-    {
-        $allOrders  = [];
-        $page       = 1;
-        $pageSize   = 100;
-
-        do {
-            $response = Http::withToken($token)
-                ->timeout(30)
-                ->get("{$baseUrl}/rest/V1/orders", [
-                    'searchCriteria[filter_groups][0][filters][0][field]'          => 'created_at',
-                    'searchCriteria[filter_groups][0][filters][0][value]'          => $from,
-                    'searchCriteria[filter_groups][0][filters][0][condition_type]' => 'gteq',
-                    'searchCriteria[filter_groups][1][filters][0][field]'          => 'created_at',
-                    'searchCriteria[filter_groups][1][filters][0][value]'          => $to,
-                    'searchCriteria[filter_groups][1][filters][0][condition_type]' => 'lteq',
-                    'searchCriteria[pageSize]'    => $pageSize,
-                    'searchCriteria[currentPage]' => $page,
-                    'fields' => 'items[entity_id,created_at,grand_total,total_qty_ordered,status,customer_is_guest,customer_email,base_currency_code],total_count',
-                ]);
-
-            $response->throw();
-
-            $data       = $response->json();
-            $items      = $data['items'] ?? [];
-            $totalCount = $data['total_count'] ?? 0;
-
-            $allOrders = array_merge($allOrders, $items);
-            $page++;
-
-        } while (count($allOrders) < $totalCount && ! empty($items));
-
-        return $allOrders;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private: Aggregation
-    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Group orders by date and aggregate into commerce_metrics columns.
@@ -291,9 +225,7 @@ class AdobeCommerceConnector
         foreach ($orders as $order) {
             $date = substr($order['created_at'] ?? '', 0, 10); // YYYY-MM-DD
 
-            if (! $date) {
-                continue;
-            }
+            if (! $date) continue;
 
             if (! isset($daily[$date])) {
                 $daily[$date] = [
@@ -311,20 +243,25 @@ class AdobeCommerceConnector
             }
 
             $grandTotal = (float) ($order['grand_total'] ?? 0);
+            $totalRef   = (float) ($order['total_refunded'] ?? 0);
             $qty        = (int) ($order['total_qty_ordered'] ?? 0);
-            $status     = $order['status'] ?? 'unknown';
+            $status     = strtolower($order['status'] ?? 'unknown');
             $email      = $order['customer_email'] ?? '';
             $isGuest    = (bool) ($order['customer_is_guest'] ?? false);
 
-            // Skip cancelled/closed orders for revenue
-            if (! in_array($status, ['canceled', 'closed', 'holded'])) {
-                $daily[$date]['revenue'] += $grandTotal;
+            $orderPayload = [
+                'status'            => $status,
+                'is_fully_refunded' => ($grandTotal > 0 && $totalRef >= $grandTotal),
+            ];
+
+            $isValid = $this->orderFilter->isValidOrder($orderPayload, $this->integration);
+
+            if ($isValid) {
+                $daily[$date]['revenue']    += max(0.0, $grandTotal - $totalRef);
                 $daily[$date]['items_sold'] += $qty;
+                $daily[$date]['orders']++;
             }
 
-            $daily[$date]['orders']++;
-
-            // Track unique emails for new vs returning
             if ($email && ! in_array($email, $daily[$date]['_emails'])) {
                 $daily[$date]['_emails'][] = $email;
                 if ($isGuest) {
@@ -334,27 +271,188 @@ class AdobeCommerceConnector
                 }
             }
 
-            // Count order statuses
             $daily[$date]['metadata_json']['statuses'][$status] =
                 ($daily[$date]['metadata_json']['statuses'][$status] ?? 0) + 1;
         }
 
-        // Compute AOV and clean up
-        foreach ($daily as $date => &$metrics) {
-            $validOrders = $metrics['orders'] - ($metrics['metadata_json']['statuses']['canceled'] ?? 0);
-            $metrics['aov'] = $validOrders > 0
-                ? round($metrics['revenue'] / $validOrders, 2)
-                : 0.0;
-
-            unset($metrics['_emails']);
+        // Clean internal keys and calculate daily AOV
+        foreach ($daily as $date => &$row) {
+            unset($row['_emails']);
+            $row['aov'] = $row['orders'] > 0 ? round($row['revenue'] / $row['orders'], 2) : 0.0;
         }
 
         return $daily;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private: Helpers
-    // ─────────────────────────────────────────────────────────────────────────
+    public function fetchForDateRange(Carbon $from, Carbon $to): int
+    {
+        $creds = $this->integration->credentials_json ?? [];
+
+        if (! $this->hasRequiredCredentials($creds)) return 0;
+
+        try {
+            $token   = $this->getAdminToken($creds);
+            $baseUrl = rtrim($creds['base_url'], '/');
+
+            $orders = $this->fetchOrders($baseUrl, $token, $from->toIso8601String(), $to->toIso8601String());
+
+            $this->storeOrdersAndFacts($orders);
+
+            $dailyMetrics = $this->aggregateByDay($orders);
+
+            foreach ($dailyMetrics as $date => $metrics) {
+                CommerceMetric::updateOrCreate(
+                    [
+                        'client_id' => $this->integration->client_id,
+                        'date'      => $date,
+                        'source'    => 'adobe_commerce',
+                    ],
+                    $metrics
+                );
+            }
+
+            return count($orders);
+
+        } catch (\Exception $e) {
+            Log::error('AdobeCommerceConnector::fetchForDateRange error', [
+                'integration_id' => $this->integration->id,
+                'message'        => $e->getMessage(),
+            ]);
+            return 0;
+        }
+    }
+
+    public function testConnection(): array
+    {
+        $creds = $this->integration->credentials_json ?? [];
+
+        if (! $this->hasRequiredCredentials($creds)) {
+            return ['success' => false, 'message' => 'Missing base_url, admin_username, or admin_password.'];
+        }
+
+        try {
+            $token   = $this->getAdminToken($creds);
+            $baseUrl = rtrim($creds['base_url'], '/');
+
+            $from = now()->subDays(1)->startOfDay()->toIso8601String();
+            $to   = now()->endOfDay()->toIso8601String();
+
+            $orders = $this->fetchOrders($baseUrl, $token, $from, $to, limit: 5);
+
+            return [
+                'success' => true,
+                'message' => 'Connection successful. Recent orders test returned ' . count($orders) . ' records.',
+            ];
+
+        } catch (\Exception $e) {
+            $safe = $this->sanitiseError($e->getMessage(), $creds);
+            return [
+                'success' => false,
+                'message' => 'Connection test failed: ' . $safe,
+            ];
+        }
+    }
+
+    private function getAdminToken(array $creds, bool $forceRefresh = false): string
+    {
+        $cacheKey = 'adobe_token:' . $this->integration->id;
+
+        if ($forceRefresh) {
+            Cache::forget($cacheKey);
+        }
+
+        return Cache::remember($cacheKey, 3600, function () use ($creds) {
+            $baseUrl  = rtrim($creds['base_url'], '/');
+            $endpoint = $baseUrl . '/rest/V1/integration/admin/token';
+
+            $response = Http::timeout(30)
+                ->withHeaders([
+                    'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Content-Type' => 'application/json',
+                    'Accept'       => 'application/json',
+                ])
+                ->post($endpoint, [
+                    'username' => $creds['admin_username'],
+                    'password' => $creds['admin_password'],
+                ]);
+
+            if (! $response->successful()) {
+                $status = $response->status();
+                if ($status === 403 || $status === 401) {
+                    throw new \RuntimeException("Adobe Commerce authentication failed (HTTP {$status}). Check admin credentials.");
+                }
+                throw new \RuntimeException("Adobe Commerce token error (HTTP {$status}): " . $response->body());
+            }
+
+            $token = trim($response->body(), " \t\n\r\0\x0B\"");
+
+            if (empty($token)) {
+                throw new \RuntimeException('Adobe Commerce returned empty admin token.');
+            }
+
+            return $token;
+        });
+    }
+
+    private function fetchOrders(string $baseUrl, string $token, string $from, string $to, int $limit = 100, bool $isRetry = false): array
+    {
+        $allOrders = [];
+        $page      = 1;
+
+        do {
+            $queryParams = [
+                'searchCriteria[filter_groups][0][filters][0][field]'        => 'created_at',
+                'searchCriteria[filter_groups][0][filters][0][value]'        => $from,
+                'searchCriteria[filter_groups][0][filters][0][condition_type]' => 'gteq',
+                'searchCriteria[filter_groups][1][filters][0][field]'        => 'created_at',
+                'searchCriteria[filter_groups][1][filters][0][value]'        => $to,
+                'searchCriteria[filter_groups][1][filters][0][condition_type]' => 'lteq',
+                'searchCriteria[pageSize]'                                   => $limit,
+                'searchCriteria[currentPage]'                                => $page,
+            ];
+
+            $endpoint = $baseUrl . '/rest/V1/orders?' . http_build_query($queryParams);
+
+            $response = Http::timeout(30)
+                ->withHeaders([
+                    'Authorization' => "Bearer {$token}",
+                    'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept'        => 'application/json',
+                ])
+                ->get($endpoint);
+
+            if (! $response->successful()) {
+                $status = $response->status();
+                $body   = $response->body();
+
+                if ($status === 401 && ! $isRetry) {
+                    Log::warning('AdobeCommerceConnector: 401 token expired, clearing token cache and retrying');
+                    $creds    = $this->integration->credentials_json ?? [];
+                    $newToken = $this->getAdminToken($creds, forceRefresh: true);
+                    return $this->fetchOrders($baseUrl, $newToken, $from, $to, $limit, isRetry: true);
+                }
+
+                if ($status === 403) {
+                    throw new \RuntimeException('Adobe Commerce WAF/Security Block (403 Access Denied). Check Cloudflare or security firewall settings.');
+                }
+
+                $jsonMsg = $response->json('message');
+                $errMsg  = is_string($jsonMsg) ? $jsonMsg : (strlen($body) < 200 ? $body : "HTTP {$status}");
+
+                throw new \RuntimeException("Adobe Commerce API error (HTTP {$status}): {$errMsg}");
+            }
+
+            $data       = $response->json();
+            $items      = $data['items'] ?? [];
+            $totalCount = $data['total_count'] ?? 0;
+
+            $allOrders = array_merge($allOrders, $items);
+            $page++;
+
+        } while (count($allOrders) < $totalCount && ! empty($items));
+
+        return $allOrders;
+    }
 
     private function hasRequiredCredentials(array $creds): bool
     {
@@ -366,10 +464,8 @@ class AdobeCommerceConnector
     private function sanitiseError(string $message, array $creds): string
     {
         foreach (['admin_password', 'admin_username'] as $key) {
-            $val = $creds[$key] ?? '';
-            if (strlen($val) > 4) {
-                $masked  = substr($val, 0, 2) . str_repeat('•', strlen($val) - 4) . substr($val, -2);
-                $message = str_replace($val, $masked, $message);
+            if (! empty($creds[$key]) && strlen($creds[$key]) > 2) {
+                $message = str_replace($creds[$key], '••••••', $message);
             }
         }
         return $message;

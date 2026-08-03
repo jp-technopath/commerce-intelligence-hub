@@ -24,6 +24,7 @@ class ViewFinding extends ViewRecord
                 ->label('Dig Deeper')
                 ->icon('heroicon-o-magnifying-glass-plus')
                 ->color('primary')
+                ->visible(fn () => ! auth()->user()?->isClientOnly())
                 ->modalHeading('🔍 Dig Deeper — AI Investigation')
                 ->modalDescription('Ask the AI to investigate this finding using data from GA4, Adobe Commerce, Clarity, deployments, and the knowledge base.')
                 ->modalWidth('xl')
@@ -90,7 +91,7 @@ class ViewFinding extends ViewRecord
                 ->label('Investigate')
                 ->icon('heroicon-o-eye')
                 ->color('warning')
-                ->visible(fn () => $this->record->status === FindingStatus::New)
+                ->visible(fn () => ! auth()->user()?->isClientOnly() && $this->record->status === FindingStatus::New)
                 ->action(function (): void {
                     $this->record->update(['status' => FindingStatus::Investigating->value]);
                     $this->refreshFormData(['status']);
@@ -101,7 +102,7 @@ class ViewFinding extends ViewRecord
                 ->label('Accept')
                 ->icon('heroicon-o-check-badge')
                 ->color('primary')
-                ->visible(fn () => $this->record->status === FindingStatus::Investigating)
+                ->visible(fn () => ! auth()->user()?->isClientOnly() && $this->record->status === FindingStatus::Investigating)
                 ->action(function (): void {
                     $this->record->update(['status' => FindingStatus::Accepted->value]);
                     $this->refreshFormData(['status']);
@@ -112,7 +113,7 @@ class ViewFinding extends ViewRecord
                 ->label('Mark Resolved')
                 ->icon('heroicon-o-check-circle')
                 ->color('success')
-                ->visible(fn () => in_array($this->record->status, [
+                ->visible(fn () => ! auth()->user()?->isClientOnly() && in_array($this->record->status, [
                     FindingStatus::Investigating, FindingStatus::Accepted,
                 ]))
                 ->requiresConfirmation()
@@ -126,7 +127,7 @@ class ViewFinding extends ViewRecord
                 ->label('Generate AI Analysis')
                 ->icon('heroicon-o-sparkles')
                 ->color('warning')
-                ->visible(fn () => ! $this->record->recommendations()->exists())
+                ->visible(fn () => ! auth()->user()?->isClientOnly() && ! $this->record->recommendations()->exists())
                 ->form(fn () => [
                     Forms\Components\Select::make('model')
                         ->label('AI Model')
@@ -186,7 +187,7 @@ class ViewFinding extends ViewRecord
                 ->icon('heroicon-o-archive-box')
                 ->color('gray')
                 ->requiresConfirmation()
-                ->visible(fn () => ! in_array($this->record->status, [
+                ->visible(fn () => ! auth()->user()?->isClientOnly() && ! in_array($this->record->status, [
                     FindingStatus::Resolved, FindingStatus::Ignored,
                 ]))
                 ->action(function (): void {

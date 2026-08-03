@@ -5,55 +5,65 @@ namespace App\Policies;
 use App\Models\ClientMeeting;
 use App\Models\User;
 
-/**
- * Authorization policy for ClientMeeting resources.
- *
- * Admins have full access. Non-admin users can only view/update
- * meetings they own or unassigned meetings.
- */
 class ClientMeetingPolicy
 {
-    /**
-     * Any authenticated user can view the meetings list.
-     */
     public function viewAny(User $user): bool
     {
         return true;
     }
 
-    /**
-     * Admins, the meeting owner, or unassigned meetings can be viewed.
-     */
     public function view(User $user, ClientMeeting $meeting): bool
     {
-        return $user->is_admin
-            || $meeting->internal_owner_id === $user->id
-            || $meeting->internal_owner_id === null;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        if ($meeting->internal_owner_id === $user->id || $meeting->internal_owner_id === null) {
+            return true;
+        }
+
+        if ($meeting->client_id) {
+            $assignedClientIds = $user->getAssignedClientIds();
+            return (in_array('*', $assignedClientIds) || in_array($meeting->client_id, $assignedClientIds))
+                && $user->hasPermission('meetings.view', $meeting->client_id);
+        }
+
+        return false;
     }
 
-    /**
-     * Any authenticated user can create meetings.
-     */
     public function create(User $user): bool
     {
         return true;
     }
 
-    /**
-     * Admins, the meeting owner, or unassigned meetings can be updated.
-     */
     public function update(User $user, ClientMeeting $meeting): bool
     {
-        return $user->is_admin
-            || $meeting->internal_owner_id === $user->id
-            || $meeting->internal_owner_id === null;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        if ($meeting->internal_owner_id === $user->id || $meeting->internal_owner_id === null) {
+            return true;
+        }
+
+        if ($meeting->client_id) {
+            $assignedClientIds = $user->getAssignedClientIds();
+            return (in_array('*', $assignedClientIds) || in_array($meeting->client_id, $assignedClientIds))
+                && $user->hasPermission('meetings.update', $meeting->client_id);
+        }
+
+        return false;
     }
 
-    /**
-     * Only admins can delete meetings.
-     */
     public function delete(User $user, ClientMeeting $meeting): bool
     {
-        return $user->is_admin;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        $assignedClientIds = $user->getAssignedClientIds();
+        $isClientAssigned = in_array('*', $assignedClientIds) || in_array($meeting->client_id, $assignedClientIds);
+
+        return $isClientAssigned && $user->hasPermission('meetings.delete', $meeting->client_id);
     }
 }

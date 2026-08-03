@@ -31,10 +31,12 @@ class FindingResource extends Resource
 
     public static function getNavigationBadge(): ?string
     {
-        $count = Finding::whereIn('status', [
-            FindingStatus::New->value,
-            FindingStatus::Investigating->value,
-        ])->count();
+        $count = static::getEloquentQuery()
+            ->whereIn('status', [
+                FindingStatus::New->value,
+                FindingStatus::Investigating->value,
+            ])
+            ->count();
 
         return $count > 0 ? (string) $count : null;
     }
@@ -126,7 +128,20 @@ class FindingResource extends Resource
             ->filters([
                 Tables\Filters\SelectFilter::make('client_id')
                     ->label('Client')
-                    ->options(Client::pluck('name', 'id'))
+                    ->options(function () {
+                        /** @var User|null $user */
+                        $user = \Illuminate\Support\Facades\Auth::user();
+                        if (! $user) return [];
+
+                        $query = Client::query();
+                        if (! $user->isSuperAdmin()) {
+                            $assignedClientIds = $user->getAssignedClientIds();
+                            if (! in_array('*', $assignedClientIds)) {
+                                $query->whereIn('id', $assignedClientIds);
+                            }
+                        }
+                        return $query->pluck('name', 'id')->toArray();
+                    })
                     ->searchable(),
 
                 Tables\Filters\SelectFilter::make('severity')
@@ -154,7 +169,7 @@ class FindingResource extends Resource
                     ->label('Investigate')
                     ->icon('heroicon-o-eye')
                     ->color('warning')
-                    ->visible(fn (Finding $r) => $r->status === FindingStatus::New)
+                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && $r->status === FindingStatus::New)
                     ->action(fn (Finding $r) => $r->update(['status' => FindingStatus::Investigating->value]))
                     ->successNotificationTitle('Marked as investigating'),
 
@@ -162,7 +177,7 @@ class FindingResource extends Resource
                     ->label('Resolve')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
-                    ->visible(fn (Finding $r) => in_array($r->status, [
+                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && in_array($r->status, [
                         FindingStatus::Investigating, FindingStatus::Accepted,
                     ]))
                     ->action(fn (Finding $r) => $r->update(['status' => FindingStatus::Resolved->value])),
@@ -171,7 +186,7 @@ class FindingResource extends Resource
                     ->label('Generate AI Analysis')
                     ->icon('heroicon-o-sparkles')
                     ->color('primary')
-                    ->visible(fn (Finding $r) => ! $r->recommendations()->exists())
+                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && ! $r->recommendations()->exists())
                     ->action(function (Finding $r): void {
                         $result = (new AIAnalyst())->analyse($r);
                         if ($result) {
@@ -193,6 +208,7 @@ class FindingResource extends Resource
                         ->label('Mark Resolved')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
+                        ->visible(fn () => ! auth()->user()?->isClientOnly())
                         ->action(fn ($records) => $records->each(
                             fn ($r) => $r->update(['status' => FindingStatus::Resolved->value])
                         )),
@@ -201,6 +217,7 @@ class FindingResource extends Resource
                         ->icon('heroicon-o-x-circle')
                         ->color('gray')
                         ->requiresConfirmation()
+                        ->visible(fn () => ! auth()->user()?->isClientOnly())
                         ->action(fn ($records) => $records->each(
                             fn ($r) => $r->update(['status' => FindingStatus::Ignored->value])
                         )),
@@ -319,6 +336,26 @@ class FindingResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['client', 'recommendations.outcome']);
+        $query = parent::getEloquentQuery()->with(['client', 'recommendations.outcome']);
+        /** @var User|null $currentUser */
+        $currentUser = \Illuminate\Support\Facades\Auth::user();
+
+        if (! $currentUser || $currentUser->isSuperAdmin()) {
+            return $query;
+        }
+
+        $assignedClientIds = $currentUser->getAssignedClientIds();
+        $query->whereIn('client_id', $assignedClientIds);
+
+        // Filter by visibility classification if customer role
+        if ($currentUser->hasRole([\App\Models\Role::ROLE_CUSTOMER_ADMIN, \App\Models\Role::ROLE_CLIENT_USER])
+            && ! $currentUser->hasRole([\App\Models\Role::ROLE_PRODUCT_OWNER, \App\Models\Role::ROLE_ANALYST, \App\Models\Role::ROLE_ENGINEER])) {
+            $query->whereNotIn('visibility_classification', [
+                \App\Services\VisibilityService::CLASSIFICATION_RESTRICTED_TECHNICAL,
+                \App\Services\VisibilityService::CLASSIFICATION_RESTRICTED_FINANCIAL,
+            ]);
+        }
+
+        return $query;
     }
 }

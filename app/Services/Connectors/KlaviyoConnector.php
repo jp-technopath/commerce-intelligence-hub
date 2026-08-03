@@ -197,6 +197,8 @@ class KlaviyoConnector
         foreach ($aggregated as $agg) {
             $campaignName = $this->getCampaignName($agg['campaign_id']);
             $recipients   = $agg['recipients'];
+            $bounces      = $agg['bounced'];
+            $delivered    = max(0, $recipients - $bounces);
             $opens        = $agg['opens'];
             $clicks       = $agg['clicks'];
 
@@ -216,11 +218,13 @@ class KlaviyoConnector
                     'conversions'  => $agg['conversions'],
                     'revenue'      => $agg['conversion_value'],
                     'unsubscribes' => $agg['unsubscribes'],
-                    'bounces'      => $agg['bounced'],
-                    'open_rate'    => $recipients > 0 ? round($opens  / $recipients, 4) : 0,
-                    'click_rate'   => $recipients > 0 ? round($clicks / $recipients, 4) : 0,
+                    'bounces'      => $bounces,
+                    'open_rate'    => $delivered > 0 ? round($opens  / $delivered, 4) : 0,
+                    'click_rate'   => $delivered > 0 ? round($clicks / $delivered, 4) : 0,
                     'metadata_json' => [
                         'campaign_id' => $agg['campaign_id'],
+                        'delivered'   => $delivered,
+                        'sends'       => $recipients,
                     ],
                 ]
             );
@@ -302,6 +306,8 @@ class KlaviyoConnector
         foreach ($aggregated as $agg) {
             $flowName   = $this->getFlowName($agg['flow_id']);
             $recipients = $agg['recipients'];
+            $bounces    = $agg['bounced'];
+            $delivered  = max(0, $recipients - $bounces);
             $opens      = $agg['opens'];
             $clicks     = $agg['clicks'];
 
@@ -322,11 +328,13 @@ class KlaviyoConnector
                     'conversions'  => $agg['conversions'],
                     'revenue'      => $agg['conversion_value'],
                     'unsubscribes' => $agg['unsubscribes'],
-                    'bounces'      => $agg['bounced'],
-                    'open_rate'    => $recipients > 0 ? round($opens  / $recipients, 4) : 0,
-                    'click_rate'   => $recipients > 0 ? round($clicks / $recipients, 4) : 0,
+                    'bounces'      => $bounces,
+                    'open_rate'    => $delivered > 0 ? round($opens  / $delivered, 4) : 0,
+                    'click_rate'   => $delivered > 0 ? round($clicks / $delivered, 4) : 0,
                     'metadata_json' => [
-                        'flow_id' => $agg['flow_id'],
+                        'flow_id'   => $agg['flow_id'],
+                        'delivered' => $delivered,
+                        'sends'     => $recipients,
                     ],
                 ]
             );

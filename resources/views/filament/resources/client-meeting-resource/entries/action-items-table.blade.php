@@ -1,6 +1,7 @@
 @php
     $record = $getRecord();
     $actionItems = $record->actionItems()->orderBy('created_at', 'desc')->get();
+    $isClientUser = auth()->user()?->isClientOnly() ?? false;
 @endphp
 
 <div>
@@ -67,7 +68,7 @@
                                     @else
                                         {{ $item->jira_issue_key }}
                                     @endif
-                                @else
+                                @elseif (!$isClientUser)
                                     <button type="button"
                                             wire:click="createJiraTaskForActionItem({{ $item->id }})"
                                             wire:loading.attr="disabled"
@@ -84,6 +85,8 @@
                                             Creating...
                                         </span>
                                     </button>
+                                @else
+                                    —
                                 @endif
                             </td>
                             <td class="px-3 py-2 text-center">

@@ -11,6 +11,12 @@ use App\Models\PerformanceMetric;
 use App\Models\InventoryMetric;
 use App\Models\EmailMarketingMetric;
 use App\Models\Finding;
+use App\Services\Metrics\CommerceRevenueCalculator;
+use App\Services\Metrics\DataQualityEvaluator;
+use App\Services\Metrics\KpiMetadataRegistry;
+use App\Services\Metrics\RepeatCustomerCalculator;
+use App\Services\Metrics\RevenueReconciler;
+use App\Services\Metrics\UserParticipationFunnelCalculator;
 use Filament\Pages\Page;
 use Livewire\Attributes\Url;
 
@@ -21,7 +27,7 @@ class BusinessDashboard extends Page
     protected static ?string $navigationGroup = 'Dashboard';
     protected static ?string $title           = 'Business Dashboard';
     protected static ?string $slug            = 'dashboard/business';
-    protected static ?int    $navigationSort  = -1;
+    protected static ?int    $navigationSort  = 2;
 
     protected static string $view = 'filament.pages.business-dashboard';
 
@@ -31,58 +37,343 @@ class BusinessDashboard extends Page
     #[Url(keep: true)]
     public string $period = '7'; // days
 
+    private KpiMetadataRegistry $metadataRegistry;
+
+    public function boot(): void
+    {
+        $this->metadataRegistry = new KpiMetadataRegistry();
+    }
+
     public function mount(): void
     {
-        // URL params (from #[Url]) take priority; fall back to session, then default
-        if (! $this->selectedClientId) {
-            $this->selectedClientId = session('dashboard.selectedClientId', Client::first()?->id);
+        $allowedClients = $this->getClients();
+
+        if (! $this->selectedClientId || ! array_key_exists($this->selectedClientId, $allowedClients)) {
+            $this->selectedClientId = array_key_first($allowedClients);
         }
+
         if ($this->period === '7' && session()->has('dashboard.period')) {
             $this->period = session('dashboard.period');
         }
 
-        // Persist current values to session
-        session(['dashboard.selectedClientId' => $this->selectedClientId]);
-        session(['dashboard.period' => $this->period]);
+        if ($this->selectedClientId) {
+            session([
+                'dashboard.selectedClientId' => $this->selectedClientId,
+                'dashboard.period'           => $this->period,
+            ]);
+        }
     }
 
-    public function getClients(): \Illuminate\Support\Collection
+    public function updatedSelectedClientId($value): void
     {
-        return Client::orderBy('name')->pluck('name', 'id');
+        session(['dashboard.selectedClientId' => $value]);
     }
 
-    public function updatedSelectedClientId(): void
+    public function updatedPeriod($value): void
     {
-        session(['dashboard.selectedClientId' => $this->selectedClientId]);
+        session(['dashboard.period' => $value]);
     }
 
-    public function updatedPeriod(): void
+    public function getClients(): array
     {
-        session(['dashboard.period' => $this->period]);
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        $query = Client::orderBy('name');
+
+        if ($user && ! $user->isSuperAdmin()) {
+            $assignedClientIds = $user->getAssignedClientIds();
+            if (! in_array('*', $assignedClientIds)) {
+                $query->whereIn('id', $assignedClientIds);
+            }
+        }
+
+        return $query->pluck('name', 'id')->toArray();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Active integrations for this client
-    // ─────────────────────────────────────────────────────────────────────────
-
-    public function getActiveIntegrations(): array
+    public function getClientsProperty(): array
     {
-        if (! $this->selectedClientId) return [];
-
-        $client = Client::find($this->selectedClientId);
-        return $client ? $client->getActiveIntegrationTypes() : [];
+        return $this->getClients();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Funnel-Stage KPI Methods
-    // ─────────────────────────────────────────────────────────────────────────
+    public function getRevenueChartData(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return ['labels' => [], 'datasets' => [], 'ga4' => [], 'adobe' => []];
+
+        $days = (int) $this->period;
+        $from = now()->subDays($days)->startOfDay();
+        $to   = now()->endOfDay();
+
+        $dates = [];
+        $ga4Revenue = [];
+        $adobeRevenue = [];
+
+        $metrics = CommerceMetric::where('client_id', $client->id)
+            ->whereBetween('date', [$from, $to])
+            ->orderBy('date')
+            ->get()
+            ->groupBy(fn ($m) => \Carbon\Carbon::parse($m->date)->format('Y-m-d'));
+
+        foreach ($metrics as $date => $group) {
+            $dates[] = \Carbon\Carbon::parse($date)->format('M j');
+            $ga4     = $group->where('source', 'ga4')->first();
+            $adobe   = $group->where('source', 'adobe_commerce')->first();
+
+            $ga4Revenue[]   = $ga4 ? (float) $ga4->revenue : 0.0;
+            $adobeRevenue[] = $adobe ? (float) $adobe->revenue : 0.0;
+        }
+
+        return [
+            'labels'   => $dates,
+            'ga4'      => $ga4Revenue,
+            'adobe'    => $adobeRevenue,
+            'datasets' => [
+                ['label' => 'GA4 Tracked Revenue', 'data' => $ga4Revenue, 'borderColor' => '#6366f1'],
+                ['label' => 'Adobe Valid Order Revenue', 'data' => $adobeRevenue, 'borderColor' => '#f97316'],
+            ],
+        ];
+    }
+
+    public function getFindingsSummary(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return ['total' => 0, 'critical' => 0, 'open' => 0, 'resolved' => 0, 'recent' => collect()];
+
+        $allFindings  = Finding::where('client_id', $client->id)->get();
+        $openFindings = $allFindings->reject(fn ($f) => in_array($f->status, [FindingStatus::Resolved, FindingStatus::Ignored]));
+
+        return [
+            'total'    => $allFindings->count(),
+            'critical' => $openFindings->where('severity', FindingSeverity::Critical)->count(),
+            'open'     => $openFindings->count(),
+            'resolved' => $allFindings->where('status', FindingStatus::Resolved)->count(),
+            'recent'   => Finding::where('client_id', $client->id)->latest()->take(5)->get(),
+        ];
+    }
+
+    public function getSelectedClientProperty(): ?Client
+    {
+        if (! $this->selectedClientId) return null;
+        return Client::find($this->selectedClientId);
+    }
+
+    public function setPeriod(string $days): void
+    {
+        $this->period = $days;
+        session(['dashboard.period' => $days]);
+    }
 
     /**
-     * Acquisition: Sessions (GA4), New Users (GA4), Traffic (Clarity)
+     * Conversion: Commerce Conversion Rate (Unique Buyers ÷ GA4 Active Users),
+     *             Repeat Customer Rate, Orders, Items Sold
+     */
+    public function getConversionKpis(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
+
+        $active = $this->getActiveIntegrations();
+        $days   = (int) $this->period;
+        $fromCur  = now()->subDays($days)->startOfDay();
+        $toCur    = now()->endOfDay();
+        $fromPrev = now()->subDays($days * 2)->startOfDay();
+        $toPrev   = now()->subDays($days + 1)->endOfDay();
+
+        $kpis   = [];
+        $hasGA4   = in_array('ga4', $active);
+        $hasAdobe = in_array('adobe_commerce', $active);
+
+        $revCalc = new CommerceRevenueCalculator();
+        $curRev  = $revCalc->calculate($client, $fromCur, $toCur);
+        $prevRev = $revCalc->calculate($client, $fromPrev, $toPrev);
+
+        if ($hasGA4) {
+            $ga4Current  = $this->getCommerceAggregates('ga4', $days);
+            $ga4Previous = $this->getCommerceAggregates('ga4', $days, offset: $days);
+        }
+
+        if ($hasGA4 && $hasAdobe) {
+            $curUsers  = $ga4Current['active_users'];
+            $prevUsers = $ga4Previous['active_users'];
+
+            $curRate  = $curUsers > 0 ? ($curRev['unique_purchasing_customers'] / $curUsers) * 100 : 0.0;
+            $prevRate = $prevUsers > 0 ? ($prevRev['unique_purchasing_customers'] / $prevUsers) * 100 : 0.0;
+
+            $kpis[] = [
+                'label'    => 'Commerce Conversion Rate',
+                'value'    => number_format($curRate, 2) . '%',
+                'previous' => number_format($prevRate, 2) . '%',
+                'change'   => $this->pctChange($prevRate, $curRate),
+                'icon'     => 'heroicon-o-arrow-trending-up',
+                'color'    => 'violet',
+                'source'   => 'GA4 + Adobe',
+                'metadata' => $this->metadataRegistry->getMetadata('commerce_conversion_rate', $client),
+            ];
+        } elseif ($hasGA4) {
+            // Fallback: GA4-only session conversion rate
+            $kpis[] = [
+                'label'    => 'GA4 Purchase Session Conversion Rate',
+                'value'    => number_format($ga4Current['conversion_rate'], 2) . '%',
+                'previous' => number_format($ga4Previous['conversion_rate'], 2) . '%',
+                'change'   => $this->pctChange($ga4Previous['conversion_rate'], $ga4Current['conversion_rate']),
+                'icon'     => 'heroicon-o-arrow-trending-up',
+                'color'    => 'violet',
+                'source'   => 'GA4 (Fallback)',
+                'metadata' => $this->metadataRegistry->getMetadata('commerce_conversion_rate', $client, ['known_limitations' => 'Session-level fallback metric.']),
+            ];
+        }
+
+        if ($hasAdobe) {
+            $repCalc = new RepeatCustomerCalculator();
+            $curRep  = $repCalc->calculate($client, $fromCur, $toCur);
+            $prevRep = $repCalc->calculate($client, $fromPrev, $toPrev);
+
+            $kpis[] = [
+                'label'    => 'Repeat Customer Rate',
+                'value'    => number_format($curRep['repeat_customer_rate'], 1) . '%',
+                'previous' => number_format($prevRep['repeat_customer_rate'], 1) . '%',
+                'change'   => $this->pctChange($prevRep['repeat_customer_rate'], $curRep['repeat_customer_rate']),
+                'icon'     => 'heroicon-o-user-group',
+                'color'    => 'teal',
+                'source'   => 'Adobe',
+                'metadata' => $this->metadataRegistry->getMetadata('repeat_customer_rate', $client),
+            ];
+
+            $kpis[] = [
+                'label'    => 'Orders',
+                'value'    => number_format($curRev['valid_orders']),
+                'previous' => number_format($prevRev['valid_orders']),
+                'change'   => $this->pctChange($prevRev['valid_orders'], $curRev['valid_orders']),
+                'icon'     => 'heroicon-o-shopping-cart',
+                'color'    => 'orange',
+                'source'   => 'Adobe',
+            ];
+
+            $kpis[] = [
+                'label'    => 'Items Sold',
+                'value'    => number_format($this->getCommerceAggregates('adobe_commerce', $days)['items_sold']),
+                'previous' => number_format($this->getCommerceAggregates('adobe_commerce', $days, offset: $days)['items_sold']),
+                'change'   => $this->pctChange(
+                    $this->getCommerceAggregates('adobe_commerce', $days, offset: $days)['items_sold'],
+                    $this->getCommerceAggregates('adobe_commerce', $days)['items_sold']
+                ),
+                'icon'     => 'heroicon-o-cube',
+                'color'    => 'rose',
+                'source'   => 'Adobe',
+            ];
+        }
+
+        return $kpis;
+    }
+
+    /**
+     * User Participation Funnel
+     */
+    public function getPurchaseFunnelData(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
+
+        $active = $this->getActiveIntegrations();
+        if (! in_array('ga4', $active)) return [];
+
+        $days = (int) $this->period;
+        $from = now()->subDays($days)->startOfDay();
+        $to   = now()->endOfDay();
+
+        $calc = new UserParticipationFunnelCalculator();
+        return $calc->calculate($client, $from, $to);
+    }
+
+    /**
+     * Revenue: GA4 Tracked Purchase Revenue, Adobe Valid Order Revenue, Adobe AOV, Revenue per Visitor
+     */
+    public function getRevenueKpis(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
+
+        $active = $this->getActiveIntegrations();
+        $days   = (int) $this->period;
+        $fromCur  = now()->subDays($days)->startOfDay();
+        $toCur    = now()->endOfDay();
+        $fromPrev = now()->subDays($days * 2)->startOfDay();
+        $toPrev   = now()->subDays($days + 1)->endOfDay();
+
+        $kpis   = [];
+        $revCalc = new CommerceRevenueCalculator();
+        $curRev  = $revCalc->calculate($client, $fromCur, $toCur);
+        $prevRev = $revCalc->calculate($client, $fromPrev, $toPrev);
+
+        if (in_array('ga4', $active)) {
+            $ga4Current  = $this->getCommerceAggregates('ga4', $days);
+            $ga4Previous = $this->getCommerceAggregates('ga4', $days, offset: $days);
+
+            $kpis[] = [
+                'label'    => 'GA4 Tracked Purchase Revenue',
+                'value'    => '$' . number_format($ga4Current['revenue'], 2),
+                'previous' => '$' . number_format($ga4Previous['revenue'], 2),
+                'change'   => $this->pctChange($ga4Previous['revenue'], $ga4Current['revenue']),
+                'icon'     => 'heroicon-o-banknotes',
+                'color'    => 'emerald',
+                'source'   => 'GA4',
+                'metadata' => $this->metadataRegistry->getMetadata('ga4_tracked_purchase_revenue', $client),
+            ];
+        }
+
+        if (in_array('adobe_commerce', $active)) {
+            $kpis[] = [
+                'label'    => 'Adobe Valid Order Revenue',
+                'value'    => '$' . number_format($curRev['net_revenue'], 2),
+                'previous' => '$' . number_format($prevRev['net_revenue'], 2),
+                'change'   => $this->pctChange($prevRev['net_revenue'], $curRev['net_revenue']),
+                'icon'     => 'heroicon-o-banknotes',
+                'color'    => 'emerald',
+                'source'   => 'Adobe',
+                'metadata' => $this->metadataRegistry->getMetadata('adobe_valid_order_revenue', $client),
+            ];
+
+            $kpis[] = [
+                'label'    => 'Adobe AOV',
+                'value'    => '$' . number_format($curRev['aov'], 2),
+                'previous' => '$' . number_format($prevRev['aov'], 2),
+                'change'   => $this->pctChange($prevRev['aov'], $curRev['aov']),
+                'icon'     => 'heroicon-o-receipt-percent',
+                'color'    => 'amber',
+                'source'   => 'Adobe',
+                'metadata' => $this->metadataRegistry->getMetadata('adobe_aov', $client),
+            ];
+        }
+
+        if (in_array('ga4', $active) && in_array('adobe_commerce', $active)) {
+            $curUsers  = $ga4Current['active_users'] ?? 0;
+            $prevUsers = $ga4Previous['active_users'] ?? 0;
+
+            $curRpv  = $curUsers > 0 ? $curRev['net_revenue'] / $curUsers : 0.0;
+            $prevRpv = $prevUsers > 0 ? $prevRev['net_revenue'] / $prevUsers : 0.0;
+
+            $kpis[] = [
+                'label'    => 'Revenue per Visitor',
+                'value'    => '$' . number_format($curRpv, 2),
+                'previous' => '$' . number_format($prevRpv, 2),
+                'change'   => $this->pctChange($prevRpv, $curRpv),
+                'icon'     => 'heroicon-o-currency-dollar',
+                'color'    => 'blue',
+                'source'   => 'GA4 + Adobe',
+                'metadata' => $this->metadataRegistry->getMetadata('revenue_per_visitor', $client),
+            ];
+        }
+
+        return $kpis;
+    }
+
+    /**
+     * Acquisition: Sessions, New Users, Returning Visitor Rate, Traffic
      */
     public function getAcquisitionKpis(): array
     {
-        if (! $this->selectedClientId) return [];
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
 
         $active = $this->getActiveIntegrations();
         $days   = (int) $this->period;
@@ -97,10 +388,11 @@ class BusinessDashboard extends Page
                 'value'    => number_format($current['sessions']),
                 'previous' => number_format($previous['sessions']),
                 'change'   => $this->pctChange($previous['sessions'], $current['sessions']),
-                'icon'     => 'heroicon-o-cursor-arrow-rays',
-                'color'    => 'blue',
+                'icon'     => 'heroicon-o-globe-alt',
+                'color'    => 'indigo',
                 'source'   => 'GA4',
             ];
+
             $kpis[] = [
                 'label'    => 'New Users',
                 'value'    => number_format($current['new_customers']),
@@ -111,17 +403,15 @@ class BusinessDashboard extends Page
                 'source'   => 'GA4',
             ];
 
-            if ($current['return_rate'] > 0 || $previous['return_rate'] > 0) {
-                $kpis[] = [
-                    'label'    => 'Return Rate',
-                    'value'    => number_format($current['return_rate'], 1) . '%',
-                    'previous' => number_format($previous['return_rate'], 1) . '%',
-                    'change'   => $this->pctChange($previous['return_rate'], $current['return_rate']),
-                    'icon'     => 'heroicon-o-arrow-path',
-                    'color'    => 'indigo',
-                    'source'   => 'GA4',
-                ];
-            }
+            $kpis[] = [
+                'label'    => 'Returning Visitor Rate',
+                'value'    => number_format($current['return_rate'], 1) . '%',
+                'previous' => number_format($previous['return_rate'], 1) . '%',
+                'change'   => $this->pctChange($previous['return_rate'], $current['return_rate']),
+                'icon'     => 'heroicon-o-arrow-path',
+                'color'    => 'teal',
+                'source'   => 'GA4',
+            ];
         }
 
         if (in_array('clarity', $active)) {
@@ -129,12 +419,12 @@ class BusinessDashboard extends Page
             $previous = $this->getBehavioralAggregates($days, offset: $days);
 
             $kpis[] = [
-                'label'    => 'Traffic',
-                'value'    => number_format($current['traffic']),
-                'previous' => number_format($previous['traffic']),
-                'change'   => $this->pctChange($previous['traffic'], $current['traffic']),
-                'icon'     => 'heroicon-o-globe-alt',
-                'color'    => 'cyan',
+                'label'    => 'Clarity Sessions',
+                'value'    => number_format($current['total_sessions']),
+                'previous' => number_format($previous['total_sessions']),
+                'change'   => $this->pctChange($previous['total_sessions'], $current['total_sessions']),
+                'icon'     => 'heroicon-o-cursor-arrow-rays',
+                'color'    => 'purple',
                 'source'   => 'Clarity',
             ];
         }
@@ -143,223 +433,7 @@ class BusinessDashboard extends Page
     }
 
     /**
-     * Conversion: Conversion Rate (Adobe Orders ÷ GA4 Unique Users),
-     *             Orders (Adobe), Items Sold (Adobe)
-     */
-    public function getConversionKpis(): array
-    {
-        if (! $this->selectedClientId) return [];
-
-        $active = $this->getActiveIntegrations();
-        $days   = (int) $this->period;
-        $kpis   = [];
-
-        // Conversion Rate = Adobe Orders ÷ GA4 Unique Users
-        $hasGA4   = in_array('ga4', $active);
-        $hasAdobe = in_array('adobe_commerce', $active);
-
-        if ($hasGA4) {
-            $ga4Current  = $this->getCommerceAggregates('ga4', $days);
-            $ga4Previous = $this->getCommerceAggregates('ga4', $days, offset: $days);
-        }
-
-        if ($hasAdobe) {
-            $adobeCurrent  = $this->getCommerceAggregates('adobe_commerce', $days);
-            $adobePrevious = $this->getCommerceAggregates('adobe_commerce', $days, offset: $days);
-        }
-
-        if ($hasGA4 && $hasAdobe) {
-            $currentUsers  = $ga4Current['active_users'];
-            $previousUsers = $ga4Previous['active_users'];
-
-            $currentRate  = $currentUsers > 0
-                ? ($adobeCurrent['orders'] / $currentUsers) * 100
-                : 0;
-            $previousRate = $previousUsers > 0
-                ? ($adobePrevious['orders'] / $previousUsers) * 100
-                : 0;
-
-            $kpis[] = [
-                'label'    => 'Conversion Rate',
-                'value'    => number_format($currentRate, 2) . '%',
-                'previous' => number_format($previousRate, 2) . '%',
-                'change'   => $this->pctChange($previousRate, $currentRate),
-                'icon'     => 'heroicon-o-arrow-trending-up',
-                'color'    => 'violet',
-                'source'   => 'GA4 + Adobe',
-            ];
-        } elseif ($hasGA4) {
-            // Fallback: GA4-only session conversion rate
-            $kpis[] = [
-                'label'    => 'Conversion Rate',
-                'value'    => number_format($ga4Current['conversion_rate'], 2) . '%',
-                'previous' => number_format($ga4Previous['conversion_rate'], 2) . '%',
-                'change'   => $this->pctChange($ga4Previous['conversion_rate'], $ga4Current['conversion_rate']),
-                'icon'     => 'heroicon-o-arrow-trending-up',
-                'color'    => 'violet',
-                'source'   => 'GA4',
-            ];
-        }
-
-        if ($hasAdobe) {
-            $kpis[] = [
-                'label'    => 'Orders',
-                'value'    => number_format($adobeCurrent['orders']),
-                'previous' => number_format($adobePrevious['orders']),
-                'change'   => $this->pctChange($adobePrevious['orders'], $adobeCurrent['orders']),
-                'icon'     => 'heroicon-o-shopping-cart',
-                'color'    => 'orange',
-                'source'   => 'Adobe',
-            ];
-            $kpis[] = [
-                'label'    => 'Items Sold',
-                'value'    => number_format($adobeCurrent['items_sold']),
-                'previous' => number_format($adobePrevious['items_sold']),
-                'change'   => $this->pctChange($adobePrevious['items_sold'], $adobeCurrent['items_sold']),
-                'icon'     => 'heroicon-o-cube',
-                'color'    => 'rose',
-                'source'   => 'Adobe',
-            ];
-        }
-
-        return $kpis;
-    }
-
-    /**
-     * Purchase Journey Funnel: View Product → Add to Cart → Begin Checkout → Purchase
-     */
-    public function getPurchaseFunnelData(): array
-    {
-        if (! $this->selectedClientId) return [];
-
-        $active = $this->getActiveIntegrations();
-        if (! in_array('ga4', $active)) return [];
-
-        $days = (int) $this->period;
-        $from = now()->subDays($days)->startOfDay();
-        $to   = now()->endOfDay();
-
-        $metrics = CommerceMetric::where('client_id', $this->selectedClientId)
-            ->where('source', 'ga4')
-            ->whereBetween('date', [$from, $to])
-            ->whereNotNull('metadata_json')
-            ->get();
-
-        $totals = [
-            'view_item'      => 0,
-            'add_to_cart'    => 0,
-            'begin_checkout' => 0,
-            'purchase'       => 0,
-        ];
-
-        foreach ($metrics as $m) {
-            $funnel = ($m->metadata_json ?? [])['funnel'] ?? null;
-            if (! $funnel) continue;
-
-            foreach ($totals as $key => &$val) {
-                $val += (int) ($funnel[$key] ?? 0);
-            }
-            unset($val);
-        }
-
-        // If no funnel data yet, return empty
-        if ($totals['view_item'] === 0) return [];
-
-        $stageConfig = [
-            ['key' => 'view_item',      'label' => 'View Product',   'color' => '#6366f1'],
-            ['key' => 'add_to_cart',    'label' => 'Add to Cart',    'color' => '#8b5cf6'],
-            ['key' => 'begin_checkout', 'label' => 'Begin Checkout', 'color' => '#a855f7'],
-            ['key' => 'purchase',       'label' => 'Purchase',       'color' => '#10b981'],
-        ];
-
-        $stages = [];
-        $prevCount = null;
-
-        foreach ($stageConfig as $cfg) {
-            $count = $totals[$cfg['key']];
-            $dropOff     = $prevCount !== null && $prevCount > 0
-                ? round((1 - $count / $prevCount) * 100, 1)
-                : 0;
-            $passThrough = $prevCount !== null && $prevCount > 0
-                ? round(($count / $prevCount) * 100, 1)
-                : 100;
-
-            $stages[] = [
-                'label'        => $cfg['label'],
-                'count'        => $count,
-                'color'        => $cfg['color'],
-                'drop_off'     => $dropOff,
-                'pass_through' => $passThrough,
-            ];
-
-            $prevCount = $count;
-        }
-
-        $overallRate = $totals['view_item'] > 0
-            ? round(($totals['purchase'] / $totals['view_item']) * 100, 2)
-            : 0;
-
-        return [
-            'stages'       => $stages,
-            'overall_rate' => $overallRate,
-        ];
-    }
-
-    /**
-     * Revenue: GA4 Revenue, Adobe Revenue, AOV (Adobe)
-     */
-    public function getRevenueKpis(): array
-    {
-        if (! $this->selectedClientId) return [];
-
-        $active = $this->getActiveIntegrations();
-        $days   = (int) $this->period;
-        $kpis   = [];
-
-        if (in_array('ga4', $active)) {
-            $current  = $this->getCommerceAggregates('ga4', $days);
-            $previous = $this->getCommerceAggregates('ga4', $days, offset: $days);
-
-            $kpis[] = [
-                'label'    => 'GA4 Revenue',
-                'value'    => '$' . number_format($current['revenue'], 2),
-                'previous' => '$' . number_format($previous['revenue'], 2),
-                'change'   => $this->pctChange($previous['revenue'], $current['revenue']),
-                'icon'     => 'heroicon-o-banknotes',
-                'color'    => 'emerald',
-                'source'   => 'GA4',
-            ];
-        }
-
-        if (in_array('adobe_commerce', $active)) {
-            $current  = $this->getCommerceAggregates('adobe_commerce', $days);
-            $previous = $this->getCommerceAggregates('adobe_commerce', $days, offset: $days);
-
-            $kpis[] = [
-                'label'    => 'Adobe Revenue',
-                'value'    => '$' . number_format($current['revenue'], 2),
-                'previous' => '$' . number_format($previous['revenue'], 2),
-                'change'   => $this->pctChange($previous['revenue'], $current['revenue']),
-                'icon'     => 'heroicon-o-banknotes',
-                'color'    => 'emerald',
-                'source'   => 'Adobe',
-            ];
-            $kpis[] = [
-                'label'    => 'AOV',
-                'value'    => '$' . number_format($current['aov'], 2),
-                'previous' => '$' . number_format($previous['aov'], 2),
-                'change'   => $this->pctChange($previous['aov'], $current['aov']),
-                'icon'     => 'heroicon-o-receipt-percent',
-                'color'    => 'amber',
-                'source'   => 'Adobe',
-            ];
-        }
-
-        return $kpis;
-    }
-
-    /**
-     * UX & Friction: Friction Score, Rage Clicks, Script Errors, Dead Clicks (all Clarity)
+     * UX & Friction: Friction Score, Rage Clicks, Script Errors
      */
     public function getFrictionKpis(): array
     {
@@ -407,123 +481,63 @@ class BusinessDashboard extends Page
     }
 
     /**
-     * Performance: LCP, INP, CLS, TTFB, Page Load Time, Bounce Rate (GA4 + Clarity)
+     * Performance: Core Web Vitals (LCP p75, INP p75, CLS p75)
      */
     public function getPerformanceKpis(): array
     {
         if (! $this->selectedClientId) return [];
 
-        $active = $this->getActiveIntegrations();
-        $hasPerf = in_array('ga4', $active) || in_array('clarity', $active) || in_array('new_relic', $active);
-        if (! $hasPerf) return [];
-
-        $days     = (int) $this->period;
-        $current  = $this->getPerformanceAggregates($days);
-        $previous = $this->getPerformanceAggregates($days, offset: $days);
+        $active  = $this->getActiveIntegrations();
+        $days    = (int) $this->period;
+        $current = $this->getPerformanceAggregates($days);
+        $previous= $this->getPerformanceAggregates($days, offset: $days);
 
         $kpis = [];
 
-        // Core Web Vitals (GA4)
         if ($current['lcp'] > 0 || $previous['lcp'] > 0) {
             $kpis[] = [
-                'label'    => 'LCP',
+                'label'    => 'LCP p75',
                 'value'    => number_format($current['lcp'], 2) . 's',
                 'previous' => number_format($previous['lcp'], 2) . 's',
                 'change'   => $this->pctChange($previous['lcp'], $current['lcp']),
                 'icon'     => 'heroicon-o-clock',
                 'color'    => 'violet',
                 'invert'   => true,
-                'source'   => 'GA4',
+                'source'   => 'CrUX',
             ];
         }
 
         if ($current['inp'] > 0 || $previous['inp'] > 0) {
             $kpis[] = [
-                'label'    => 'INP',
+                'label'    => 'INP p75',
                 'value'    => number_format($current['inp'], 0) . 'ms',
                 'previous' => number_format($previous['inp'], 0) . 'ms',
                 'change'   => $this->pctChange($previous['inp'], $current['inp']),
                 'icon'     => 'heroicon-o-cursor-arrow-ripple',
                 'color'    => 'blue',
                 'invert'   => true,
-                'source'   => 'GA4',
+                'source'   => 'CrUX',
             ];
         }
 
         if ($current['cls'] > 0 || $previous['cls'] > 0) {
             $kpis[] = [
-                'label'    => 'CLS',
+                'label'    => 'CLS p75',
                 'value'    => number_format($current['cls'], 3),
                 'previous' => number_format($previous['cls'], 3),
                 'change'   => $this->pctChange($previous['cls'], $current['cls']),
                 'icon'     => 'heroicon-o-arrows-up-down',
                 'color'    => 'amber',
                 'invert'   => true,
-                'source'   => 'GA4',
+                'source'   => 'CrUX',
             ];
         }
 
-        // Page Load Time (New Relic → seconds)
-        if ($current['page_load_time'] > 0 || $previous['page_load_time'] > 0) {
-            $kpis[] = [
-                'label'    => 'Page Load',
-                'value'    => number_format($current['page_load_time'], 2) . 's',
-                'previous' => number_format($previous['page_load_time'], 2) . 's',
-                'change'   => $this->pctChange($previous['page_load_time'], $current['page_load_time']),
-                'icon'     => 'heroicon-o-bolt',
-                'color'    => 'orange',
-                'invert'   => true,
-                'source'   => $current['has_new_relic'] ? 'New Relic' : 'GA4',
-            ];
-        }
-
-        // Server Response Time (New Relic → seconds)
-        if ($current['server_response_time'] > 0 || $previous['server_response_time'] > 0) {
-            $kpis[] = [
-                'label'    => 'Response Time',
-                'value'    => number_format($current['server_response_time'], 2) . 's',
-                'previous' => number_format($previous['server_response_time'], 2) . 's',
-                'change'   => $this->pctChange($previous['server_response_time'], $current['server_response_time']),
-                'icon'     => 'heroicon-o-server',
-                'color'    => 'sky',
-                'invert'   => true,
-                'source'   => 'New Relic',
-            ];
-        }
-
-        // TTFB (New Relic → seconds)
-        if ($current['ttfb'] > 0 || $previous['ttfb'] > 0) {
-            $kpis[] = [
-                'label'    => 'TTFB',
-                'value'    => number_format($current['ttfb'], 2) . 's',
-                'previous' => number_format($previous['ttfb'], 2) . 's',
-                'change'   => $this->pctChange($previous['ttfb'], $current['ttfb']),
-                'icon'     => 'heroicon-o-signal',
-                'color'    => 'cyan',
-                'invert'   => true,
-                'source'   => 'New Relic',
-            ];
-        }
-
-        // Apdex Score (New Relic — higher is better)
-        if ($current['apdex'] > 0 || $previous['apdex'] > 0) {
-            $kpis[] = [
-                'label'    => 'Apdex',
-                'value'    => number_format($current['apdex'], 2),
-                'previous' => number_format($previous['apdex'], 2),
-                'change'   => $this->pctChange($previous['apdex'], $current['apdex']),
-                'icon'     => 'heroicon-o-shield-check',
-                'color'    => 'emerald',
-                'source'   => 'New Relic',
-            ];
-        }
-
-        // Throughput (New Relic)
         if ($current['throughput'] > 0 || $previous['throughput'] > 0) {
             $kpis[] = [
-                'label'    => 'Throughput',
-                'value'    => number_format($current['throughput']),
-                'previous' => number_format($previous['throughput']),
+                'label'    => 'Average Throughput',
+                'value'    => number_format($current['throughput']) . ' req/m',
+                'previous' => number_format($previous['throughput']) . ' req/m',
                 'change'   => $this->pctChange($previous['throughput'], $current['throughput']),
                 'icon'     => 'heroicon-o-arrow-trending-up',
                 'color'    => 'blue',
@@ -531,39 +545,11 @@ class BusinessDashboard extends Page
             ];
         }
 
-        // Error Rate (New Relic — lower is better)
-        if ($current['error_rate'] > 0 || $previous['error_rate'] > 0) {
-            $kpis[] = [
-                'label'    => 'Error Rate',
-                'value'    => number_format($current['error_rate'] * 100, 2) . '%',
-                'previous' => number_format($previous['error_rate'] * 100, 2) . '%',
-                'change'   => $this->pctChange($previous['error_rate'], $current['error_rate']),
-                'icon'     => 'heroicon-o-bug-ant',
-                'color'    => 'red',
-                'invert'   => true,
-                'source'   => 'New Relic',
-            ];
-        }
-
-        // Bounce Rate (GA4/Clarity)
-        if ($current['bounce_rate'] > 0 || $previous['bounce_rate'] > 0) {
-            $kpis[] = [
-                'label'    => 'Bounce Rate',
-                'value'    => number_format($current['bounce_rate'], 1) . '%',
-                'previous' => number_format($previous['bounce_rate'], 1) . '%',
-                'change'   => $this->pctChange($previous['bounce_rate'], $current['bounce_rate']),
-                'icon'     => 'heroicon-o-arrow-uturn-left',
-                'color'    => 'rose',
-                'invert'   => true,
-                'source'   => 'GA4',
-            ];
-        }
-
         return $kpis;
     }
 
     /**
-     * Inventory: Out of Stock, Low Stock, OOS Rate, Turnover (Adobe/Shopify)
+     * Inventory: Out of Stock, Low Stock, OOS Rate, Turnover
      */
     public function getInventoryKpis(): array
     {
@@ -594,49 +580,11 @@ class BusinessDashboard extends Page
             ];
         }
 
-        if ($current['low_stock_count'] > 0 || $previous['low_stock_count'] > 0) {
-            $kpis[] = [
-                'label'    => 'Low Stock',
-                'value'    => number_format($current['low_stock_count']),
-                'previous' => number_format($previous['low_stock_count']),
-                'change'   => $this->pctChange($previous['low_stock_count'], $current['low_stock_count']),
-                'icon'     => 'heroicon-o-exclamation-circle',
-                'color'    => 'amber',
-                'invert'   => true,
-                'source'   => $srcLabel,
-            ];
-        }
-
-        if ($current['out_of_stock_rate'] > 0 || $previous['out_of_stock_rate'] > 0) {
-            $kpis[] = [
-                'label'    => 'OOS Rate',
-                'value'    => number_format($current['out_of_stock_rate'], 1) . '%',
-                'previous' => number_format($previous['out_of_stock_rate'], 1) . '%',
-                'change'   => $this->pctChange($previous['out_of_stock_rate'], $current['out_of_stock_rate']),
-                'icon'     => 'heroicon-o-chart-pie',
-                'color'    => 'orange',
-                'invert'   => true,
-                'source'   => $srcLabel,
-            ];
-        }
-
-        if ($current['inventory_turnover'] > 0 || $previous['inventory_turnover'] > 0) {
-            $kpis[] = [
-                'label'    => 'Turnover',
-                'value'    => number_format($current['inventory_turnover'], 2),
-                'previous' => number_format($previous['inventory_turnover'], 2),
-                'change'   => $this->pctChange($previous['inventory_turnover'], $current['inventory_turnover']),
-                'icon'     => 'heroicon-o-arrow-path',
-                'color'    => 'emerald',
-                'source'   => $srcLabel,
-            ];
-        }
-
         return $kpis;
     }
 
     /**
-     * Email Marketing: Flow summary, rates, revenue, engagement (Klaviyo)
+     * Email Marketing: Klaviyo Attributed Revenue vs GA4 Tracked Email Revenue
      */
     public function getEmailMarketingKpis(): array
     {
@@ -650,8 +598,6 @@ class BusinessDashboard extends Page
         $previous = $this->getEmailMarketingAggregates($days, offset: $days);
 
         $kpis = [];
-
-        // ── High-level flow summary ──────────────────────────────────────
 
         $kpis[] = [
             'label'    => 'Active Flows',
@@ -674,7 +620,7 @@ class BusinessDashboard extends Page
         ];
 
         $kpis[] = [
-            'label'    => 'Klaviyo Conversion Value',
+            'label'    => 'Klaviyo Attributed Revenue',
             'value'    => '$' . number_format($current['revenue'], 2),
             'previous' => '$' . number_format($previous['revenue'], 2),
             'change'   => $this->pctChange($previous['revenue'], $current['revenue']),
@@ -683,13 +629,12 @@ class BusinessDashboard extends Page
             'source'   => 'Klaviyo',
         ];
 
-        // ── GA4 Email Revenue (last-click attribution) ───────────────────
         if (in_array('ga4', $active)) {
             $ga4Current  = $this->getGA4EmailChannelRevenue($days);
             $ga4Previous = $this->getGA4EmailChannelRevenue($days, offset: $days);
 
             $kpis[] = [
-                'label'    => 'GA4 Email Revenue',
+                'label'    => 'GA4 Tracked Email Revenue',
                 'value'    => '$' . number_format($ga4Current['revenue'], 2),
                 'previous' => '$' . number_format($ga4Previous['revenue'], 2),
                 'change'   => $this->pctChange($ga4Previous['revenue'], $ga4Current['revenue']),
@@ -699,82 +644,18 @@ class BusinessDashboard extends Page
             ];
         }
 
-        // ── Engagement metrics ───────────────────────────────────────────
+        if ($current['delivered'] > 0) {
+            $openRate = round(($current['opens'] / $current['delivered']) * 100, 1);
+            $prevDel  = max(1, $previous['delivered']);
+            $prevOpen = round(($previous['opens'] / $prevDel) * 100, 1);
 
-        if ($current['opens'] > 0 || $previous['opens'] > 0) {
-            $kpis[] = [
-                'label'    => 'Total Opens',
-                'value'    => number_format($current['opens']),
-                'previous' => number_format($previous['opens']),
-                'change'   => $this->pctChange($previous['opens'], $current['opens']),
-                'icon'     => 'heroicon-o-envelope-open',
-                'color'    => 'sky',
-                'source'   => 'Klaviyo',
-            ];
-        }
-
-        if ($current['clicks'] > 0 || $previous['clicks'] > 0) {
-            $kpis[] = [
-                'label'    => 'Total Clicks',
-                'value'    => number_format($current['clicks']),
-                'previous' => number_format($previous['clicks']),
-                'change'   => $this->pctChange($previous['clicks'], $current['clicks']),
-                'icon'     => 'heroicon-o-cursor-arrow-rays',
-                'color'    => 'blue',
-                'source'   => 'Klaviyo',
-            ];
-        }
-
-        // ── Rate cards ───────────────────────────────────────────────────
-
-        if ($current['open_rate'] > 0 || $previous['open_rate'] > 0) {
             $kpis[] = [
                 'label'    => 'Open Rate',
-                'value'    => number_format($current['open_rate'], 1) . '%',
-                'previous' => number_format($previous['open_rate'], 1) . '%',
-                'change'   => $this->pctChange($previous['open_rate'], $current['open_rate']),
+                'value'    => number_format($openRate, 1) . '%',
+                'previous' => number_format($prevOpen, 1) . '%',
+                'change'   => $this->pctChange($prevOpen, $openRate),
                 'icon'     => 'heroicon-o-chart-bar',
                 'color'    => 'emerald',
-                'source'   => 'Klaviyo',
-            ];
-        }
-
-        if ($current['click_rate'] > 0 || $previous['click_rate'] > 0) {
-            $kpis[] = [
-                'label'    => 'Click Rate',
-                'value'    => number_format($current['click_rate'], 1) . '%',
-                'previous' => number_format($previous['click_rate'], 1) . '%',
-                'change'   => $this->pctChange($previous['click_rate'], $current['click_rate']),
-                'icon'     => 'heroicon-o-arrow-top-right-on-square',
-                'color'    => 'blue',
-                'source'   => 'Klaviyo',
-            ];
-        }
-
-        // ── Health signals (inverted — increase is bad) ──────────────────
-
-        if ($current['unsubscribes'] > 0 || $previous['unsubscribes'] > 0) {
-            $kpis[] = [
-                'label'    => 'Unsubscribes',
-                'value'    => number_format($current['unsubscribes']),
-                'previous' => number_format($previous['unsubscribes']),
-                'change'   => $this->pctChange($previous['unsubscribes'], $current['unsubscribes']),
-                'icon'     => 'heroicon-o-user-minus',
-                'color'    => 'rose',
-                'invert'   => true,
-                'source'   => 'Klaviyo',
-            ];
-        }
-
-        if ($current['bounces'] > 0 || $previous['bounces'] > 0) {
-            $kpis[] = [
-                'label'    => 'Bounces',
-                'value'    => number_format($current['bounces']),
-                'previous' => number_format($previous['bounces']),
-                'change'   => $this->pctChange($previous['bounces'], $current['bounces']),
-                'icon'     => 'heroicon-o-arrow-uturn-left',
-                'color'    => 'amber',
-                'invert'   => true,
                 'source'   => 'Klaviyo',
             ];
         }
@@ -782,86 +663,43 @@ class BusinessDashboard extends Page
         return $kpis;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Findings & Revenue Chart
-    // ─────────────────────────────────────────────────────────────────────────
-
-    public function getFindingsSummary(): array
+    /**
+     * Get Revenue Reconciliation Result
+     */
+    public function getRevenueReconciliationProperty()
     {
-        if (! $this->selectedClientId) return [];
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return null;
 
-        $base = Finding::where('client_id', $this->selectedClientId);
+        $days = (int) $this->period;
+        $from = now()->subDays($days)->startOfDay();
+        $to   = now()->endOfDay();
 
-        $open = (clone $base)->whereIn('status', [
-            FindingStatus::New->value,
-            FindingStatus::Investigating->value,
-            FindingStatus::Accepted->value,
-        ])->count();
-
-        $critical = (clone $base)->whereIn('status', [
-            FindingStatus::New->value,
-            FindingStatus::Investigating->value,
-        ])->whereIn('severity', [
-            FindingSeverity::Critical->value,
-            FindingSeverity::High->value,
-        ])->count();
-
-        $resolved = (clone $base)->where('status', FindingStatus::Resolved->value)->count();
-
-        $recentFindings = Finding::where('client_id', $this->selectedClientId)
-            ->whereIn('status', [FindingStatus::New->value, FindingStatus::Investigating->value])
-            ->orderByRaw("CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END")
-            ->limit(5)
-            ->get();
-
-        return [
-            'open'     => $open,
-            'critical' => $critical,
-            'resolved' => $resolved,
-            'recent'   => $recentFindings,
-        ];
+        return (new RevenueReconciler())->reconcile($client, $from, $to);
     }
-
-    public function getRevenueChartData(): array
-    {
-        if (! $this->selectedClientId) return [];
-
-        $days   = (int) $this->period;
-        $active = $this->getActiveIntegrations();
-
-        $rows = CommerceMetric::where('client_id', $this->selectedClientId)
-            ->where('date', '>=', now()->subDays($days)->startOfDay())
-            ->orderBy('date')
-            ->get()
-            ->groupBy(fn ($r) => $r->date->format('M j'));
-
-        $labels = [];
-        $ga4Data = [];
-        $adobeData = [];
-
-        foreach ($rows as $date => $records) {
-            $labels[] = $date;
-            $ga4Revenue = in_array('ga4', $active) ? $records->where('source', 'ga4')->sum('revenue') : 0;
-            $adobeRevenue = in_array('adobe_commerce', $active) ? $records->where('source', 'adobe_commerce')->sum('revenue') : 0;
-            $ga4Data[] = round($ga4Revenue, 2);
-            $adobeData[] = round($adobeRevenue, 2);
-        }
-
-        $datasets = [];
-        if (in_array('ga4', $active)) $datasets['ga4'] = $ga4Data;
-        if (in_array('adobe_commerce', $active)) $datasets['adobe'] = $adobeData;
-
-        return array_merge(['labels' => $labels], $datasets);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Extract email channel revenue from GA4 source_breakdown_json.
-     * Uses GA4's last-click, session-based attribution.
+     * Get Data Quality Findings
      */
+    public function getDataQualityFindingsProperty()
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
+
+        $days = (int) $this->period;
+        $from = now()->subDays($days)->startOfDay();
+        $to   = now()->endOfDay();
+
+        return (new DataQualityEvaluator())->evaluate($client, $from, $to);
+    }
+
+    private function getActiveIntegrations(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
+        return $client->getActiveIntegrationTypes();
+    }
+
     private function getGA4EmailChannelRevenue(int $days, int $offset = 0): array
     {
         $from = now()->subDays($days + $offset)->startOfDay();
@@ -923,16 +761,16 @@ class BusinessDashboard extends Page
             ->first();
 
         return [
-            'sessions'             => (int) ($row->sessions ?? 0),
-            'active_users'         => (int) ($row->active_users ?? 0),
-            'revenue'              => (float) ($row->revenue ?? 0),
-            'orders'               => (int) ($row->orders ?? 0),
-            'new_customers'        => (int) ($row->new_customers ?? 0),
-            'returning_customers'  => (int) ($row->returning_customers ?? 0),
-            'items_sold'           => (int) ($row->items_sold ?? 0),
-            'conversion_rate'      => (float) ($row->conversion_rate ?? 0),
-            'aov'                  => (float) ($row->aov ?? 0),
-            'return_rate'          => (float) ($row->return_rate ?? 0),
+            'sessions'            => (int) ($row->sessions ?? 0),
+            'active_users'        => (int) ($row->active_users ?? 0),
+            'revenue'             => (float) ($row->revenue ?? 0),
+            'orders'              => (int) ($row->orders ?? 0),
+            'new_customers'       => (int) ($row->new_customers ?? 0),
+            'returning_customers' => (int) ($row->returning_customers ?? 0),
+            'items_sold'          => (int) ($row->items_sold ?? 0),
+            'conversion_rate'     => (float) ($row->conversion_rate ?? 0),
+            'aov'                 => (float) ($row->aov ?? 0),
+            'return_rate'         => (float) ($row->return_rate ?? 0),
         ];
     }
 
@@ -944,28 +782,20 @@ class BusinessDashboard extends Page
         $row = BehavioralMetric::where('client_id', $this->selectedClientId)
             ->whereBetween('date', [$from, $to])
             ->selectRaw('
-                COALESCE(SUM(traffic), 0) as traffic,
-                COALESCE(SUM(rage_clicks), 0) as rage_clicks,
-                COALESCE(SUM(dead_clicks), 0) as dead_clicks,
-                COALESCE(SUM(quick_backs), 0) as quick_backs,
-                COALESCE(SUM(script_errors), 0) as script_errors,
-                COALESCE(SUM(error_clicks), 0) as error_clicks,
-                COALESCE(AVG(scroll_depth), 0) as scroll_depth,
                 COALESCE(AVG(friction_score), 0) as friction_score,
-                COALESCE(AVG(engagement_time), 0) as engagement_time
+                COALESCE(SUM(rage_clicks), 0) as rage_clicks,
+                COALESCE(SUM(script_errors), 0) as script_errors,
+                COALESCE(SUM(dead_clicks), 0) as dead_clicks,
+                COALESCE(SUM(traffic), 0) as total_sessions
             ')
             ->first();
 
         return [
-            'traffic'         => (int) ($row->traffic ?? 0),
-            'rage_clicks'     => (int) ($row->rage_clicks ?? 0),
-            'dead_clicks'     => (int) ($row->dead_clicks ?? 0),
-            'quick_backs'     => (int) ($row->quick_backs ?? 0),
-            'script_errors'   => (int) ($row->script_errors ?? 0),
-            'error_clicks'    => (int) ($row->error_clicks ?? 0),
-            'scroll_depth'    => (float) ($row->scroll_depth ?? 0),
-            'friction_score'  => (float) ($row->friction_score ?? 0),
-            'engagement_time' => (float) ($row->engagement_time ?? 0),
+            'friction_score' => (float) ($row->friction_score ?? 0),
+            'rage_clicks'    => (int) ($row->rage_clicks ?? 0),
+            'script_errors'  => (int) ($row->script_errors ?? 0),
+            'dead_clicks'    => (int) ($row->dead_clicks ?? 0),
+            'total_sessions' => (int) ($row->total_sessions ?? 0),
         ];
     }
 
@@ -978,46 +808,46 @@ class BusinessDashboard extends Page
             ->whereBetween('date', [$from, $to])
             ->selectRaw('
                 COALESCE(AVG(lcp), 0) as lcp,
+                COALESCE(AVG(fid), 0) as fid,
                 COALESCE(AVG(inp), 0) as inp,
                 COALESCE(AVG(cls), 0) as cls,
-                COALESCE(AVG(NULLIF(ttfb, 0)), 0) as ttfb,
-                COALESCE(AVG(NULLIF(page_load_time, 0)), 0) as page_load_time,
-                COALESCE(AVG(NULLIF(server_response_time, 0)), 0) as server_response_time,
-                COALESCE(AVG(bounce_rate), 0) as bounce_rate,
-                COALESCE(SUM(slow_pages_count), 0) as slow_pages_count
+                COALESCE(AVG(page_load_time), 0) as page_load_time,
+                COALESCE(AVG(server_response_time), 0) as server_response_time,
+                COALESCE(AVG(ttfb), 0) as ttfb,
+                COALESCE(AVG(bounce_rate), 0) as bounce_rate
             ')
             ->first();
 
-        // NR connector stored seconds×1000² (µs) — divide by 1,000,000 to get seconds
-        $pageLoadUs       = (float) ($row->page_load_time ?? 0);
-        $serverResponseUs = (float) ($row->server_response_time ?? 0);
-        $ttfbUs           = (float) ($row->ttfb ?? 0);
-
-        // Also pull New Relic metadata averages (apdex, throughput, error_rate)
-        $nrMeta = PerformanceMetric::where('client_id', $this->selectedClientId)
+        $nrRow = PerformanceMetric::where('client_id', $this->selectedClientId)
             ->where('source', 'new_relic')
             ->whereBetween('date', [$from, $to])
             ->get();
 
-        $apdex      = $nrMeta->avg(fn ($r) => $r->metadata_json['apdex'] ?? 0) ?: 0;
-        $throughput  = $nrMeta->sum(fn ($r) => $r->metadata_json['throughput'] ?? 0) ?: 0;
-        $errorRate   = $nrMeta->avg(fn ($r) => $r->metadata_json['error_rate'] ?? 0) ?: 0;
-        $errorCount  = $nrMeta->sum(fn ($r) => $r->metadata_json['error_count'] ?? 0) ?: 0;
+        $throughput = 0;
+        $apdexSum   = 0.0;
+        $errorRate  = 0.0;
+        $nrCount    = $nrRow->count();
+
+        foreach ($nrRow as $r) {
+            $meta = $r->metadata_json ?? [];
+            $throughput += (int) ($meta['throughput'] ?? 0);
+            $apdexSum   += (float) ($meta['apdex'] ?? 0);
+            $errorRate  += (float) ($meta['error_rate'] ?? 0);
+        }
 
         return [
             'lcp'                  => (float) ($row->lcp ?? 0),
+            'fid'                  => (float) ($row->fid ?? 0),
             'inp'                  => (float) ($row->inp ?? 0),
             'cls'                  => (float) ($row->cls ?? 0),
-            'ttfb'                 => $ttfbUs / 1000000,           // µs → seconds
-            'page_load_time'       => $pageLoadUs / 1000000,       // µs → seconds
-            'server_response_time' => $serverResponseUs / 1000000, // µs → seconds
+            'page_load_time'       => (float) ($row->page_load_time ?? 0),
+            'server_response_time' => (float) ($row->server_response_time ?? 0),
+            'ttfb'                 => (float) ($row->ttfb ?? 0),
             'bounce_rate'          => (float) ($row->bounce_rate ?? 0),
-            'slow_pages_count'     => (int) ($row->slow_pages_count ?? 0),
-            'apdex'                => (float) $apdex,
-            'throughput'           => (int) $throughput,
-            'error_rate'           => (float) $errorRate,
-            'error_count'          => (int) $errorCount,
-            'has_new_relic'        => $nrMeta->count() > 0,
+            'throughput'           => $nrCount > 0 ? (int) round($throughput / $nrCount) : 0,
+            'apdex'                => $nrCount > 0 ? round($apdexSum / $nrCount, 2) : 0.0,
+            'error_rate'           => $nrCount > 0 ? round($errorRate / $nrCount, 4) : 0.0,
+            'has_new_relic'        => $nrCount > 0,
         ];
     }
 
@@ -1026,27 +856,22 @@ class BusinessDashboard extends Page
         $from = now()->subDays($days + $offset)->startOfDay();
         $to   = now()->subDays($offset)->endOfDay();
 
-        // For inventory we take the latest snapshot in the period (not sum)
         $row = InventoryMetric::where('client_id', $this->selectedClientId)
             ->where('source', $source)
             ->whereBetween('date', [$from, $to])
             ->selectRaw('
-                COALESCE(AVG(total_products), 0) as total_products,
-                COALESCE(AVG(in_stock_count), 0) as in_stock_count,
                 COALESCE(AVG(out_of_stock_count), 0) as out_of_stock_count,
                 COALESCE(AVG(low_stock_count), 0) as low_stock_count,
                 COALESCE(AVG(out_of_stock_rate), 0) as out_of_stock_rate,
                 COALESCE(AVG(low_stock_rate), 0) as low_stock_rate,
                 COALESCE(AVG(inventory_turnover), 0) as inventory_turnover,
-                COALESCE(SUM(backorder_count), 0) as backorder_count
+                COALESCE(AVG(backorder_count), 0) as backorder_count
             ')
             ->first();
 
         return [
-            'total_products'     => (int) ($row->total_products ?? 0),
-            'in_stock_count'     => (int) ($row->in_stock_count ?? 0),
-            'out_of_stock_count' => (int) ($row->out_of_stock_count ?? 0),
-            'low_stock_count'    => (int) ($row->low_stock_count ?? 0),
+            'out_of_stock_count' => (int) round($row->out_of_stock_count ?? 0),
+            'low_stock_count'    => (int) round($row->low_stock_count ?? 0),
             'out_of_stock_rate'  => (float) ($row->out_of_stock_rate ?? 0),
             'low_stock_rate'     => (float) ($row->low_stock_rate ?? 0),
             'inventory_turnover' => (float) ($row->inventory_turnover ?? 0),
@@ -1062,36 +887,48 @@ class BusinessDashboard extends Page
         $row = EmailMarketingMetric::where('client_id', $this->selectedClientId)
             ->whereBetween('date', [$from, $to])
             ->selectRaw('
-                COALESCE(AVG(open_rate), 0) as open_rate,
-                COALESCE(AVG(click_rate), 0) as click_rate,
+                COALESCE(SUM(recipients), 0) as recipients,
+                COALESCE(SUM(opens), 0) as opens,
+                COALESCE(SUM(clicks), 0) as clicks,
                 COALESCE(SUM(conversions), 0) as conversions,
                 COALESCE(SUM(revenue), 0) as revenue,
                 COALESCE(SUM(unsubscribes), 0) as unsubscribes,
                 COALESCE(SUM(bounces), 0) as bounces,
-                COALESCE(SUM(recipients), 0) as recipients,
-                COALESCE(SUM(opens), 0) as opens,
-                COALESCE(SUM(clicks), 0) as clicks,
                 COUNT(DISTINCT campaign_name) as active_flows
             ')
             ->first();
 
+        $recipients = (int) ($row->recipients ?? 0);
+        $bounces    = (int) ($row->bounces ?? 0);
+        $delivered  = max(0, $recipients - $bounces);
+
         return [
-            'open_rate'    => (float) ($row->open_rate ?? 0),
-            'click_rate'   => (float) ($row->click_rate ?? 0),
+            'recipients'   => $recipients,
+            'bounces'      => $bounces,
+            'delivered'    => $delivered,
+            'opens'        => (int) ($row->opens ?? 0),
+            'clicks'       => (int) ($row->clicks ?? 0),
             'conversions'  => (int) ($row->conversions ?? 0),
             'revenue'      => (float) ($row->revenue ?? 0),
             'unsubscribes' => (int) ($row->unsubscribes ?? 0),
-            'bounces'      => (int) ($row->bounces ?? 0),
-            'recipients'   => (int) ($row->recipients ?? 0),
-            'opens'        => (int) ($row->opens ?? 0),
-            'clicks'       => (int) ($row->clicks ?? 0),
             'active_flows' => (int) ($row->active_flows ?? 0),
         ];
     }
 
+    public function getDeveloperDiagnosticsProperty(): array
+    {
+        $client = $this->getSelectedClientProperty();
+        if (! $client) return [];
+
+        return (new \App\Services\Metrics\MetricsDiagnosticService())->generateDiagnostics($client, (int) $this->period);
+    }
+
     private function pctChange(float $previous, float $current): ?float
     {
-        if ($previous == 0) return $current > 0 ? 100.0 : null;
+        if ($previous == 0.0) {
+            if ($current > 0.0) return null; // Displayed as "New"
+            return 0.0;
+        }
         return round((($current - $previous) / abs($previous)) * 100, 1);
     }
 }

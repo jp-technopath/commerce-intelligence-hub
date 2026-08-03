@@ -34,6 +34,8 @@ class IntegrationsRelationManager extends RelationManager
                 ->default(IntegrationStatus::Pending->value)
                 ->required(),
 
+            \App\Filament\Resources\IntegrationResource::getCredentialsFormSchema(),
+
             Forms\Components\KeyValue::make('settings_json')
                 ->label('Settings')
                 ->columnSpanFull(),
@@ -113,11 +115,13 @@ class IntegrationsRelationManager extends RelationManager
                     Forms\Components\Select::make('monitoring_config.comparison_period_days')
                         ->label('Comparison Period')
                         ->options([
-                            '7'  => '7 Days',
-                            '14' => '14 Days',
-                            '30' => '30 Days',
-                            '60' => '60 Days',
-                            '90' => '90 Days',
+                            '7'   => '7 Days',
+                            '14'  => '14 Days',
+                            '30'  => '30 Days',
+                            '60'  => '60 Days',
+                            '90'  => '90 Days',
+                            '360' => '360 Days',
+                            '365' => '12 Months (365 Days)',
                         ])
                         ->default('7')
                         ->helperText('How far back the engine looks when comparing current vs previous metrics.'),
@@ -153,7 +157,8 @@ class IntegrationsRelationManager extends RelationManager
                     ->placeholder('Never'),
             ])
             ->headerActions([
-                Tables\Actions\CreateAction::make(),
+                Tables\Actions\CreateAction::make()
+                    ->mutateFormDataUsing(fn (array $data): array => \App\Filament\Resources\IntegrationResource::serializeCredentials($data)),
             ])
             ->actions([
                 Tables\Actions\Action::make('sync')
@@ -170,7 +175,9 @@ class IntegrationsRelationManager extends RelationManager
                             ->success()
                             ->send();
                     }),
-                Tables\Actions\EditAction::make(),
+                Tables\Actions\EditAction::make()
+                    ->mutateRecordDataUsing(fn (array $data, Integration $record): array => \App\Filament\Resources\IntegrationResource::deserializeCredentials($data, $record->credentials_json ?? []))
+                    ->mutateFormDataUsing(fn (array $data, Integration $record): array => \App\Filament\Resources\IntegrationResource::serializeCredentials($data, $record->credentials_json ?? [])),
                 Tables\Actions\DeleteAction::make(),
             ]);
     }

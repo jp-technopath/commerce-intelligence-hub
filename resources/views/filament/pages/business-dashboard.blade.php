@@ -107,7 +107,7 @@
 
         <div style="display: flex; align-items: center; gap: 0.25rem; padding: 0.25rem; border-radius: 0.625rem; background: white; border: 1px solid rgba(148,163,184,0.15); box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
              class="dark:!bg-slate-800 dark:!border-slate-700">
-            @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days', '60' => '60 Days', '90' => '90 Days'] as $val => $lbl)
+            @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days', '60' => '60 Days', '90' => '90 Days', '360' => '360 Days'] as $val => $lbl)
                 <button
                     wire:click="$set('period', '{{ $val }}')"
                     style="padding: 0.375rem 0.875rem; font-size: 0.75rem; font-weight: 600; border-radius: 0.5rem; border: none; cursor: pointer; transition: all 0.2s;
@@ -121,7 +121,6 @@
             @endforeach
         </div>
     </div>
-
 
     {{-- ── 1. Conversion ───────────────────────────────────────────────────── --}}
     @php $conversionKpis = $this->getConversionKpis(); @endphp
@@ -163,8 +162,9 @@
                 margin-top: 0.75rem;
             " class="dark:bg-gray-800 dark:border-gray-700">
                 @php
-                    $stages = $funnel['stages'];
-                    $maxCount = max(array_column($stages, 'count'));
+                    $stages = $funnel['stages'] ?? [];
+                    $counts = array_column($stages, 'count');
+                    $maxCount = !empty($counts) ? max($counts) : 0;
                 @endphp
 
                 @foreach($stages as $i => $stage)
@@ -207,10 +207,11 @@
 
                     {{-- Arrow between stages --}}
                     @if($i < count($stages) - 1)
+                        @php $nextStage = $stages[$i + 1] ?? []; @endphp
                         <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.25rem;">
                             <div style="min-width: 120px;"></div>
                             <div style="padding-left: 8px;">
-                                <span style="font-size: 0.6875rem; color: #94a3b8;">▼ {{ $stage['pass_through'] }}% continue</span>
+                                <span style="font-size: 0.6875rem; color: #94a3b8;">▼ {{ $nextStage['pass_through'] ?? $nextStage['pass_through_rate'] ?? $stage['pass_through'] ?? $stage['pass_through_rate'] ?? 0 }}% continue</span>
                             </div>
                             <div style="min-width: 100px;"></div>
                         </div>
@@ -396,7 +397,7 @@
                         const isDark = document.documentElement.classList.contains('dark');
                         const datasets = [];
 
-                        if (data.ga4) {
+                        if (data.ga4 && data.ga4.length > 0) {
                             datasets.push({
                                 label: 'GA4 Revenue',
                                 data: data.ga4,
@@ -413,7 +414,7 @@
                             });
                         }
 
-                        if (data.adobe) {
+                        if (data.adobe && data.adobe.length > 0) {
                             datasets.push({
                                 label: 'Adobe Revenue',
                                 data: data.adobe,
@@ -427,6 +428,27 @@
                                 fill: true, tension: 0.4, pointRadius: 3,
                                 pointBackgroundColor: '#f97316', pointBorderColor: '#fff',
                                 pointBorderWidth: 2, pointHoverRadius: 6, borderWidth: 2.5,
+                            });
+                        }
+
+                        if (datasets.length === 0 && data.datasets && data.datasets.length > 0) {
+                            data.datasets.forEach(function(ds) {
+                                const isAdobe = ds.label.toLowerCase().includes('adobe');
+                                const color = isAdobe ? '#f97316' : '#6366f1';
+                                datasets.push({
+                                    label: ds.label,
+                                    data: ds.data,
+                                    borderColor: ds.borderColor || color,
+                                    backgroundColor: function(ctx) {
+                                        var g = ctx.chart.ctx.createLinearGradient(0, 0, 0, 300);
+                                        g.addColorStop(0, isAdobe ? 'rgba(249,115,22,0.12)' : 'rgba(99,102,241,0.15)');
+                                        g.addColorStop(1, 'rgba(0,0,0,0.01)');
+                                        return g;
+                                    },
+                                    fill: true, tension: 0.4, pointRadius: 3,
+                                    pointBackgroundColor: ds.borderColor || color, pointBorderColor: '#fff',
+                                    pointBorderWidth: 2, pointHoverRadius: 6, borderWidth: 2.5,
+                                });
                             });
                         }
 
@@ -573,4 +595,7 @@
             @endif
         </div>
     </div>
+
+    {{-- Developer Diagnostics Telemetry Drawer --}}
+    @include('filament.components.developer-diagnostics', ['diagnostics' => $this->developerDiagnostics])
 </x-filament-panels::page>

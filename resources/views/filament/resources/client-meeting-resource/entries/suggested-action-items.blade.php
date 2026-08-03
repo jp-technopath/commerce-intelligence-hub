@@ -1,6 +1,7 @@
 @php
     $record = $getRecord();
     $suggestions = $record->followUp?->suggested_action_items ?? [];
+    $isClientUser = auth()->user()?->isClientOnly() ?? false;
 @endphp
 
 <div class="space-y-3">
@@ -36,30 +37,32 @@
                     @endif
                 </div>
             </div>
-            <div class="flex shrink-0 items-center gap-x-2">
-                <button
-                    type="button"
-                    wire:click="acceptSuggestedItem({{ $index }})"
-                    style="background-color: #2563eb; color: #ffffff; transition: background-color 0.2s;"
-                    onmouseover="this.style.backgroundColor='#1d4ed8'"
-                    onmouseout="this.style.backgroundColor='#2563eb'"
-                    class="inline-flex items-center gap-x-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-                >
-                    <x-heroicon-m-check class="h-4 w-4" />
-                    Accept
-                </button>
-                <button
-                    type="button"
-                    wire:click="dismissSuggestedItem({{ $index }})"
-                    style="background-color: #374151; color: #ffffff; border: none; transition: background-color 0.2s;"
-                    onmouseover="this.style.backgroundColor='#1f2937'"
-                    onmouseout="this.style.backgroundColor='#374151'"
-                    class="inline-flex items-center gap-x-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
-                >
-                    <x-heroicon-m-x-mark class="h-4 w-4" />
-                    Dismiss
-                </button>
-            </div>
+            @if (!$isClientUser)
+                <div class="flex shrink-0 items-center gap-x-2">
+                    <button
+                        type="button"
+                        wire:click="acceptSuggestedItem({{ $index }})"
+                        style="background-color: #2563eb; color: #ffffff; transition: background-color 0.2s;"
+                        onmouseover="this.style.backgroundColor='#1d4ed8'"
+                        onmouseout="this.style.backgroundColor='#2563eb'"
+                        class="inline-flex items-center gap-x-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    >
+                        <x-heroicon-m-check class="h-4 w-4" />
+                        Accept
+                    </button>
+                    <button
+                        type="button"
+                        wire:click="dismissSuggestedItem({{ $index }})"
+                        style="background-color: #374151; color: #ffffff; border: none; transition: background-color 0.2s;"
+                        onmouseover="this.style.backgroundColor='#1f2937'"
+                        onmouseout="this.style.backgroundColor='#374151'"
+                        class="inline-flex items-center gap-x-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
+                    >
+                        <x-heroicon-m-x-mark class="h-4 w-4" />
+                        Dismiss
+                    </button>
+                </div>
+            @endif
         </div>
     @empty
         <p class="text-sm text-gray-500 dark:text-gray-400">No remaining suggestions.</p>

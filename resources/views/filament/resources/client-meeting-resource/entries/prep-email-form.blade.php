@@ -33,6 +33,7 @@
     $user = auth()->user();
     $gmailScope = config('meeting_agent.google.scopes.gmail_compose');
     $hasGmailScope = $user?->hasMeetingAgentScope($gmailScope) ?? false;
+    $isClientUser = $user?->isClientOnly() ?? false;
 @endphp
 
 <div
@@ -205,57 +206,59 @@
     </div>
 
     {{-- ── Action Bar ────────────────────────────────────────────────── --}}
-    <div class="flex items-center gap-3 pt-2 flex-wrap">
-        @if ($hasGmailScope)
-            {{-- Create Draft --}}
-            <button
-                type="button"
-                @click="createDraft()"
-                :disabled="!canSubmit"
-                style="background-color: #374151; color: #ffffff; border: none; transition: background-color 0.2s;"
-                onmouseover="this.style.backgroundColor='#1f2937'"
-                onmouseout="this.style.backgroundColor='#374151'"
-                class="inline-flex items-center gap-x-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                <template x-if="creatingDraft">
-                    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                </template>
-                <template x-if="!creatingDraft">
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/>
-                    </svg>
-                </template>
-                <span x-text="creatingDraft ? 'Saving Draft...' : (hasDraft ? 'Update Draft' : 'Save as Draft')"></span>
-            </button>
+    @if (!$isClientUser)
+        <div class="flex items-center gap-3 pt-2 flex-wrap">
+            @if ($hasGmailScope)
+                {{-- Create Draft --}}
+                <button
+                    type="button"
+                    @click="createDraft()"
+                    :disabled="!canSubmit"
+                    style="background-color: #374151; color: #ffffff; border: none; transition: background-color 0.2s;"
+                    onmouseover="this.style.backgroundColor='#1f2937'"
+                    onmouseout="this.style.backgroundColor='#374151'"
+                    class="inline-flex items-center gap-x-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    <template x-if="creatingDraft">
+                        <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                    </template>
+                    <template x-if="!creatingDraft">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/>
+                        </svg>
+                    </template>
+                    <span x-text="creatingDraft ? 'Saving Draft...' : (hasDraft ? 'Update Draft' : 'Save as Draft')"></span>
+                </button>
 
-            {{-- Send Email --}}
-            <button
-                type="button"
-                @click="sendEmail()"
-                :disabled="!canSubmit"
-                class="inline-flex items-center gap-x-2 rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-primary-500 dark:hover:bg-primary-400"
-            >
-                <template x-if="sendingEmail">
-                    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                </template>
-                <template x-if="!sendingEmail">
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                    </svg>
-                </template>
-                <span x-text="sendingEmail ? 'Sending Email...' : 'Send Email'"></span>
-            </button>
-        @else
-            <p class="text-sm text-danger-600 dark:text-danger-400">
-                <svg class="inline h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
-                Gmail compose permission not granted. Please reconnect your Google Workspace account.
-            </p>
-        @endif
-    </div>
+                {{-- Send Email --}}
+                <button
+                    type="button"
+                    @click="sendEmail()"
+                    :disabled="!canSubmit"
+                    class="inline-flex items-center gap-x-2 rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-primary-500 dark:hover:bg-primary-400"
+                >
+                    <template x-if="sendingEmail">
+                        <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                    </template>
+                    <template x-if="!sendingEmail">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                        </svg>
+                    </template>
+                    <span x-text="sendingEmail ? 'Sending Email...' : 'Send Email'"></span>
+                </button>
+            @else
+                <p class="text-sm text-danger-600 dark:text-danger-400">
+                    <svg class="inline h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
+                    Gmail compose permission not granted. Please reconnect your Google Workspace account.
+                </p>
+            @endif
+        </div>
+    @endif
 </div>

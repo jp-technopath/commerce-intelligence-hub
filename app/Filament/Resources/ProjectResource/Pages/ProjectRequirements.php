@@ -1,0 +1,29 @@
+<?php
+
+namespace App\Filament\Resources\ProjectResource\Pages;
+
+use App\Filament\Resources\ProjectResource;
+use Filament\Resources\Pages\ViewRecord;
+
+class ProjectRequirements extends ViewRecord
+{
+    protected static string $resource = ProjectResource::class;
+    protected static ?string $navigationIcon = 'heroicon-o-clipboard-document-list';
+    protected static ?string $navigationLabel = 'Requirements';
+    protected static string $view = 'filament.resources.project-resource.pages.project-sub-tab';
+
+    public function getTabTitle(): string
+    {
+        return 'Project Requirements';
+    }
+
+    public function getTabDescription(): string
+    {
+        return 'Functional specifications, user stories, acceptance criteria, and stakeholder sign-offs for this project.';
+    }
+
+    public function getTabIcon(): ?string
+    {
+        return static::$navigationIcon;
+    }
+}
