@@ -49,4 +49,9 @@ class MeetingActionItem extends Model
     {
         return $this->belongsTo(User::class, 'owner_user_id');
     }
+
+    public function pmWorkItem(): BelongsTo
+    {
+        return $this->belongsTo(PmWorkItem::class, 'jira_issue_key', 'external_item_key');
+    }
 }

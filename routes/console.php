@@ -38,3 +38,9 @@ Schedule::command('customer-meetings:scan-upcoming')
     ->hourly()
     ->name('customer-meetings:scan-upcoming')
     ->withoutOverlapping(30);
+
+// Hourly PM work items and worklogs reconciliation across all customer accounts
+Schedule::job(new \App\Jobs\ReconcilePmWorkItemsJob())
+    ->hourly()
+    ->name('reconcile-pm-work-items')
+    ->withoutOverlapping(30);

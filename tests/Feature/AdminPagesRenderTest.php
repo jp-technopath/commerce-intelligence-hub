@@ -7,12 +7,12 @@ use App\Models\ClientMeeting;
 use App\Models\Finding;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
 class AdminPagesRenderTest extends TestCase
 {
-    use RefreshDatabase;
+    use DatabaseTransactions;
 
     protected User $adminUser;
 
@@ -41,6 +41,8 @@ class AdminPagesRenderTest extends TestCase
     {
         return [
             'Dashboard' => ['/admin'],
+            'Customer Dashboard' => ['/admin/customer-dashboard'],
+            'PM Connections' => ['/admin/pm-connections'],
             'Business Dashboard' => ['/admin/dashboard/business'],
             'Clients Index' => ['/admin/clients'],
             'Clients Create' => ['/admin/clients/create'],

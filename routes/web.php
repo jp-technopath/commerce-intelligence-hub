@@ -47,3 +47,9 @@ Route::middleware(['web', 'auth'])->group(function () {
 // Jira OAuth callback — must be outside auth middleware
 Route::get('/jira/oauth/callback', [JiraOAuthController::class, 'callback'])
     ->name('jira.oauth.callback');
+
+// Jira Webhooks
+Route::post('/api/webhooks/jira', [\App\Http\Controllers\Api\JiraWebhookController::class, 'handle'])
+    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])
+    ->name('api.webhooks.jira');
+

@@ -23,9 +23,12 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="pgsql"/>
-        <env name="DB_DATABASE" value="technopath_commerce_test"/>
-        <env name="DB_URL" value=""/>
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="db-a21e396a-5704-4d36-a584-e22264f2a35d.us-east-2.public.db.laravel.cloud"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="main"/>
+        <env name="DB_USERNAME" value="jfs4smqyxhtcrgxk"/>
+        <env name="DB_PASSWORD" value="4w3gwZu8mVmH3N4nQ57C"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
