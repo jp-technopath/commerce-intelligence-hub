@@ -76,11 +76,40 @@ class NeedsAttentionWidget extends BaseWidget
 
                     Tables\Columns\TextColumn::make('title')
                         ->weight('bold')
-                        ->size(Tables\Columns\TextColumn\TextColumnSize::Large),
+                        ->size(Tables\Columns\TextColumn\TextColumnSize::Large)
+                        ->formatStateUsing(function (string $state, CustomerAttentionItem $record): string {
+                            if ($record->source_type === 'forge_estimate_version' && $record->source_id) {
+                                $version = ForgeEstimateVersion::find($record->source_id);
+                                if ($version && $version->workItem) {
+                                    return "{$version->workItem->external_item_key}: {$version->workItem->summary}";
+                                }
+                            }
+                            return str_replace('Action Item: ', '', $state);
+                        }),
 
                     Tables\Columns\TextColumn::make('description')
                         ->color('gray')
-                        ->limit(120),
+                        ->html()
+                        ->formatStateUsing(function (string $state, CustomerAttentionItem $record): string {
+                            if ($record->source_type === 'forge_estimate_version' && $record->source_id) {
+                                $version = ForgeEstimateVersion::find($record->source_id);
+                                if ($version) {
+                                    $hours = $version->estimated_hours;
+                                    $verNum = $version->version;
+                                    $notes = e(\Illuminate\Support\Str::limit($version->po_notes ?: 'No additional notes', 100));
+
+                                    return "<div class='space-y-1 mt-1'>
+                                        <div class='inline-flex items-center gap-2'>
+                                            <span class='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'>
+                                                Proposed Budget: {$hours} hrs (v{$verNum})
+                                            </span>
+                                        </div>
+                                        <div class='text-xs text-gray-500 dark:text-gray-400 mt-0.5'>{$notes}</div>
+                                    </div>";
+                                }
+                            }
+                            return e(\Illuminate\Support\Str::limit($state, 120));
+                        }),
                 ])->space(3),
             ])
             ->actions([
@@ -133,31 +162,105 @@ class NeedsAttentionWidget extends BaseWidget
                         }
 
                         $workItem = $version->workItem;
-                        $prevApproved = $workItem->estimateVersions()
+                        $prevApproved = $workItem ? $workItem->estimateVersions()
                             ->where('version', '<', $version->version)
                             ->get()
-                            ->first(fn ($v) => $v->latestEvent?->event_type === 'approved');
+                            ->first(fn ($v) => $v->latestEvent?->event_type === 'approved') : null;
 
                         $prevHours = $prevApproved ? $prevApproved->estimated_hours : 0;
                         $diff = $version->estimated_hours - $prevHours;
                         $diffFormatted = ($diff >= 0 ? '+' : '') . $diff . ' hrs';
 
-                        return [
-                            Placeholder::make('task_summary')
-                                ->label('Task / Story')
-                                ->content("{$workItem->external_item_key}: {$workItem->summary}"),
+                        // 1. Format Task Title Header Card
+                        $taskKey = $workItem ? e($workItem->external_item_key) : 'N/A';
+                        $taskSummary = $workItem ? e($workItem->summary) : 'N/A';
+                        $issueType = $workItem ? e(ucfirst($workItem->issue_type ?: 'Task')) : 'Task';
 
-                            Placeholder::make('estimate_details')
-                                ->label('Proposed Estimate (v' . $version->version . ')')
-                                ->content("{$version->estimated_hours} hrs" . ($prevHours > 0 ? " (Previous: {$prevHours} hrs | Diff: {$diffFormatted})" : '')),
+                        // 2. Format Description from Markdown / ADF if available
+                        $descriptionMarkdown = 'No task description details provided.';
+                        if ($workItem && ! empty($workItem->description)) {
+                            $desc = $workItem->description;
+                            if (str_starts_with(trim($desc), '{') && str_contains($desc, '"type":"doc"')) {
+                                try {
+                                    $json = json_decode($desc, true);
+                                    $parsed = \App\Services\PM\Providers\JiraProvider::parseAdfToMarkdown($json);
+                                    $descriptionMarkdown = $parsed ?: $desc;
+                                } catch (\Throwable $e) {
+                                    $descriptionMarkdown = $desc;
+                                }
+                            } else {
+                                $descriptionMarkdown = $desc;
+                            }
+                        }
+
+                        // Parse section titles into primary header badges
+                        $descriptionMarkdown = preg_replace(
+                            '/^(Action Required|Key Information|Acceptance Criteria|Description Background):\s*/im',
+                            "### $1\n",
+                            $descriptionMarkdown
+                        );
+
+                        $descriptionHtml = \Illuminate\Support\Str::markdown($descriptionMarkdown);
+                        $poNotesHtml = $version->po_notes ?: 'No additional breakdown notes provided.';
+
+                        $headerCardHtml = "
+                            <div class='bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-sm space-y-4'>
+                                <div class='flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-gray-200 dark:border-gray-800'>
+                                    <div class='flex items-center gap-2.5'>
+                                        <span class='px-3 py-1 bg-primary-500/10 text-primary-600 dark:text-primary-400 border border-primary-500/20 font-mono font-bold text-xs rounded-lg uppercase tracking-wider'>{$taskKey}</span>
+                                        <span class='px-2.5 py-0.5 bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-medium text-xs rounded-md'>{$issueType}</span>
+                                    </div>
+                                    <div class='inline-flex items-center gap-2 px-3 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded-lg text-xs font-bold'>
+                                        <span>Proposed Estimate: v{$version->version}</span>
+                                        <span class='text-sm font-extrabold'>{$version->estimated_hours} hrs</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <h2 class='text-xl font-extrabold text-gray-900 dark:text-white leading-snug'>{$taskSummary}</h2>
+                                    " . ($prevHours > 0 ? "
+                                    <p class='text-xs text-amber-600 dark:text-amber-400 font-medium mt-1.5'>
+                                        ⚡ Reapproval Request — Previous Approved Budget: <strong>{$prevHours} hrs</strong> (Diff: <strong>{$diffFormatted}</strong>)
+                                    </p>" : '') . "
+                                </div>
+                            </div>";
+
+                        $poNotesCardHtml = "
+                            <div class='bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 space-y-2'>
+                                <div class='flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400'>
+                                    <svg class='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'></path></svg>
+                                    Product Owner Notes / Estimate Breakdown
+                                </div>
+                                <div class='text-sm text-gray-800 dark:text-gray-200 font-sans leading-relaxed'>" . $poNotesHtml . "</div>
+                            </div>";
+
+                        $scopeCardHtml = "
+                            <div class='bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-sm space-y-3'>
+                                <div class='flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 pb-2 border-b border-gray-100 dark:border-gray-800'>
+                                    <svg class='w-4 h-4 text-primary-500' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'></path></svg>
+                                    Task Scope & Technical Requirements
+                                </div>
+                                <div class='prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed font-sans'>
+                                    " . $descriptionHtml . "
+                                </div>
+                            </div>";
+
+                        return [
+                            Placeholder::make('task_header')
+                                ->hiddenLabel()
+                                ->content(fn () => new \Illuminate\Support\HtmlString($headerCardHtml)),
 
                             Placeholder::make('po_notes')
-                                ->label('Product Owner Notes / Estimate Breakdown')
-                                ->content(fn () => new \Illuminate\Support\HtmlString($version->po_notes ?: 'No additional notes provided.')),
+                                ->hiddenLabel()
+                                ->content(fn () => new \Illuminate\Support\HtmlString($poNotesCardHtml)),
+
+                            Placeholder::make('task_scope')
+                                ->hiddenLabel()
+                                ->content(fn () => new \Illuminate\Support\HtmlString($scopeCardHtml)),
 
                             Textarea::make('revision_notes')
-                                ->label('Feedback / Notes')
-                                ->placeholder('Required if requesting a revision...')
+                                ->label('Approval or Revision Feedback Notes')
+                                ->placeholder('Optional note if approving, or required reason if requesting a revision...')
                                 ->rows(3),
                         ];
                     })
