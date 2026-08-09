@@ -9,43 +9,31 @@ return new class extends Migration
 {
     public function up(): void
     {
-        $knownClients = [
-            'CMBR2'   => 'Cambro',
-            'HCCAM'   => 'Cambro',
-            'B2B'     => 'Cambro',
-            'TRAN'    => 'Transpart',
-            'USG'     => 'USG',
-            'CREAT'   => 'Create Pharmacy',
-            'G0'      => 'GoldKamp',
-            'GKSSC'   => 'GoldKamp',
-            'T0'      => 'Traffix',
-            'SR'      => 'Sketchy Realtor',
-            'SHEL'    => 'ShellProof',
-            'W2AF'    => '2AF',
-            'MAR'     => '2AF',
-            'RPD'     => 'RPD Custom Pools',
-            'GZL'     => 'GZLures',
-            'GWD'     => 'Gun Website Demo',
-            'LAB'     => 'LaborLaw',
-            'LEIB'    => 'Leibelle',
-            'C0'      => 'Create Vet',
-            'MR'      => 'Martor',
-            'MRT'     => 'Martor',
-            'PE'      => 'PM Enhancement',
-            'FP'      => 'Flat Projects',
-            'MDP'     => 'My Discovery Project',
-            'MG'      => 'MTN Gear',
-        ];
+        $internalClient = Client::firstOrCreate(
+            ['name' => 'Technopath Internal'],
+            ['jira_project_key' => 'TEC']
+        );
 
-        foreach ($knownClients as $key => $clientName) {
-            $client = Client::firstOrCreate(
-                ['name' => $clientName],
-                ['jira_project_key' => $key]
-            );
-            if (empty($client->jira_project_key)) {
-                $client->update(['jira_project_key' => $key]);
+        // Map every PmProject to a specific Client
+        $projects = PmProject::all();
+        foreach ($projects as $p) {
+            $key = $p->external_project_key;
+            $name = $p->name ?? $key;
+
+            $client = Client::where('jira_project_key', $key)->first();
+
+            if (! $client) {
+                if (in_array($key, ['SUP', 'TEC', 'TM', 'TEWE', 'TWC', 'TP', 'SAN', 'SST', 'HPT', 'WPOC'], true)) {
+                    $client = $internalClient;
+                } else {
+                    $client = Client::firstOrCreate(
+                        ['name' => $name],
+                        ['jira_project_key' => $key]
+                    );
+                }
             }
-            PmProject::where('external_project_key', $key)->update(['client_id' => $client->id]);
+
+            $p->update(['client_id' => $client->id]);
         }
 
         // Re-assign PmWorkItems based on project client_id or key
