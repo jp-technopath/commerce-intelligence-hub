@@ -95,12 +95,21 @@ class BusinessDashboard extends Page
         return $this->getClients();
     }
 
+    public function getDaysCount(): int
+    {
+        if ($this->period === 'ytd') {
+            return (int) now()->diffInDays(now()->startOfYear()) + 1;
+        }
+
+        return max(1, (int) $this->period);
+    }
+
     public function getRevenueChartData(): array
     {
         $client = $this->getSelectedClientProperty();
         if (! $client) return ['labels' => [], 'datasets' => [], 'ga4' => [], 'adobe' => []];
 
-        $days = (int) $this->period;
+        $days = $this->getDaysCount();
         $from = now()->subDays($days)->startOfDay();
         $to   = now()->endOfDay();
 
@@ -173,7 +182,7 @@ class BusinessDashboard extends Page
         if (! $client) return [];
 
         $active = $this->getActiveIntegrations();
-        $days   = (int) $this->period;
+        $days   = $this->getDaysCount();
         $fromCur  = now()->subDays($days)->startOfDay();
         $toCur    = now()->endOfDay();
         $fromPrev = now()->subDays($days * 2)->startOfDay();
@@ -277,7 +286,7 @@ class BusinessDashboard extends Page
         $active = $this->getActiveIntegrations();
         if (! in_array('ga4', $active)) return [];
 
-        $days = (int) $this->period;
+        $days = $this->getDaysCount();
         $from = now()->subDays($days)->startOfDay();
         $to   = now()->endOfDay();
 
@@ -294,7 +303,7 @@ class BusinessDashboard extends Page
         if (! $client) return [];
 
         $active = $this->getActiveIntegrations();
-        $days   = (int) $this->period;
+        $days   = $this->getDaysCount();
         $fromCur  = now()->subDays($days)->startOfDay();
         $toCur    = now()->endOfDay();
         $fromPrev = now()->subDays($days * 2)->startOfDay();
@@ -376,7 +385,7 @@ class BusinessDashboard extends Page
         if (! $client) return [];
 
         $active = $this->getActiveIntegrations();
-        $days   = (int) $this->period;
+        $days   = $this->getDaysCount();
         $kpis   = [];
 
         if (in_array('ga4', $active)) {
@@ -442,7 +451,7 @@ class BusinessDashboard extends Page
         $active = $this->getActiveIntegrations();
         if (! in_array('clarity', $active)) return [];
 
-        $days     = (int) $this->period;
+        $days     = $this->getDaysCount();
         $current  = $this->getBehavioralAggregates($days);
         $previous = $this->getBehavioralAggregates($days, offset: $days);
 
@@ -488,7 +497,7 @@ class BusinessDashboard extends Page
         if (! $this->selectedClientId) return [];
 
         $active  = $this->getActiveIntegrations();
-        $days    = (int) $this->period;
+        $days    = $this->getDaysCount();
         $current = $this->getPerformanceAggregates($days);
         $previous= $this->getPerformanceAggregates($days, offset: $days);
 
@@ -600,7 +609,7 @@ class BusinessDashboard extends Page
         $hasInventory = in_array('adobe_commerce', $active) || in_array('shopify', $active);
         if (! $hasInventory) return [];
 
-        $days     = (int) $this->period;
+        $days     = $this->getDaysCount();
         $source   = in_array('adobe_commerce', $active) ? 'adobe_commerce' : 'shopify';
         $srcLabel = $source === 'adobe_commerce' ? 'Adobe' : 'Shopify';
         $current  = $this->getInventoryAggregates($days, $source);
@@ -634,7 +643,7 @@ class BusinessDashboard extends Page
         $active = $this->getActiveIntegrations();
         if (! in_array('klaviyo', $active)) return [];
 
-        $days     = (int) $this->period;
+        $days     = $this->getDaysCount();
         $current  = $this->getEmailMarketingAggregates($days);
         $previous = $this->getEmailMarketingAggregates($days, offset: $days);
 
@@ -712,7 +721,7 @@ class BusinessDashboard extends Page
         $client = $this->getSelectedClientProperty();
         if (! $client) return null;
 
-        $days = (int) $this->period;
+        $days = $this->getDaysCount();
         $from = now()->subDays($days)->startOfDay();
         $to   = now()->endOfDay();
 
@@ -727,7 +736,7 @@ class BusinessDashboard extends Page
         $client = $this->getSelectedClientProperty();
         if (! $client) return [];
 
-        $days = (int) $this->period;
+        $days = $this->getDaysCount();
         $from = now()->subDays($days)->startOfDay();
         $to   = now()->endOfDay();
 
@@ -961,7 +970,7 @@ class BusinessDashboard extends Page
         $client = $this->getSelectedClientProperty();
         if (! $client) return [];
 
-        return (new \App\Services\Metrics\MetricsDiagnosticService())->generateDiagnostics($client, (int) $this->period);
+        return (new \App\Services\Metrics\MetricsDiagnosticService())->generateDiagnostics($client, $this->getDaysCount());
     }
 
     private function pctChange(float $previous, float $current): ?float
