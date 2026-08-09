@@ -124,14 +124,20 @@ class JiraProvider implements ProjectManagementProvider
         $synced = [];
 
         foreach ($projects as $proj) {
+            $projKey = $proj['key'] ?? '';
+            $projName = $proj['name'] ?? $projKey;
+
+            // Resolve target client by matching jira_project_key on Client model
+            $matchedClient = Client::where('jira_project_key', $projKey)->first();
+
             $pmProject = PmProject::updateOrCreate(
                 [
-                    'client_id'            => $connection->client_id,
                     'pm_connection_id'     => $connection->id,
-                    'external_project_key' => $proj['key'] ?? '',
+                    'external_project_key' => $projKey,
                 ],
                 [
-                    'name'                => $proj['name'] ?? $proj['key'],
+                    'client_id'           => $matchedClient ? $matchedClient->id : null,
+                    'name'                => $projName,
                     'external_project_id' => $proj['id'] ?? null,
                     'is_active'           => true,
                 ]
@@ -548,14 +554,28 @@ class JiraProvider implements ProjectManagementProvider
             }
         }
 
-        // 2. Dedicated customer project check by project->client_id or jira_project_key
+        // 2. Direct Jira project key match on Client model
+        $clientBySpace = Client::where('jira_project_key', $project->external_project_key)->first();
+        if ($clientBySpace) {
+            return $clientBySpace->id;
+        }
+
+        // 3. Explicit project-assigned client_id if present
         if ($project->client_id) {
             return $project->client_id;
         }
 
-        $clientBySpace = Client::where('jira_project_key', $project->external_project_key)->first();
-        if ($clientBySpace) {
-            return $clientBySpace->id;
+        // 4. Heuristic name match on Client name vs Project key/name
+        $keyUpper = strtoupper($project->external_project_key);
+        $clientByName = Client::all()->first(function ($c) use ($keyUpper, $project) {
+            $cNameUpper = strtoupper($c->name);
+            return str_contains($cNameUpper, $keyUpper) 
+                || str_contains($keyUpper, $cNameUpper) 
+                || str_contains(strtoupper($project->name), $cNameUpper);
+        });
+
+        if ($clientByName) {
+            return $clientByName->id;
         }
 
         return $connection->client_id;
