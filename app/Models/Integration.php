@@ -43,10 +43,17 @@ class Integration extends Model
 
         // 1. Try standard Crypt::decrypt with current APP_KEY and APP_PREVIOUS_KEYS
         try {
-            $dec = \Illuminate\Support\Facades\Crypt::decrypt($value, serialize: false);
+            $dec = \Illuminate\Support\Facades\Crypt::decrypt($value, false);
             $json = is_string($dec) ? json_decode($dec, true) : $dec;
             if (is_array($json)) {
                 return $json;
+            }
+        } catch (\Throwable $e) {}
+
+        try {
+            $dec = \Illuminate\Support\Facades\Crypt::decrypt($value, true);
+            if (is_array($dec)) {
+                return $dec;
             }
         } catch (\Throwable $e) {}
 
@@ -62,10 +69,17 @@ class Integration extends Model
             if (strlen($rawKey) !== 32) continue;
             try {
                 $enc = new \Illuminate\Encryption\Encrypter($rawKey, 'AES-256-CBC');
-                $dec = $enc->decrypt($value, unserialize: false);
+                $dec = $enc->decrypt($value, false);
                 $json = is_string($dec) ? json_decode($dec, true) : $dec;
                 if (is_array($json)) {
                     return $json;
+                }
+            } catch (\Throwable $e) {}
+            try {
+                $enc = new \Illuminate\Encryption\Encrypter($rawKey, 'AES-256-CBC');
+                $dec = $enc->decrypt($value, true);
+                if (is_array($dec)) {
+                    return $dec;
                 }
             } catch (\Throwable $e) {}
         }
@@ -90,7 +104,7 @@ class Integration extends Model
         if (is_array($array)) {
             $this->attributes['credentials_json'] = \Illuminate\Support\Facades\Crypt::encrypt(
                 json_encode($array),
-                serialize: false
+                false
             );
         } else {
             $this->attributes['credentials_json'] = $value;
