@@ -9,31 +9,46 @@ return new class extends Migration
 {
     public function up(): void
     {
-        $mappings = [
-            'Cambro'          => 'CMBR2',
-            'Transpart'       => 'TRAN',
-            'USG'             => 'USG',
-            'Create Pharmacy' => 'CREAT',
-            'GoldKamp'        => 'G0',
+        $knownClients = [
+            'CMBR2'   => 'Cambro',
+            'HCCAM'   => 'Cambro',
+            'B2B'     => 'Cambro',
+            'TRAN'    => 'Transpart',
+            'USG'     => 'USG',
+            'CREAT'   => 'Create Pharmacy',
+            'G0'      => 'GoldKamp',
+            'GKSSC'   => 'GoldKamp',
+            'T0'      => 'Traffix',
+            'SR'      => 'Sketchy Realtor',
+            'SHEL'    => 'ShellProof',
+            'W2AF'    => '2AF',
+            'MAR'     => '2AF',
+            'RPD'     => 'RPD Custom Pools',
+            'GZL'     => 'GZLures',
+            'GWD'     => 'Gun Website Demo',
+            'LAB'     => 'LaborLaw',
+            'LEIB'    => 'Leibelle',
+            'C0'      => 'Create Vet',
+            'MR'      => 'Martor',
+            'MRT'     => 'Martor',
+            'PE'      => 'PM Enhancement',
+            'FP'      => 'Flat Projects',
+            'MDP'     => 'My Discovery Project',
+            'MG'      => 'MTN Gear',
         ];
 
-        foreach ($mappings as $clientName => $key) {
-            $client = Client::where('name', 'LIKE', "%{$clientName}%")->first();
-            if ($client) {
+        foreach ($knownClients as $key => $clientName) {
+            $client = Client::firstOrCreate(
+                ['name' => $clientName],
+                ['jira_project_key' => $key]
+            );
+            if (empty($client->jira_project_key)) {
                 $client->update(['jira_project_key' => $key]);
             }
+            PmProject::where('external_project_key', $key)->update(['client_id' => $client->id]);
         }
 
-        // Re-assign PmProjects
-        $projects = PmProject::all();
-        foreach ($projects as $p) {
-            $clientBySpace = Client::where('jira_project_key', $p->external_project_key)->first();
-            if ($clientBySpace) {
-                $p->update(['client_id' => $clientBySpace->id]);
-            }
-        }
-
-        // Re-assign PmWorkItems
+        // Re-assign PmWorkItems based on project client_id or key
         $items = PmWorkItem::with('project')->get();
         foreach ($items as $item) {
             $key = $item->external_item_key;
@@ -42,7 +57,8 @@ return new class extends Migration
             $client = Client::where('jira_project_key', $projKey)->first();
 
             if (! $client && $item->project) {
-                $client = Client::where('jira_project_key', $item->project->external_project_key)->first();
+                $client = Client::where('jira_project_key', $item->project->external_project_key)->first()
+                    ?? ($item->project->client_id ? Client::find($item->project->client_id) : null);
             }
 
             if ($client && $item->client_id !== $client->id) {

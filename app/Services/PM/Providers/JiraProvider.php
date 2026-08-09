@@ -127,8 +127,21 @@ class JiraProvider implements ProjectManagementProvider
             $projKey = $proj['key'] ?? '';
             $projName = $proj['name'] ?? $projKey;
 
-            // Resolve target client by matching jira_project_key on Client model
+            // 1. Resolve target client by matching jira_project_key on Client model
             $matchedClient = Client::where('jira_project_key', $projKey)->first();
+
+            // 2. Fallback: match by client name
+            if (! $matchedClient) {
+                $matchedClient = Client::where('name', 'LIKE', "%{$projName}%")->first();
+            }
+
+            // 3. Auto-provision Client record for client-specific projects if missing
+            if (! $matchedClient && ! in_array($projKey, ['SUP', 'TEC', 'TM', 'TEWE', 'TWC', 'TP', 'SAN', 'SST', 'HPT'], true)) {
+                $matchedClient = Client::firstOrCreate(
+                    ['name' => $projName],
+                    ['jira_project_key' => $projKey]
+                );
+            }
 
             $pmProject = PmProject::updateOrCreate(
                 [
