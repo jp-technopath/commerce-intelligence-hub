@@ -134,6 +134,10 @@ class AdobeCommerceConnector
     private function storeOrdersAndFacts(array $orders): void
     {
         $client = $this->integration->client;
+        $orderRecords = [];
+        $factsMap = [];
+
+        $nowStr = now()->toDateTimeString();
 
         foreach ($orders as $order) {
             $entityId   = (string) ($order['entity_id'] ?? $order['increment_id'] ?? '');
@@ -162,69 +166,103 @@ class AdobeCommerceConnector
 
             $netRevenue = $isValid ? max(0.0, $grandTotal - $totalRef) : 0.0;
 
-            CommerceOrder::updateOrCreate(
+            $orderRecords[] = [
+                'client_id'                 => $this->integration->client_id,
+                'integration_id'            => $this->integration->id,
+                'source'                    => 'adobe_commerce',
+                'source_order_id'           => $entityId,
+                'source_increment_id'       => $order['increment_id'] ?? null,
+                'order_status'              => $status,
+                'customer_identity_hash'    => $identityHash,
+                'registered_customer_id'    => $custId,
+                'order_date'                => $createdAt->toDateTimeString(),
+                'refund_date'               => $totalRef > 0 ? $nowStr : null,
+                'gross_revenue'             => $grandTotal,
+                'refunded_revenue'          => $totalRef,
+                'net_revenue'               => $netRevenue,
+                'tax_amount'                => $tax,
+                'shipping_amount'           => $shipping,
+                'discount_amount'           => $discount,
+                'currency'                  => $order['order_currency_code'] ?? 'USD',
+                'base_currency'             => $order['base_currency_code'] ?? 'USD',
+                'reporting_currency'        => $client->currency ?? 'USD',
+                'exchange_rate'             => (float) ($order['store_to_base_rate'] ?? 1.0),
+                'is_valid'                  => $isValid ? 1 : 0,
+                'exclusion_reason'          => $exclusionReason,
+                'source_updated_at'         => isset($order['updated_at']) ? Carbon::parse($order['updated_at'])->toDateTimeString() : null,
+                'financial_last_changed_at' => $nowStr,
+                'collected_at'              => $nowStr,
+                'metadata_json'             => json_encode([
+                    'customer_group_id' => $order['customer_group_id'] ?? null,
+                ]),
+                'created_at'                => $nowStr,
+                'updated_at'                => $nowStr,
+            ];
+
+            if ($isValid && $identityHash) {
+                if (! isset($factsMap[$identityHash])) {
+                    $factsMap[$identityHash] = [
+                        'client_id'                  => $client->id,
+                        'customer_identity_hash'     => $identityHash,
+                        'customer_id'                => $custId,
+                        'first_valid_order_at'       => $createdAt,
+                        'latest_valid_order_at'      => $createdAt,
+                        'lifetime_valid_order_count' => 1,
+                        'lifetime_net_revenue'       => $netRevenue,
+                        'is_registered_customer'     => ($custId !== null ? 1 : 0),
+                    ];
+                } else {
+                    if ($createdAt->lt($factsMap[$identityHash]['first_valid_order_at'])) {
+                        $factsMap[$identityHash]['first_valid_order_at'] = $createdAt;
+                    }
+                    if ($createdAt->gt($factsMap[$identityHash]['latest_valid_order_at'])) {
+                        $factsMap[$identityHash]['latest_valid_order_at'] = $createdAt;
+                    }
+                    $factsMap[$identityHash]['lifetime_valid_order_count']++;
+                    $factsMap[$identityHash]['lifetime_net_revenue'] += $netRevenue;
+                }
+            }
+        }
+
+        // Chunked bulk upsert into commerce_orders
+        foreach (array_chunk($orderRecords, 1000) as $chunk) {
+            CommerceOrder::upsert(
+                $chunk,
+                ['client_id', 'integration_id', 'source', 'source_order_id'],
                 [
-                    'client_id'          => $this->integration->client_id,
-                    'integration_id'     => $this->integration->id,
-                    'source'             => 'adobe_commerce',
-                    'source_order_id'    => $entityId,
-                ],
-                [
-                    'source_increment_id'     => $order['increment_id'] ?? null,
-                    'order_status'            => $status,
-                    'customer_identity_hash'  => $identityHash,
-                    'registered_customer_id'  => $custId,
-                    'order_date'              => $createdAt,
-                    'refund_date'             => $totalRef > 0 ? now() : null,
-                    'gross_revenue'           => $grandTotal,
-                    'refunded_revenue'        => $totalRef,
-                    'net_revenue'             => $netRevenue,
-                    'tax_amount'              => $tax,
-                    'shipping_amount'         => $shipping,
-                    'discount_amount'         => $discount,
-                    'currency'                => $order['order_currency_code'] ?? 'USD',
-                    'base_currency'           => $order['base_currency_code'] ?? 'USD',
-                    'reporting_currency'      => $client->currency ?? 'USD',
-                    'exchange_rate'           => (float) ($order['store_to_base_rate'] ?? 1.0),
-                    'is_valid'                => $isValid,
-                    'exclusion_reason'        => $exclusionReason,
-                    'source_updated_at'       => isset($order['updated_at']) ? Carbon::parse($order['updated_at']) : null,
-                    'financial_last_changed_at' => now(),
-                    'collected_at'            => now(),
-                    'metadata_json'           => [
-                        'customer_group_id' => $order['customer_group_id'] ?? null,
-                    ],
+                    'source_increment_id', 'order_status', 'customer_identity_hash', 'registered_customer_id',
+                    'order_date', 'refund_date', 'gross_revenue', 'refunded_revenue', 'net_revenue',
+                    'tax_amount', 'shipping_amount', 'discount_amount', 'currency', 'base_currency',
+                    'reporting_currency', 'exchange_rate', 'is_valid', 'exclusion_reason',
+                    'source_updated_at', 'financial_last_changed_at', 'collected_at', 'metadata_json', 'updated_at'
                 ]
             );
+        }
 
-            // Update customer purchase facts for valid orders
-            if ($isValid && $identityHash) {
-                $fact = CommerceCustomerPurchaseFact::firstOrNew([
-                    'client_id'              => $client->id,
-                    'customer_identity_hash' => $identityHash,
-                ]);
+        // Chunked bulk upsert into commerce_customer_purchase_facts
+        $factRecords = [];
+        foreach ($factsMap as $fact) {
+            $factRecords[] = [
+                'client_id'                  => $fact['client_id'],
+                'customer_identity_hash'     => $fact['customer_identity_hash'],
+                'customer_id'                => $fact['customer_id'],
+                'first_valid_order_at'       => $fact['first_valid_order_at']->toDateTimeString(),
+                'latest_valid_order_at'      => $fact['latest_valid_order_at']->toDateTimeString(),
+                'lifetime_valid_order_count' => $fact['lifetime_valid_order_count'],
+                'lifetime_net_revenue'       => $fact['lifetime_net_revenue'],
+                'is_registered_customer'     => $fact['is_registered_customer'],
+                'refreshed_at'               => $nowStr,
+                'created_at'                 => $nowStr,
+                'updated_at'                 => $nowStr,
+            ];
+        }
 
-                if (! $fact->exists) {
-                    $fact->customer_id                = $custId;
-                    $fact->first_valid_order_at       = $createdAt;
-                    $fact->latest_valid_order_at      = $createdAt;
-                    $fact->lifetime_valid_order_count = 1;
-                    $fact->lifetime_net_revenue       = $netRevenue;
-                    $fact->is_registered_customer     = ($custId !== null);
-                } else {
-                    if ($createdAt->lt($fact->first_valid_order_at)) {
-                        $fact->first_valid_order_at = $createdAt;
-                    }
-                    if ($createdAt->gt($fact->latest_valid_order_at)) {
-                        $fact->latest_valid_order_at = $createdAt;
-                    }
-                    $fact->lifetime_valid_order_count += 1;
-                    $fact->lifetime_net_revenue       += $netRevenue;
-                }
-
-                $fact->refreshed_at = now();
-                $fact->save();
-            }
+        foreach (array_chunk($factRecords, 1000) as $chunk) {
+            CommerceCustomerPurchaseFact::upsert(
+                $chunk,
+                ['client_id', 'customer_identity_hash'],
+                ['customer_id', 'first_valid_order_at', 'latest_valid_order_at', 'lifetime_valid_order_count', 'lifetime_net_revenue', 'is_registered_customer', 'refreshed_at', 'updated_at']
+            );
         }
     }
 
