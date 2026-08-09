@@ -6,6 +6,7 @@ use App\Enums\IntegrationStatus;
 use App\Enums\IntegrationType;
 use App\Jobs\TriggerIntegrationSync;
 use App\Filament\Resources\IntegrationResource\Pages;
+use App\Filament\Resources\IntegrationResource\RelationManagers;
 use App\Models\Integration;
 use Filament\Forms;
 use Filament\Forms\Form;
