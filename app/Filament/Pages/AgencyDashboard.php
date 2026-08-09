@@ -2,6 +2,8 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Widgets\RecentFindingsWidget;
+use App\Filament\Widgets\StatsOverviewWidget;
 use Filament\Pages\Dashboard as BaseDashboard;
 
 class AgencyDashboard extends BaseDashboard
@@ -11,6 +13,14 @@ class AgencyDashboard extends BaseDashboard
     protected static ?string $title = 'Agency Dashboard';
     protected static ?string $navigationGroup = 'Dashboard';
     protected static ?int $navigationSort = 1;
+
+    public function getWidgets(): array
+    {
+        return [
+            StatsOverviewWidget::class,
+            RecentFindingsWidget::class,
+        ];
+    }
 
     public static function canAccess(): bool
     {

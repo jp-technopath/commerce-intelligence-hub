@@ -588,6 +588,13 @@ class IntegrationResource extends Resource
         return $data;
     }
 
+    public static function getRelations(): array
+    {
+        return [
+            RelationManagers\SyncLogsRelationManager::class,
+        ];
+    }
+
     public static function getPages(): array
     {
         return [
