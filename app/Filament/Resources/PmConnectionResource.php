@@ -108,8 +108,23 @@ class PmConnectionResource extends Resource
                     ->icon('heroicon-o-arrow-path')
                     ->color('primary')
                     ->action(function (PmConnection $record): void {
-                        ReconcilePmWorkItemsJob::dispatch();
-                        Notification::make()->title('Sync Queued')->success()->send();
+                        try {
+                            $jiraProvider = app(\App\Services\PM\Providers\JiraProvider::class);
+                            $syncedProjects = $jiraProvider->syncProjects($record);
+                            ReconcilePmWorkItemsJob::dispatch();
+
+                            Notification::make()
+                                ->title('PM Integration Sync Started')
+                                ->body("Synced " . count($syncedProjects) . " project(s). Work item reconciliation job queued.")
+                                ->success()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            Notification::make()
+                                ->title('Sync Failed')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
                     }),
                 Tables\Actions\EditAction::make(),
             ]);

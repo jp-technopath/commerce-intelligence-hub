@@ -22,6 +22,9 @@ class ReconcilePmWorkItemsJob implements ShouldQueue
 
         foreach ($connections as $connection) {
             try {
+                // First, discover and sync all Jira projects for this connection
+                $jiraProvider->syncProjects($connection);
+
                 // Reconcile each active project in connection
                 foreach ($connection->projects()->where('is_active', true)->get() as $project) {
                     $workItems = $jiraProvider->syncWorkItems($project);
