@@ -9,6 +9,7 @@ use App\Services\Connectors\ClarityConnector;
 use App\Services\Connectors\GA4Connector;
 use App\Services\Connectors\KlaviyoConnector;
 use App\Services\Connectors\NewRelicConnector;
+use App\Services\Connectors\ShopifyConnector;
 use Filament\Actions;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
@@ -26,7 +27,7 @@ class EditIntegration extends EditRecord
                 ->color('gray')
                 ->visible(fn () => in_array(
                     $this->record->integration_type,
-                    [IntegrationType::GA4, IntegrationType::Clarity, IntegrationType::AdobeCommerce, IntegrationType::NewRelic, IntegrationType::Klaviyo]
+                    [IntegrationType::GA4, IntegrationType::Clarity, IntegrationType::AdobeCommerce, IntegrationType::NewRelic, IntegrationType::Klaviyo, IntegrationType::Shopify]
                 ))
                 ->action(function (): void {
                     // Save form changes first so credentials on record in DB are updated with user inputs
@@ -40,6 +41,7 @@ class EditIntegration extends EditRecord
                         IntegrationType::AdobeCommerce => (new AdobeCommerceConnector($this->record))->testConnection(),
                         IntegrationType::NewRelic      => (new NewRelicConnector($this->record))->testConnection(),
                         IntegrationType::Klaviyo       => (new KlaviyoConnector($this->record))->testConnection(),
+                        IntegrationType::Shopify       => (new ShopifyConnector($this->record))->testConnection(),
                         default                        => ['success' => false, 'message' => 'Test not available for this integration type.'],
                     };
 

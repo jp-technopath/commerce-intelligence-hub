@@ -45,6 +45,7 @@ class TriggerIntegrationSync implements ShouldQueue
                 'ga4'             => (new \App\Services\Connectors\GA4Connector($this->integration))->sync($syncLog, $this->numOfDays),
                 'clarity'         => (new ClarityConnector($this->integration))->sync($syncLog, $this->numOfDays),
                 'adobe_commerce'  => (new AdobeCommerceConnector($this->integration))->sync($syncLog, $this->numOfDays),
+                'shopify'         => (new \App\Services\Connectors\ShopifyConnector($this->integration))->sync($syncLog, $this->numOfDays),
                 'new_relic'       => (new NewRelicConnector($this->integration))->sync($syncLog, $this->numOfDays),
                 'klaviyo'         => (new KlaviyoConnector($this->integration))->sync($syncLog, $this->numOfDays),
                 default           => $syncLog->update([
