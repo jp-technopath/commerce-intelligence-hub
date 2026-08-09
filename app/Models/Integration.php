@@ -26,11 +26,76 @@ class Integration extends Model
     protected $casts = [
         'integration_type'  => IntegrationType::class,
         'status'            => IntegrationStatus::class,
-        'credentials_json'  => 'encrypted:array',
         'settings_json'     => 'array',
-        'monitoring_config'  => 'array',
+        'monitoring_config' => 'array',
         'last_sync_at'      => 'datetime',
     ];
+
+    public function getCredentialsJsonAttribute($value): array
+    {
+        if (empty($value)) {
+            return [];
+        }
+
+        if (is_array($value)) {
+            return $value;
+        }
+
+        // 1. Try standard Crypt::decrypt with current APP_KEY and APP_PREVIOUS_KEYS
+        try {
+            $dec = \Illuminate\Support\Facades\Crypt::decrypt($value, serialize: false);
+            $json = is_string($dec) ? json_decode($dec, true) : $dec;
+            if (is_array($json)) {
+                return $json;
+            }
+        } catch (\Throwable $e) {}
+
+        // 2. Try candidate fallback keys (e.g. local key, previous prod keys)
+        $candidateKeys = [
+            'fPg+FfvO7T7kDDJiTdwko5a9Cbcyp9yt41kIVaMQ2X8=', // Local key
+            'E2iu1AZORQP5LWQ8c1R5aJo9/Omh7dDqfRzyAhjsCig=', // Default candidate key
+            'cfKjZFh01Yt8ie11EV5ixFu+MMnGbAuDJ50xDj1miI8=',
+        ];
+
+        foreach ($candidateKeys as $k) {
+            $rawKey = base64_decode($k);
+            if (strlen($rawKey) !== 32) continue;
+            try {
+                $enc = new \Illuminate\Encryption\Encrypter($rawKey, 'AES-256-CBC');
+                $dec = $enc->decrypt($value, unserialize: false);
+                $json = is_string($dec) ? json_decode($dec, true) : $dec;
+                if (is_array($json)) {
+                    return $json;
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // 3. Try plain JSON string
+        $json = json_decode($value, true);
+        if (is_array($json)) {
+            return $json;
+        }
+
+        return [];
+    }
+
+    public function setCredentialsJsonAttribute($value): void
+    {
+        if (empty($value)) {
+            $this->attributes['credentials_json'] = null;
+            return;
+        }
+
+        $array = is_array($value) ? $value : json_decode($value, true);
+        if (is_array($array)) {
+            $this->attributes['credentials_json'] = \Illuminate\Support\Facades\Crypt::encrypt(
+                json_encode($array),
+                serialize: false
+            );
+        } else {
+            $this->attributes['credentials_json'] = $value;
+        }
+    }
 
     // ── All available metrics per category ────────────────────────────────
 

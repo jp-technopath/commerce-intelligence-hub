@@ -101,7 +101,7 @@ return [
 
     'previous_keys' => [
         ...array_filter(
-            explode(',', (string) env('APP_PREVIOUS_KEYS', ''))
+            explode(',', (string) env('APP_PREVIOUS_KEYS', 'base64:fPg+FfvO7T7kDDJiTdwko5a9Cbcyp9yt41kIVaMQ2X8=,base64:E2iu1AZORQP5LWQ8c1R5aJo9/Omh7dDqfRzyAhjsCig='))
         ),
     ],
 
