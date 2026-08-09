@@ -54,6 +54,14 @@ return new class extends Migration
             }
         }
 
+        // Re-assign PmWorklogs
+        $worklogs = \App\Models\PmWorklog::with('workItem')->get();
+        foreach ($worklogs as $wl) {
+            if ($wl->workItem && $wl->client_id !== $wl->workItem->client_id) {
+                $wl->update(['client_id' => $wl->workItem->client_id]);
+            }
+        }
+
         // Re-assign CustomerAttentionItems
         $attentionItems = \App\Models\CustomerAttentionItem::all();
         foreach ($attentionItems as $attItem) {

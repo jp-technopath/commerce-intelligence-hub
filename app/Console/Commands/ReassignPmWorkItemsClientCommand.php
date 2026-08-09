@@ -67,7 +67,18 @@ class ReassignPmWorkItemsClientCommand extends Command
 
         $this->info("Re-assigned {$itemCount} PM work items to their correct clients.");
 
-        // 4. Re-assign CustomerAttentionItems
+        // 4. Re-assign PmWorklogs
+        $worklogs = \App\Models\PmWorklog::with('workItem')->get();
+        $wlCount = 0;
+        foreach ($worklogs as $wl) {
+            if ($wl->workItem && $wl->client_id !== $wl->workItem->client_id) {
+                $wl->update(['client_id' => $wl->workItem->client_id]);
+                $wlCount++;
+            }
+        }
+        $this->info("Re-assigned {$wlCount} PM worklogs to their correct clients.");
+
+        // 5. Re-assign CustomerAttentionItems
         $attentionItems = \App\Models\CustomerAttentionItem::all();
         $attCount = 0;
         foreach ($attentionItems as $attItem) {
