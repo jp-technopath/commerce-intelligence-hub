@@ -53,13 +53,16 @@ class AdobeCommerceConnector
         }
 
         try {
-            $token   = $this->getAdminToken($creds);
-            $baseUrl = rtrim($creds['base_url'], '/');
-            $from    = now()->subDays($numOfDays)->startOfDay()->toIso8601String();
-            $to      = now()->endOfDay()->toIso8601String();
+            $from = now()->subDays($numOfDays)->startOfDay()->toIso8601String();
+            $to   = now()->endOfDay()->toIso8601String();
 
-            // Fetch orders for the period
-            $orders = $this->fetchOrders($baseUrl, $token, $from, $to);
+            if (! empty($creds['db_host']) && ! empty($creds['db_name'])) {
+                $orders = $this->fetchOrdersFromDb($creds, $from, $to);
+            } else {
+                $token   = $this->getAdminToken($creds);
+                $baseUrl = rtrim($creds['base_url'], '/');
+                $orders  = $this->fetchOrders($baseUrl, $token, $from, $to);
+            }
 
             // Persist order line items & facts
             $this->storeOrdersAndFacts($orders);
@@ -485,16 +488,66 @@ class AdobeCommerceConnector
         return $allOrders;
     }
 
+    private function fetchOrdersFromDb(array $creds, string $from, string $to): array
+    {
+        $dbHost = $creds['db_host'] ?? '';
+        $dbName = $creds['db_name'] ?? '';
+        $dbUser = $creds['db_user'] ?? '';
+        $dbPass = $creds['db_password'] ?? '';
+        $dbPort = $creds['db_port'] ?? 3306;
+
+        $dsn = "mysql:host={$dbHost};dbname={$dbName};port={$dbPort};charset=utf8mb4";
+        $pdo = new \PDO($dsn, $dbUser, $dbPass, [
+            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+            \PDO::ATTR_TIMEOUT            => 15,
+        ]);
+
+        $sql = '
+            SELECT
+                entity_id,
+                increment_id,
+                status,
+                grand_total,
+                total_refunded,
+                tax_amount,
+                shipping_amount,
+                discount_amount,
+                created_at,
+                updated_at,
+                customer_email,
+                customer_id,
+                customer_is_guest,
+                customer_group_id,
+                order_currency_code,
+                base_currency_code,
+                store_to_base_rate,
+                total_qty_ordered
+            FROM sales_order
+            WHERE created_at >= :from_date AND created_at <= :to_date
+            ORDER BY created_at ASC
+        ';
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            ':from_date' => \Carbon\Carbon::parse($from)->toDateTimeString(),
+            ':to_date'   => \Carbon\Carbon::parse($to)->toDateTimeString(),
+        ]);
+
+        return $stmt->fetchAll();
+    }
+
     private function hasRequiredCredentials(array $creds): bool
     {
-        if (empty($creds['base_url'])) {
+        if (empty($creds['base_url']) && empty($creds['db_host'])) {
             return false;
         }
 
         $hasToken    = ! empty($creds['access_token']) || ! empty($creds['bearer_token']);
         $hasUserPass = ! empty($creds['admin_username']) && ! empty($creds['admin_password']);
+        $hasDb       = ! empty($creds['db_host']) && ! empty($creds['db_name']);
 
-        return $hasToken || $hasUserPass;
+        return $hasToken || $hasUserPass || $hasDb;
     }
 
     private function parseResponseError(\Illuminate\Http\Client\Response $response): string

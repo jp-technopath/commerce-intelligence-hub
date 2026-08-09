@@ -476,9 +476,9 @@ GRAPHQL;
             ? round($errorCount / $callCount, 6)
             : 0.0;
 
-        // Convert seconds → milliseconds for storage
-        $serverResponseMs = round($serverResponseSec * 1000, 2);
-        $pageLoadMs       = round($pageLoadSec * 1000, 2);
+        // New Relic API v2 returns average_response_time in milliseconds
+        $serverResponseMs = round($serverResponseSec, 2);
+        $pageLoadMs       = round($pageLoadSec, 2);
 
         return [
             'page_load_time'       => $pageLoadMs,

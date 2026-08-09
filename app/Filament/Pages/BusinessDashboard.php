@@ -533,14 +533,55 @@ class BusinessDashboard extends Page
             ];
         }
 
-        if ($current['throughput'] > 0 || $previous['throughput'] > 0) {
+        // New Relic Performance Metrics
+        if ($current['page_load_time'] > 0 || $previous['page_load_time'] > 0) {
             $kpis[] = [
-                'label'    => 'Average Throughput',
-                'value'    => number_format($current['throughput']) . ' req/m',
-                'previous' => number_format($previous['throughput']) . ' req/m',
-                'change'   => $this->pctChange($previous['throughput'], $current['throughput']),
-                'icon'     => 'heroicon-o-arrow-trending-up',
+                'label'    => 'Page Load Time',
+                'value'    => number_format($current['page_load_time'] / 1000, 2) . 's',
+                'previous' => number_format($previous['page_load_time'] / 1000, 2) . 's',
+                'change'   => $this->pctChange($previous['page_load_time'], $current['page_load_time']),
+                'icon'     => 'heroicon-o-clock',
+                'color'    => 'violet',
+                'invert'   => true,
+                'source'   => 'New Relic',
+            ];
+        }
+
+        if ($current['server_response_time'] > 0 || $previous['server_response_time'] > 0) {
+            $kpis[] = [
+                'label'    => 'Server Response Time (TTFB)',
+                'value'    => number_format($current['server_response_time'], 0) . 'ms',
+                'previous' => number_format($previous['server_response_time'], 0) . 'ms',
+                'change'   => $this->pctChange($previous['server_response_time'], $current['server_response_time']),
+                'icon'     => 'heroicon-o-server-stack',
                 'color'    => 'blue',
+                'invert'   => true,
+                'source'   => 'New Relic',
+            ];
+        }
+
+        if ($current['apdex'] > 0 || $previous['apdex'] > 0) {
+            $kpis[] = [
+                'label'    => 'Apdex Score',
+                'value'    => number_format($current['apdex'], 2),
+                'previous' => number_format($previous['apdex'], 2),
+                'change'   => $this->pctChange($previous['apdex'], $current['apdex']),
+                'icon'     => 'heroicon-o-face-smile',
+                'color'    => 'emerald',
+                'invert'   => false,
+                'source'   => 'New Relic',
+            ];
+        }
+
+        if ($current['error_rate'] > 0 || $previous['error_rate'] > 0) {
+            $kpis[] = [
+                'label'    => 'Error Rate',
+                'value'    => number_format($current['error_rate'] * 100, 2) . '%',
+                'previous' => number_format($previous['error_rate'] * 100, 2) . '%',
+                'change'   => $this->pctChange($previous['error_rate'], $current['error_rate']),
+                'icon'     => 'heroicon-o-exclamation-triangle',
+                'color'    => 'red',
+                'invert'   => true,
                 'source'   => 'New Relic',
             ];
         }
