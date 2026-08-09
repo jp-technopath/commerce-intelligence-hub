@@ -369,11 +369,23 @@ class IntegrationResource extends Resource
                         ->label('Authorize Google Account')
                         ->icon('heroicon-o-arrow-top-right-on-square')
                         ->color('primary')
-                        ->url(fn (?Integration $record) => $record
-                            ? route('google.oauth.redirect', $record)
-                            : null
-                        )
-                        ->openUrlInNewTab(false)
+                        ->action(function (?Integration $record, Forms\Get $get, $livewire) {
+                            if (! $record) return null;
+                            $propertyId = $get('ga4_property_id');
+                            if ($propertyId) {
+                                $creds = $record->credentials_json ?? [];
+                                $creds['property_id'] = trim((string) $propertyId);
+                                $creds['auth_method'] = 'oauth2_user';
+                                $record->update(['credentials_json' => $creds]);
+                            }
+                            if (method_exists($livewire, 'save')) {
+                                $livewire->save(shouldRedirect: false);
+                            }
+                            return redirect()->away(route('google.oauth.redirect', [
+                                'integration' => $record->id,
+                                'property_id' => $propertyId,
+                            ]));
+                        })
                         ->visible(fn (?Integration $record, Forms\Get $get) =>
                             $get('integration_type') === 'ga4'
                             && $record !== null
@@ -463,12 +475,14 @@ class IntegrationResource extends Resource
         $existing = $existing ?? [];
 
         if ($integrationType === 'ga4') {
-            $propertyId = $data['ga4_property_id'] ?? null;
-            if ($propertyId) {
+            $propertyId = trim((string) ($data['ga4_property_id'] ?? ''));
+            if ($propertyId !== '') {
                 $data['credentials_json'] = array_merge($existing, [
                     'property_id' => $propertyId,
                     'auth_method' => 'oauth2_user',
                 ]);
+            } else {
+                $data['credentials_json'] = $existing;
             }
         }
 

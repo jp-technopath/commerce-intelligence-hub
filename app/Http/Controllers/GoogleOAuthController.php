@@ -48,6 +48,13 @@ class GoogleOAuthController extends Controller
             abort(400, 'OAuth flow is only supported for GA4 integrations.');
         }
 
+        if ($request->has('property_id') && filled($request->input('property_id'))) {
+            $creds = $integration->credentials_json ?? [];
+            $creds['property_id'] = trim((string) $request->input('property_id'));
+            $creds['auth_method'] = 'oauth2_user';
+            $integration->update(['credentials_json' => $creds]);
+        }
+
         $client = $this->buildClient();
 
         // State encodes integration ID + CSRF token
