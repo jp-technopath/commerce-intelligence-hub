@@ -49,6 +49,17 @@ return new class extends Migration
                 $item->update(['client_id' => $client->id]);
             }
         }
+
+        // Re-assign CustomerAttentionItems
+        $attentionItems = \App\Models\CustomerAttentionItem::all();
+        foreach ($attentionItems as $attItem) {
+            if (in_array($attItem->source_type, ['forge_estimate_version', 'jira'], true)) {
+                $version = \App\Models\ForgeEstimateVersion::find($attItem->source_id);
+                if ($version && $version->workItem && $attItem->client_id !== $version->workItem->client_id) {
+                    $attItem->update(['client_id' => $version->workItem->client_id]);
+                }
+            }
+        }
     }
 
     public function down(): void

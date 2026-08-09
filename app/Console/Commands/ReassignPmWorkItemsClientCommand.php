@@ -67,6 +67,20 @@ class ReassignPmWorkItemsClientCommand extends Command
 
         $this->info("Re-assigned {$itemCount} PM work items to their correct clients.");
 
+        // 4. Re-assign CustomerAttentionItems
+        $attentionItems = \App\Models\CustomerAttentionItem::all();
+        $attCount = 0;
+        foreach ($attentionItems as $attItem) {
+            if (in_array($attItem->source_type, ['forge_estimate_version', 'jira'], true)) {
+                $version = \App\Models\ForgeEstimateVersion::find($attItem->source_id);
+                if ($version && $version->workItem && $attItem->client_id !== $version->workItem->client_id) {
+                    $attItem->update(['client_id' => $version->workItem->client_id]);
+                    $attCount++;
+                }
+            }
+        }
+        $this->info("Re-assigned {$attCount} Customer Attention Items to their correct clients.");
+
         return Command::SUCCESS;
     }
 }
