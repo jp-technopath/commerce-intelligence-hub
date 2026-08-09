@@ -53,3 +53,13 @@ Route::post('/api/webhooks/jira', [\App\Http\Controllers\Api\JiraWebhookControll
     ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])
     ->name('api.webhooks.jira');
 
+// Server Public IP diagnostic endpoint
+Route::get('/server-ip', function () {
+    try {
+        $ip = \Illuminate\Support\Facades\Http::timeout(5)->get('https://api.ipify.org')->body();
+        return response()->json(['outbound_ip' => trim($ip)]);
+    } catch (\Throwable $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+    }
+});
+
