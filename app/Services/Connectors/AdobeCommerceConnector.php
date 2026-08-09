@@ -568,7 +568,19 @@ class AdobeCommerceConnector
                 \PDO::ATTR_TIMEOUT            => 3,
             ]);
 
-            $sql = '
+            $storeId = $creds['store_id'] ?? $creds['adobe_store_id'] ?? null;
+            $params  = [
+                ':from_date' => \Carbon\Carbon::parse($from)->toDateTimeString(),
+                ':to_date'   => \Carbon\Carbon::parse($to)->toDateTimeString(),
+            ];
+
+            $storeClause = '';
+            if ($storeId !== null && $storeId !== '') {
+                $storeClause = ' AND store_id = :store_id';
+                $params[':store_id'] = (int) $storeId;
+            }
+
+            $sql = "
                 SELECT
                     entity_id,
                     increment_id,
@@ -589,15 +601,12 @@ class AdobeCommerceConnector
                     store_to_base_rate,
                     total_qty_ordered
                 FROM sales_order
-                WHERE created_at >= :from_date AND created_at <= :to_date
+                WHERE created_at >= :from_date AND created_at <= :to_date {$storeClause}
                 ORDER BY created_at ASC
-            ';
+            ";
 
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([
-                ':from_date' => \Carbon\Carbon::parse($from)->toDateTimeString(),
-                ':to_date'   => \Carbon\Carbon::parse($to)->toDateTimeString(),
-            ]);
+            $stmt->execute($params);
 
             return $stmt->fetchAll();
         } finally {
