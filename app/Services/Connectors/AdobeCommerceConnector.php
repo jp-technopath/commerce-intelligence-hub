@@ -57,7 +57,17 @@ class AdobeCommerceConnector
             $to   = now()->endOfDay()->toIso8601String();
 
             if (! empty($creds['db_host']) && ! empty($creds['db_name'])) {
-                $orders = $this->fetchOrdersFromDb($creds, $from, $to);
+                try {
+                    $orders = $this->fetchOrdersFromDb($creds, $from, $to);
+                } catch (\Throwable $e) {
+                    Log::warning('AdobeCommerceConnector: DB sync connection failed or timed out, falling back to REST API', [
+                        'integration_id' => $this->integration->id,
+                        'error'          => $e->getMessage(),
+                    ]);
+                    $token   = $this->getAdminToken($creds);
+                    $baseUrl = rtrim($creds['base_url'], '/');
+                    $orders  = $this->fetchOrders($baseUrl, $token, $from, $to);
+                }
             } else {
                 $token   = $this->getAdminToken($creds);
                 $baseUrl = rtrim($creds['base_url'], '/');
@@ -294,10 +304,23 @@ class AdobeCommerceConnector
         if (! $this->hasRequiredCredentials($creds)) return 0;
 
         try {
-            $token   = $this->getAdminToken($creds);
-            $baseUrl = rtrim($creds['base_url'], '/');
-
-            $orders = $this->fetchOrders($baseUrl, $token, $from->toIso8601String(), $to->toIso8601String());
+            if (! empty($creds['db_host']) && ! empty($creds['db_name'])) {
+                try {
+                    $orders = $this->fetchOrdersFromDb($creds, $from->toIso8601String(), $to->toIso8601String());
+                } catch (\Throwable $e) {
+                    Log::warning('AdobeCommerceConnector::fetchForDateRange — DB connection failed, falling back to REST API', [
+                        'integration_id' => $this->integration->id,
+                        'error'          => $e->getMessage(),
+                    ]);
+                    $token   = $this->getAdminToken($creds);
+                    $baseUrl = rtrim($creds['base_url'], '/');
+                    $orders  = $this->fetchOrders($baseUrl, $token, $from->toIso8601String(), $to->toIso8601String());
+                }
+            } else {
+                $token   = $this->getAdminToken($creds);
+                $baseUrl = rtrim($creds['base_url'], '/');
+                $orders  = $this->fetchOrders($baseUrl, $token, $from->toIso8601String(), $to->toIso8601String());
+            }
 
             $this->storeOrdersAndFacts($orders);
 
@@ -500,7 +523,7 @@ class AdobeCommerceConnector
         $pdo = new \PDO($dsn, $dbUser, $dbPass, [
             \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-            \PDO::ATTR_TIMEOUT            => 15,
+            \PDO::ATTR_TIMEOUT            => 5,
         ]);
 
         $sql = '
