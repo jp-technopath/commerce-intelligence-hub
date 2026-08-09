@@ -107,7 +107,7 @@
 
         <div style="display: flex; align-items: center; gap: 0.25rem; padding: 0.25rem; border-radius: 0.625rem; background: white; border: 1px solid rgba(148,163,184,0.15); box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
              class="dark:!bg-slate-800 dark:!border-slate-700">
-            @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days', '60' => '60 Days', '90' => '90 Days', '360' => '360 Days', 'ytd' => 'YTD'] as $val => $lbl)
+            @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days', '60' => '60 Days', '90' => '90 Days', '360' => '360 Days', '730' => '730 Days', 'ytd' => 'YTD'] as $val => $lbl)
                 <button
                     wire:click="$set('period', '{{ $val }}')"
                     style="padding: 0.375rem 0.875rem; font-size: 0.75rem; font-weight: 600; border-radius: 0.5rem; border: none; cursor: pointer; transition: all 0.2s;
