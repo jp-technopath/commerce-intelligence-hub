@@ -32,6 +32,15 @@ class TriggerIntegrationSync implements ShouldQueue
 
     public function handle(): void
     {
+        // Auto-mark any stale sync logs stuck in 'running' for > 15 minutes as 'failed'
+        SyncLog::where('status', SyncStatus::Running)
+            ->where('started_at', '<', now()->subMinutes(15))
+            ->update([
+                'status'        => SyncStatus::Failed,
+                'error_message' => 'Sync process timed out or worker process terminated unexpectedly.',
+                'completed_at'  => now(),
+            ]);
+
         $syncLog = SyncLog::create([
             'integration_id' => $this->integration->id,
             'status'         => SyncStatus::Running,

@@ -519,45 +519,52 @@ class AdobeCommerceConnector
         $dbPass = $creds['db_password'] ?? '';
         $dbPort = $creds['db_port'] ?? 3306;
 
-        $dsn = "mysql:host={$dbHost};dbname={$dbName};port={$dbPort};charset=utf8mb4";
-        $pdo = new \PDO($dsn, $dbUser, $dbPass, [
-            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-            \PDO::ATTR_TIMEOUT            => 5,
-        ]);
+        $origTimeout = ini_get('default_socket_timeout');
+        ini_set('default_socket_timeout', '3');
 
-        $sql = '
-            SELECT
-                entity_id,
-                increment_id,
-                status,
-                grand_total,
-                total_refunded,
-                tax_amount,
-                shipping_amount,
-                discount_amount,
-                created_at,
-                updated_at,
-                customer_email,
-                customer_id,
-                customer_is_guest,
-                customer_group_id,
-                order_currency_code,
-                base_currency_code,
-                store_to_base_rate,
-                total_qty_ordered
-            FROM sales_order
-            WHERE created_at >= :from_date AND created_at <= :to_date
-            ORDER BY created_at ASC
-        ';
+        try {
+            $dsn = "mysql:host={$dbHost};dbname={$dbName};port={$dbPort};charset=utf8mb4";
+            $pdo = new \PDO($dsn, $dbUser, $dbPass, [
+                \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                \PDO::ATTR_TIMEOUT            => 3,
+            ]);
 
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':from_date' => \Carbon\Carbon::parse($from)->toDateTimeString(),
-            ':to_date'   => \Carbon\Carbon::parse($to)->toDateTimeString(),
-        ]);
+            $sql = '
+                SELECT
+                    entity_id,
+                    increment_id,
+                    status,
+                    grand_total,
+                    total_refunded,
+                    tax_amount,
+                    shipping_amount,
+                    discount_amount,
+                    created_at,
+                    updated_at,
+                    customer_email,
+                    customer_id,
+                    customer_is_guest,
+                    customer_group_id,
+                    order_currency_code,
+                    base_currency_code,
+                    store_to_base_rate,
+                    total_qty_ordered
+                FROM sales_order
+                WHERE created_at >= :from_date AND created_at <= :to_date
+                ORDER BY created_at ASC
+            ';
 
-        return $stmt->fetchAll();
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([
+                ':from_date' => \Carbon\Carbon::parse($from)->toDateTimeString(),
+                ':to_date'   => \Carbon\Carbon::parse($to)->toDateTimeString(),
+            ]);
+
+            return $stmt->fetchAll();
+        } finally {
+            ini_set('default_socket_timeout', $origTimeout);
+        }
     }
 
     private function hasRequiredCredentials(array $creds): bool
