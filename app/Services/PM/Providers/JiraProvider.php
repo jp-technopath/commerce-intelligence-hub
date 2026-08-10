@@ -143,13 +143,18 @@ class JiraProvider implements ProjectManagementProvider
                 );
             }
 
+            // 4. Non-null target client ID fallback
+            $targetClientId = $matchedClient?->id
+                ?? Client::where('jira_project_key', 'TEC')->first()?->id
+                ?? $connection->client_id;
+
             $pmProject = PmProject::updateOrCreate(
                 [
                     'pm_connection_id'     => $connection->id,
                     'external_project_key' => $projKey,
                 ],
                 [
-                    'client_id'           => $matchedClient ? $matchedClient->id : null,
+                    'client_id'           => $targetClientId,
                     'name'                => $projName,
                     'external_project_id' => $proj['id'] ?? null,
                     'is_active'           => true,
