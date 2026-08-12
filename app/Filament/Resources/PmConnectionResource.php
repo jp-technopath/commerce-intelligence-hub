@@ -21,6 +21,22 @@ class PmConnectionResource extends Resource
     protected static ?string $navigationGroup = 'Clients';
     protected static ?int $navigationSort = 3;
 
+    public static function canViewAny(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) return false;
+
+        if ($user->isSuperAdmin()) return true;
+
+        // Hide PM Integrations from client portal users
+        if ($user->isClientOnly()) {
+            return false;
+        }
+
+        return $user->hasPermission('integrations.view_any') || $user->hasPermission('integrations.manage');
+    }
+
     public static function form(Form $form): Form
     {
         return $form->schema([
