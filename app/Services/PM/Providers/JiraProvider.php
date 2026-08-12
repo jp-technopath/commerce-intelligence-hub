@@ -135,15 +135,7 @@ class JiraProvider implements ProjectManagementProvider
                 $matchedClient = Client::where('name', 'LIKE', "%{$projName}%")->first();
             }
 
-            // 3. Auto-provision Client record for client-specific projects if missing
-            if (! $matchedClient && ! in_array($projKey, ['SUP', 'TEC', 'TM', 'TEWE', 'TWC', 'TP', 'SAN', 'SST', 'HPT'], true)) {
-                $matchedClient = Client::firstOrCreate(
-                    ['name' => $projName],
-                    ['jira_project_key' => $projKey]
-                );
-            }
-
-            // 4. Non-null target client ID fallback
+            // 3. Non-null target client ID fallback (unassigned/deleted clients fall back to Technopath Internal)
             $targetClientId = $matchedClient?->id
                 ?? Client::where('jira_project_key', 'TEC')->first()?->id
                 ?? $connection->client_id;
