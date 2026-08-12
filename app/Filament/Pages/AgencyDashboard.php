@@ -14,6 +14,15 @@ class AgencyDashboard extends BaseDashboard
     protected static ?string $navigationGroup = 'Dashboard';
     protected static ?int $navigationSort = 1;
 
+    public function mount(): void
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if ($user && $user->isClientOnly()) {
+            redirect()->to(CustomerDashboard::getUrl());
+        }
+    }
+
     public function getWidgets(): array
     {
         return [
@@ -22,7 +31,7 @@ class AgencyDashboard extends BaseDashboard
         ];
     }
 
-    public static function canAccess(): bool
+    public static function shouldRegisterNavigation(): bool
     {
         /** @var \App\Models\User|null $user */
         $user = auth()->user();
@@ -30,16 +39,15 @@ class AgencyDashboard extends BaseDashboard
             return false;
         }
 
-        if ($user->isSuperAdmin()) {
-            return true;
-        }
-
-        // Hide Agency Dashboard strictly from client-only portal users
         if ($user->isClientOnly()) {
             return false;
         }
 
-        // Allow access to Agency Dashboard for all authenticated internal agency users
         return true;
+    }
+
+    public static function canAccess(): bool
+    {
+        return auth()->check();
     }
 }
