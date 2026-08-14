@@ -158,7 +158,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
                         'customer_review' => 'Customer Review',
                         'planned_ready'   => 'Planned / Ready for Dev',
                     ])
-                    ->default('in_progress')
+                    ->default(fn () => request()->query('scope') ?? 'in_progress')
                     ->query(function ($query, array $data) {
                         $value = $data['value'] ?? 'in_progress';
 
