@@ -97,7 +97,8 @@ class WorkInProgressWidget extends BaseWidget
                 Tables\Columns\TextColumn::make('target_due_date')
                     ->label('Target Date')
                     ->date('M d, Y')
-                    ->placeholder('None'),
+                    ->placeholder('None')
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->actions([
                 Action::make('view_details')

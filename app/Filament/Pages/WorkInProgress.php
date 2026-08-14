@@ -146,7 +146,8 @@ class WorkInProgress extends Page implements HasForms, HasTable
                 Tables\Columns\TextColumn::make('target_due_date')
                     ->label('Target Date')
                     ->date('M d, Y')
-                    ->placeholder('None'),
+                    ->placeholder('None')
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('view_scope')
