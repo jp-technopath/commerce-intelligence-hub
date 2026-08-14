@@ -41,7 +41,9 @@ class WorkInProgressWidget extends BaseWidget
                 Tables\Columns\TextColumn::make('external_item_key')
                     ->label('Key')
                     ->weight('bold')
-                    ->searchable(),
+                    ->searchable()
+                    ->url(fn (PmWorkItem $record): string => "https://technopath.atlassian.net/browse/{$record->external_item_key}")
+                    ->openUrlInNewTab(),
 
                 Tables\Columns\TextColumn::make('summary')
                     ->label('Task / Story Name')

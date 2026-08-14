@@ -117,7 +117,15 @@ class NeedsAttentionWidget extends BaseWidget
                     ->label('Mark Complete')
                     ->icon('heroicon-m-check-circle')
                     ->color('success')
-                    ->visible(fn (CustomerAttentionItem $record): bool => ! in_array($record->category, ['estimate_approval', 'estimate_reapproval'], true))
+                    ->visible(function (CustomerAttentionItem $record): bool {
+                        if (in_array($record->category, ['estimate_approval', 'estimate_reapproval'], true)) {
+                            return false;
+                        }
+                        if ($record->source_type === 'pm_work_item' || in_array($record->category, ['task_blocked', 'waiting_on_customer'], true)) {
+                            return false;
+                        }
+                        return true;
+                    })
                     ->form(fn (CustomerAttentionItem $record): array => [
                         Placeholder::make('title')
                             ->label('Action Item')
@@ -148,6 +156,35 @@ class NeedsAttentionWidget extends BaseWidget
                         Notification::make()->title('Action Item Marked Complete Successfully')->success()->send();
                         $this->dispatch('client-changed');
                     }),
+
+                Action::make('view_jira_ticket')
+                    ->label('View Ticket')
+                    ->icon('heroicon-m-arrow-top-right-on-square')
+                    ->color('primary')
+                    ->visible(function (CustomerAttentionItem $record): bool {
+                        if (in_array($record->category, ['estimate_approval', 'estimate_reapproval'], true)) {
+                            return false;
+                        }
+                        return $record->source_type === 'pm_work_item'
+                            || in_array($record->category, ['task_blocked', 'waiting_on_customer'], true)
+                            || ! empty($record->action_url);
+                    })
+                    ->url(function (CustomerAttentionItem $record): ?string {
+                        if (! empty($record->action_url)) {
+                            return $record->action_url;
+                        }
+                        if ($record->source_type === 'pm_work_item' && $record->source_id) {
+                            $workItem = \App\Models\PmWorkItem::find($record->source_id);
+                            if ($workItem && $workItem->external_item_key) {
+                                return "https://technopath.atlassian.net/browse/{$workItem->external_item_key}";
+                            }
+                        }
+                        if (preg_match('/([A-Z0-9]+-\d+)/i', $record->title, $m)) {
+                            return "https://technopath.atlassian.net/browse/{$m[1]}";
+                        }
+                        return null;
+                    })
+                    ->openUrlInNewTab(),
 
                 Action::make('review_estimate')
                     ->label('Review & Respond')
@@ -382,6 +419,7 @@ class NeedsAttentionWidget extends BaseWidget
                         ? ("Task is blocked: " . ($item->blocked_reason ?: 'Requires clarification or customer action'))
                         : "Waiting on customer review or input for {$item->external_item_key}",
                     'severity'    => $item->is_blocked ? 'warning' : 'info',
+                    'action_url'  => "https://technopath.atlassian.net/browse/{$item->external_item_key}",
                     'is_resolved' => false,
                 ]
             );
