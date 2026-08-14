@@ -392,7 +392,7 @@ class NeedsAttentionWidget extends BaseWidget
             $approvalService->checkInitialEstimateApprovalNeeded($wi);
         }
 
-        // Clean up estimate approval items for work items that DO NOT have approval-needed or approval_needed label
+        // Clean up unapproved estimate approval items for work items that DO NOT have approval-needed label
         $estimateAttentionItems = CustomerAttentionItem::where('client_id', $clientId)
             ->whereIn('category', ['estimate_approval', 'estimate_reapproval'])
             ->get();
@@ -401,6 +401,13 @@ class NeedsAttentionWidget extends BaseWidget
             $version = \App\Models\ForgeEstimateVersion::find($attItem->source_id);
             if (! $version) {
                 $attItem->delete();
+                continue;
+            }
+
+            // Do NOT delete versions that have been approved
+            $isApproved = $version->approvalEvents()->where('event_type', 'approved')->exists();
+            if ($isApproved) {
+                $attItem->update(['is_resolved' => true, 'resolved_at' => now()]);
                 continue;
             }
 
