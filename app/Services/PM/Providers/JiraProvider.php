@@ -606,8 +606,8 @@ class JiraProvider implements ProjectManagementProvider
             str_contains($jiraStatusLower, 'deployment') || str_contains($jiraStatusLower, 'ready for deployment') => 'ready_for_deployment',
             str_contains($jiraStatusLower, 'uat') || str_contains($jiraStatusLower, 'customer') => 'customer_review',
             str_contains($jiraStatusLower, 'review') || str_contains($jiraStatusLower, 'qa') || str_contains($jiraStatusLower, 'testing') => 'review_qa',
-            str_contains($jiraStatusLower, 'progress') || str_contains($jiraStatusLower, 'dev') => 'in_progress',
             str_contains($jiraStatusLower, 'ready') || str_contains($jiraStatusLower, 'to do') => 'ready',
+            str_contains($jiraStatusLower, 'progress') || str_contains($jiraStatusLower, 'in dev') || str_contains($jiraStatusLower, 'in development') => 'in_progress',
             default => 'planned',
         };
     }
