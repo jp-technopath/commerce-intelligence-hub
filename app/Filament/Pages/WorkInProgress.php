@@ -24,11 +24,13 @@ class WorkInProgress extends Page implements HasForms, HasTable
     use InteractsWithForms;
     use InteractsWithTable;
 
-    protected static ?string $navigationIcon = 'heroicon-o-arrow-path';
+    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
-    protected static ?string $navigationLabel = 'Work in Progress';
+    protected static ?string $navigationLabel = 'Work in Pipeline';
 
-    protected static ?string $title = 'Work in Progress — Active Delivery Pipeline';
+    protected static ?string $title = 'Work in Pipeline';
+
+    protected static ?string $slug = 'work-in-pipeline';
 
     protected static ?string $navigationGroup = 'Customer Portal';
 
@@ -153,15 +155,15 @@ class WorkInProgress extends Page implements HasForms, HasTable
                 Tables\Filters\SelectFilter::make('view_scope')
                     ->label('View Scope')
                     ->options([
-                        'in_progress'     => 'Work in Progress (Jira status = In Progress)',
                         'all_pipeline'    => 'Work in Pipeline (All Active Tasks)',
+                        'in_progress'     => 'Work in Progress (Jira status = In Progress)',
+                        'planned_ready'   => 'Planned / Ready for Dev',
                         'review_qa'       => 'Review / QA & Testing',
                         'customer_review' => 'Customer Review',
-                        'planned_ready'   => 'Planned / Ready for Dev',
                     ])
-                    ->default(fn () => request()->query('scope') ?? 'in_progress')
+                    ->default(fn () => request()->query('scope') ?? 'all_pipeline')
                     ->query(function ($query, array $data) {
-                        $value = $data['value'] ?? 'in_progress';
+                        $value = $data['value'] ?? 'all_pipeline';
 
                         return match ($value) {
                             'in_progress' => $query->where(function ($q) {
