@@ -18,7 +18,7 @@ class ApprovedTasksWidget extends BaseWidget
 
     protected int|string|array $columnSpan = 'full';
 
-    protected static ?string $heading = 'Work in Pipeline (Approved Tasks Waiting to Begin)';
+    protected static ?string $heading = 'Approved Tasks';
 
     public static function canView(): bool
     {
@@ -26,7 +26,7 @@ class ApprovedTasksWidget extends BaseWidget
         $clientId = $user?->client_id ?? session('current_client_id') ?? 1;
 
         return PmWorkItem::where('client_id', $clientId)
-            ->whereIn('normalized_delivery_status', ['planned', 'ready'])
+            ->where('normalized_delivery_status', '!=', 'completed')
             ->whereHas('estimateVersions.approvalEvents', function ($q) {
                 $q->where('event_type', 'approved');
             })
@@ -47,7 +47,7 @@ class ApprovedTasksWidget extends BaseWidget
             ->query(
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
-                    ->whereIn('normalized_delivery_status', ['planned', 'ready'])
+                    ->where('normalized_delivery_status', '!=', 'completed')
                     ->whereHas('estimateVersions.approvalEvents', function ($q) {
                         $q->where('event_type', 'approved');
                     })
