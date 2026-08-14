@@ -385,11 +385,33 @@ class NeedsAttentionWidget extends BaseWidget
             );
         }
 
-        // 2b. Check estimate approval needed for client work items (e.g. approval-needed label or initial estimate)
+        // 2b. Check estimate approval needed ONLY for work items with approval-needed or approval_needed label
         $approvalService = app(\App\Services\EstimateApprovalService::class);
         $clientWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)->get();
         foreach ($clientWorkItems as $wi) {
             $approvalService->checkInitialEstimateApprovalNeeded($wi);
+        }
+
+        // Clean up estimate approval items for work items that DO NOT have approval-needed or approval_needed label
+        $estimateAttentionItems = CustomerAttentionItem::where('client_id', $clientId)
+            ->whereIn('category', ['estimate_approval', 'estimate_reapproval'])
+            ->get();
+
+        foreach ($estimateAttentionItems as $attItem) {
+            $version = \App\Models\ForgeEstimateVersion::find($attItem->source_id);
+            if (! $version) {
+                $attItem->delete();
+                continue;
+            }
+
+            $workItem = $version->workItem;
+            if (! $workItem || (! $workItem->hasLabel('approval-needed') && ! $workItem->hasLabel('approval_needed'))) {
+                $attItem->delete();
+                if ($workItem && $workItem->estimateVersions()->count() === 1) {
+                    $version->approvalEvents()->delete();
+                    $version->delete();
+                }
+            }
         }
 
         // 3. Sync blocked tasks and customer review tasks

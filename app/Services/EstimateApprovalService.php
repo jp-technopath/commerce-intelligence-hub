@@ -246,14 +246,16 @@ class EstimateApprovalService
     {
         $hasApprovalLabel = $workItem->hasLabel('approval-needed') || $workItem->hasLabel('approval_needed');
 
-        if ($hasApprovalLabel || ($workItem->estimated_seconds > 0 && $workItem->estimateVersions()->count() === 0)) {
-            if ($workItem->estimateVersions()->count() === 0) {
-                return $this->submitEstimate(
-                    $workItem,
-                    $workItem->estimated_seconds > 0 ? $workItem->estimated_seconds : 0,
-                    $hasApprovalLabel ? 'Estimate approval required (Label: approval-needed).' : 'Initial estimate synced from Jira Original Estimate.'
-                );
-            }
+        if (! $hasApprovalLabel) {
+            return null;
+        }
+
+        if ($workItem->estimateVersions()->count() === 0) {
+            return $this->submitEstimate(
+                $workItem,
+                $workItem->estimated_seconds > 0 ? $workItem->estimated_seconds : 0,
+                'Estimate approval required (Label: approval-needed).'
+            );
         }
 
         return null;
