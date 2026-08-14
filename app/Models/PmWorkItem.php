@@ -30,12 +30,14 @@ class PmWorkItem extends Model
         'target_due_date',
         'is_blocked',
         'blocked_reason',
+        'labels_json',
         'external_updated_at',
         'last_synced_at',
     ];
 
     protected $casts = [
         'is_blocked'          => 'boolean',
+        'labels_json'          => 'array',
         'target_due_date'     => 'date',
         'external_updated_at' => 'datetime',
         'last_synced_at'      => 'datetime',
@@ -82,6 +84,17 @@ class PmWorkItem extends Model
     }
 
     // ── Helper Accessors ─────────────────────────────────────────────────
+
+    public function hasLabel(string $targetLabel): bool
+    {
+        $labels = $this->labels_json ?? [];
+        foreach ($labels as $lbl) {
+            if (strcasecmp(trim($lbl), trim($targetLabel)) === 0) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     public function getEstimatedHoursAttribute(): float
     {

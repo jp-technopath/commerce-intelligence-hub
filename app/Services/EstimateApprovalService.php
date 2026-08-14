@@ -84,6 +84,14 @@ class EstimateApprovalService
                     'resolved_at' => now(),
                 ]);
 
+            // Remove approval-needed label from Jira
+            try {
+                $this->jiraProvider->removeLabel($version->workItem, 'approval-needed', $approver);
+                $this->jiraProvider->removeLabel($version->workItem, 'approval_needed', $approver);
+            } catch (\Exception $e) {
+                Log::info("EstimateApprovalService: Failed to remove approval-needed label from Jira: " . $e->getMessage());
+            }
+
             // 1. Try Jira status transition
             try {
                 try {
@@ -236,12 +244,16 @@ class EstimateApprovalService
      */
     public function checkInitialEstimateApprovalNeeded(PmWorkItem $workItem): ?ForgeEstimateVersion
     {
-        if ($workItem->estimated_seconds > 0 && $workItem->estimateVersions()->count() === 0) {
-            return $this->submitEstimate(
-                $workItem,
-                $workItem->estimated_seconds,
-                'Initial estimate synced from Jira Original Estimate.'
-            );
+        $hasApprovalLabel = $workItem->hasLabel('approval-needed') || $workItem->hasLabel('approval_needed');
+
+        if ($hasApprovalLabel || ($workItem->estimated_seconds > 0 && $workItem->estimateVersions()->count() === 0)) {
+            if ($workItem->estimateVersions()->count() === 0) {
+                return $this->submitEstimate(
+                    $workItem,
+                    $workItem->estimated_seconds > 0 ? $workItem->estimated_seconds : 0,
+                    $hasApprovalLabel ? 'Estimate approval required (Label: approval-needed).' : 'Initial estimate synced from Jira Original Estimate.'
+                );
+            }
         }
 
         return null;

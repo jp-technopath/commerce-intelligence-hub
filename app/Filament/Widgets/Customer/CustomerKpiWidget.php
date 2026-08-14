@@ -72,13 +72,13 @@ class CustomerKpiWidget extends BaseWidget
                 ->descriptionIcon('heroicon-m-clock')
                 ->color('primary'),
 
-            Stat::make('Work in Pipeline', "{$pipelineTaskCount} Tasks · {$pipelineHours} Estimated Hours")
+            Stat::make('Work in Pipeline', "{$pipelineTaskCount} Tasks")
                 ->description('All active tasks in delivery pipeline')
                 ->descriptionIcon('heroicon-m-rectangle-stack')
                 ->color('success')
                 ->url('/admin/work-in-pipeline?scope=all_pipeline'),
 
-            Stat::make('Work in Progress', "{$wipTaskCount} Tasks · {$wipHours} Estimated Hours")
+            Stat::make('Work in Progress', "{$wipTaskCount} Tasks")
                 ->description('Tasks with Jira status In Progress')
                 ->descriptionIcon('heroicon-m-arrow-path')
                 ->color('info')

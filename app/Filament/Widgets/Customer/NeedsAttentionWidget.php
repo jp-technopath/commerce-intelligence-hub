@@ -385,6 +385,13 @@ class NeedsAttentionWidget extends BaseWidget
             );
         }
 
+        // 2b. Check estimate approval needed for client work items (e.g. approval-needed label or initial estimate)
+        $approvalService = app(\App\Services\EstimateApprovalService::class);
+        $clientWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)->get();
+        foreach ($clientWorkItems as $wi) {
+            $approvalService->checkInitialEstimateApprovalNeeded($wi);
+        }
+
         // 3. Sync blocked tasks and customer review tasks
         $attentionWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)
             ->where(function ($q) {

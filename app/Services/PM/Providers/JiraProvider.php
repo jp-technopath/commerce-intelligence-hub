@@ -176,7 +176,7 @@ class JiraProvider implements ProjectManagementProvider
         $body = [
             'jql'        => $jql,
             'maxResults' => 100,
-            'fields'     => ['summary', 'description', 'status', 'issuetype', 'priority', 'timetracking', 'assignee', 'duedate', 'updated', 'customfield_10002', 'customfield_10028', 'reporter'],
+            'fields'     => ['summary', 'description', 'status', 'issuetype', 'priority', 'timetracking', 'assignee', 'duedate', 'updated', 'labels', 'customfield_10002', 'customfield_10028', 'reporter'],
         ];
 
         $response = $this->buildRequest($account)->post($url, $body);
@@ -408,6 +408,43 @@ class JiraProvider implements ProjectManagementProvider
         return false;
     }
 
+    public function removeLabel(PmWorkItem $workItem, string $labelToRemove, ?User $actor = null): bool
+    {
+        $connection = $workItem->connection;
+        $account = $this->resolveCredentials($actor, $connection);
+
+        $hasOAuthToken = $account->exists && ! empty($account->credentials_json['access_token']);
+        $cloudId = $hasOAuthToken ? $this->getCloudId($account, $connection) : null;
+
+        $url = ($hasOAuthToken && $cloudId)
+            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/issue/{$workItem->external_item_key}"
+            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . "/rest/api/3/issue/{$workItem->external_item_key}";
+
+        $body = [
+            'update' => [
+                'labels' => [
+                    [
+                        'remove' => $labelToRemove,
+                    ],
+                ],
+            ],
+        ];
+
+        $response = $this->buildRequest($account)->put($url, $body);
+
+        if (! $response->successful()) {
+            Log::error("JiraProvider removeLabel failed [Status {$response->status()}]: " . $response->body());
+            return false;
+        }
+
+        if ($workItem->labels_json) {
+            $remaining = array_values(array_filter($workItem->labels_json, fn ($l) => strcasecmp($l, $labelToRemove) !== 0));
+            $workItem->update(['labels_json' => $remaining]);
+        }
+
+        return true;
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Helper Methods
     // ─────────────────────────────────────────────────────────────────────
@@ -518,6 +555,7 @@ class JiraProvider implements ProjectManagementProvider
                 'time_spent_seconds'         => $timeSpentSeconds,
                 'assignee_name'              => $fields['assignee']['displayName'] ?? null,
                 'target_due_date'            => isset($fields['duedate']) ? Carbon::parse($fields['duedate']) : null,
+                'labels_json'                => $fields['labels'] ?? [],
                 'external_updated_at'        => isset($fields['updated']) ? Carbon::parse($fields['updated']) : null,
                 'last_synced_at'             => now(),
             ]
