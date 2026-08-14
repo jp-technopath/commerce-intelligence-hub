@@ -277,7 +277,7 @@ class NeedsAttentionWidget extends BaseWidget
                                     <svg class='w-4 h-4 text-primary-500' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'></path></svg>
                                     Task Scope & Technical Requirements
                                 </div>
-                                <div class='prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed font-sans'>
+                                <div class='prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed font-sans max-h-[350px] overflow-y-auto pr-3 pb-2'>
                                     " . $descriptionHtml . "
                                 </div>
                             </div>";
