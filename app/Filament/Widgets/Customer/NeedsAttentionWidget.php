@@ -176,11 +176,11 @@ class NeedsAttentionWidget extends BaseWidget
                         if ($record->source_type === 'pm_work_item' && $record->source_id) {
                             $workItem = \App\Models\PmWorkItem::find($record->source_id);
                             if ($workItem && $workItem->external_item_key) {
-                                return "https://technopath.atlassian.net/browse/{$workItem->external_item_key}";
+                                return "https://technopath.atlassian.net/servicedesk/customer/portal/4/{$workItem->external_item_key}";
                             }
                         }
                         if (preg_match('/([A-Z0-9]+-\d+)/i', $record->title, $m)) {
-                            return "https://technopath.atlassian.net/browse/{$m[1]}";
+                            return "https://technopath.atlassian.net/servicedesk/customer/portal/4/{$m[1]}";
                         }
                         return null;
                     })
@@ -419,7 +419,7 @@ class NeedsAttentionWidget extends BaseWidget
                         ? ("Task is blocked: " . ($item->blocked_reason ?: 'Requires clarification or customer action'))
                         : "Waiting on customer review or input for {$item->external_item_key}",
                     'severity'    => $item->is_blocked ? 'warning' : 'info',
-                    'action_url'  => "https://technopath.atlassian.net/browse/{$item->external_item_key}",
+                    'action_url'  => "https://technopath.atlassian.net/servicedesk/customer/portal/4/{$item->external_item_key}",
                     'is_resolved' => false,
                 ]
             );

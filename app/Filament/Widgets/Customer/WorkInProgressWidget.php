@@ -42,7 +42,7 @@ class WorkInProgressWidget extends BaseWidget
                     ->label('Key')
                     ->weight('bold')
                     ->searchable()
-                    ->url(fn (PmWorkItem $record): string => "https://technopath.atlassian.net/browse/{$record->external_item_key}")
+                    ->url(fn (PmWorkItem $record): string => "https://technopath.atlassian.net/servicedesk/customer/portal/4/{$record->external_item_key}")
                     ->openUrlInNewTab(),
 
                 Tables\Columns\TextColumn::make('summary')
