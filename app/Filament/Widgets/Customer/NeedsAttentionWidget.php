@@ -347,5 +347,44 @@ class NeedsAttentionWidget extends BaseWidget
                 ]
             );
         }
+
+        // 3. Sync blocked tasks and customer review tasks
+        $attentionWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)
+            ->where(function ($q) {
+                $q->where('is_blocked', true)
+                  ->orWhere('normalized_delivery_status', 'customer_review');
+            })
+            ->get();
+
+        $activeWorkItemIds = $attentionWorkItems->pluck('id')->map(fn ($id) => (string) $id)->toArray();
+
+        // Resolve attention items for work items that are no longer blocked or in customer review
+        CustomerAttentionItem::where('client_id', $clientId)
+            ->where('source_type', 'pm_work_item')
+            ->whereNotIn('source_id', $activeWorkItemIds)
+            ->update([
+                'is_resolved' => true,
+                'resolved_at' => now(),
+            ]);
+
+        foreach ($attentionWorkItems as $item) {
+            $cat = $item->is_blocked ? 'task_blocked' : 'waiting_on_customer';
+            CustomerAttentionItem::updateOrCreate(
+                [
+                    'client_id'   => $clientId,
+                    'source_type' => 'pm_work_item',
+                    'source_id'   => (string) $item->id,
+                ],
+                [
+                    'category'    => $cat,
+                    'title'       => "{$item->external_item_key}: {$item->summary}",
+                    'description' => $item->is_blocked
+                        ? ("Task is blocked: " . ($item->blocked_reason ?: 'Requires clarification or customer action'))
+                        : "Waiting on customer review or input for {$item->external_item_key}",
+                    'severity'    => $item->is_blocked ? 'warning' : 'info',
+                    'is_resolved' => false,
+                ]
+            );
+        }
     }
 }

@@ -792,9 +792,28 @@ class ViewClientMeeting extends ViewRecord
                 'error'          => $e->getMessage(),
             ]);
 
+            $user = auth()->user();
+            $jiraAccount = $user?->jiraAccount();
+            $isAuthError = str_contains(strtolower($e->getMessage()), 'token') || 
+                           str_contains(strtolower($e->getMessage()), 'refresh') || 
+                           str_contains(strtolower($e->getMessage()), 'auth') || 
+                           str_contains(strtolower($e->getMessage()), '401') || 
+                           str_contains(strtolower($e->getMessage()), '403');
+
+            if ($jiraAccount && $isAuthError) {
+                $jiraAccount->update([
+                    'status'     => \App\Enums\ConnectedAccountStatus::Error,
+                    'last_error' => $e->getMessage(),
+                ]);
+            }
+
+            $errorMessage = $isAuthError || !$jiraAccount
+                ? "Jira authentication error: {$e->getMessage()}. Please go to My Profile -> Connected Accounts to reconnect your Jira account."
+                : 'Error: ' . $e->getMessage();
+
             Notification::make()
                 ->title('Jira Task Creation Failed')
-                ->body('Error: ' . $e->getMessage())
+                ->body($errorMessage)
                 ->danger()
                 ->persistent()
                 ->send();

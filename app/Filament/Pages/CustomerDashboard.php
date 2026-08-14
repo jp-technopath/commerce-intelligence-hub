@@ -14,6 +14,8 @@ use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Form;
 use Filament\Pages\Page;
 
+use App\Filament\Widgets\Customer\ReadyForDeploymentWidget;
+
 class CustomerDashboard extends Page implements HasForms
 {
     use InteractsWithForms;
@@ -69,6 +71,7 @@ class CustomerDashboard extends Page implements HasForms
             NeedsAttentionWidget::class,
             MeetingsCommitmentsWidget::class,
             ApprovedTasksWidget::class,
+            ReadyForDeploymentWidget::class,
         ];
     }
 }

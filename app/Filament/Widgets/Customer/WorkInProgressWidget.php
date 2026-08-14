@@ -16,7 +16,7 @@ class WorkInProgressWidget extends BaseWidget
 
     protected int|string|array $columnSpan = 'full';
 
-    protected static ?string $heading = 'Work in Progress (Delivery Pipeline)';
+    protected static ?string $heading = 'Work in Progress (Jira Status = In Progress)';
 
     public function table(Table $table): Table
     {
@@ -27,7 +27,14 @@ class WorkInProgressWidget extends BaseWidget
             ->query(
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
-                    ->where('normalized_delivery_status', '!=', 'completed')
+                    ->where(function ($q) {
+                        $q->where('normalized_delivery_status', 'in_progress')
+                          ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
+                    })
+                    ->whereHas('project', function ($q) {
+                        $q->where('external_project_key', '!=', 'SUP');
+                    })
+                    ->where('external_item_key', 'NOT LIKE', 'SUP-%')
                     ->orderBy('updated_at', 'desc')
             )
             ->columns([

@@ -94,7 +94,7 @@ class ConnectedAccount extends Model
         $expiresAt = $this->token_expires_at;
 
         // If accessToken exists and is not expired (or within a 1-minute buffer), return it
-        if ($accessToken && $expiresAt && $expiresAt->subMinute()->isFuture()) {
+        if ($accessToken && $expiresAt && $expiresAt->copy()->subMinute()->isFuture()) {
             return $accessToken;
         }
 

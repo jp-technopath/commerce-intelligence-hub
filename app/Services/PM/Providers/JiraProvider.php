@@ -603,6 +603,7 @@ class JiraProvider implements ProjectManagementProvider
 
         return match (true) {
             str_contains($jiraStatusLower, 'done') || str_contains($jiraStatusLower, 'closed') || str_contains($jiraStatusLower, 'resolved') => 'completed',
+            str_contains($jiraStatusLower, 'deployment') || str_contains($jiraStatusLower, 'ready for deployment') => 'ready_for_deployment',
             str_contains($jiraStatusLower, 'uat') || str_contains($jiraStatusLower, 'customer') => 'customer_review',
             str_contains($jiraStatusLower, 'review') || str_contains($jiraStatusLower, 'qa') || str_contains($jiraStatusLower, 'testing') => 'review_qa',
             str_contains($jiraStatusLower, 'progress') || str_contains($jiraStatusLower, 'dev') => 'in_progress',

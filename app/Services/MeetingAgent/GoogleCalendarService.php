@@ -190,11 +190,17 @@ class GoogleCalendarService
      *
      * @return Collection<int, ClientMeeting> Affected meeting records
      */
+    /**
+     * Scan and sync upcoming and recent client meetings into the database.
+     *
+     * @return Collection<int, ClientMeeting> Affected meeting records
+     */
     public function syncUpcomingClientMeetings(): Collection
     {
         $scanDays = (int) config('meeting_agent.calendar.scan_days_ahead', 7);
-        $from = now()->startOfDay();
-        $to = now()->addDays($scanDays);
+        // Include past 14 days so past/completed meetings are recovered and updated
+        $from = now()->subDays(14)->startOfDay();
+        $to = now()->addDays($scanDays)->endOfDay();
 
         $events = $this->getUpcomingEvents($from, $to);
         $affectedMeetings = collect();
@@ -273,8 +279,10 @@ class GoogleCalendarService
             }
         }
 
+        $summary = $event->getSummary() ?? 'Untitled Meeting';
+
         // Try to match a client by external attendee email domain or event title
-        $clientId = $this->matchClient($externalAttendees, $event->getSummary() ?? '');
+        $clientId = $this->matchClient($externalAttendees, $summary);
 
         // Determine status
         $status = MeetingStatus::Detected;
@@ -287,44 +295,121 @@ class GoogleCalendarService
         // Parse start/end times
         $startDateTime = $event->getStart()?->getDateTime() ?? $event->getStart()?->getDate();
         $endDateTime = $event->getEnd()?->getDateTime() ?? $event->getEnd()?->getDate();
+        $startCarbon = $startDateTime ? Carbon::parse($startDateTime) : null;
+        $endCarbon = $endDateTime ? Carbon::parse($endDateTime) : null;
         $timezone = $event->getStart()?->getTimeZone() ?? config('app.timezone', 'UTC');
 
-        $existingMeeting = ClientMeeting::where('scanned_by_user_id', $this->user->id)
-            ->where('google_calendar_id', 'primary')
-            ->where('google_event_id', $event->getId())
-            ->first();
+        $iCalUid = $event->getICalUID();
+        $existingMeeting = null;
 
-        $projectKey = $existingMeeting?->project_key;
-        if (empty($projectKey) && $clientId) {
+        // 1. Occurrence-Aware Primary Matching: iCalUID + start_at (5-minute window for timezone safety)
+        if ($iCalUid && $startCarbon) {
+            $existingMeeting = ClientMeeting::where('google_ical_uid', $iCalUid)
+                ->whereBetween('meeting_start_at', [
+                    $startCarbon->copy()->subMinutes(5),
+                    $startCarbon->copy()->addMinutes(5)
+                ])
+                ->first();
+        }
+
+        // 2. Secondary Match: user ID + event ID
+        if (! $existingMeeting) {
+            $existingMeeting = ClientMeeting::where('scanned_by_user_id', $this->user->id)
+                ->where('google_calendar_id', 'primary')
+                ->where('google_event_id', $event->getId())
+                ->first();
+        }
+
+        // 3. Controlled Fallback Match: exact title & start time window (when iCalUID missing)
+        if (! $existingMeeting && empty($iCalUid) && $startCarbon) {
+            $existingMeeting = ClientMeeting::whereRaw('LOWER(title) = ?', [strtolower(trim($summary))])
+                ->whereBetween('meeting_start_at', [
+                    $startCarbon->copy()->subMinutes(5),
+                    $startCarbon->copy()->addMinutes(5)
+                ])
+                ->first();
+        }
+
+        if ($existingMeeting) {
+            // Merge attendee lists across attendees' scans
+            $mergedExternal = $this->mergeAttendees($existingMeeting->external_attendees ?? [], $externalAttendees);
+            $mergedInternal = $this->mergeAttendees($existingMeeting->internal_attendees ?? [], $internalAttendees);
+
+            $projectKey = $existingMeeting->project_key;
+            $targetClientId = $existingMeeting->client_id ?? $clientId;
+
+            if (empty($projectKey) && $targetClientId) {
+                $clientModel = Client::find($targetClientId);
+                if ($clientModel && ! empty($clientModel->jira_project_key)) {
+                    $projectKey = $clientModel->jira_project_key;
+                }
+            }
+
+            $existingMeeting->update([
+                'google_ical_uid'    => $iCalUid ?: $existingMeeting->google_ical_uid,
+                'google_event_id'    => $event->getId(),
+                'google_calendar_id' => 'primary',
+                'title'              => $summary,
+                'meeting_start_at'   => $startCarbon ?? $existingMeeting->meeting_start_at,
+                'meeting_end_at'     => $endCarbon ?? $existingMeeting->meeting_end_at,
+                'timezone'           => $timezone,
+                'client_id'          => $targetClientId,
+                'project_key'        => $projectKey,
+                'external_attendees' => $mergedExternal,
+                'internal_attendees' => $mergedInternal,
+                'status'             => ($existingMeeting->status === MeetingStatus::Canceled || $status === MeetingStatus::Canceled) ? $status : $existingMeeting->status,
+            ]);
+
+            return $existingMeeting;
+        }
+
+        $projectKey = null;
+        if ($clientId) {
             $clientModel = Client::find($clientId);
             if ($clientModel && ! empty($clientModel->jira_project_key)) {
                 $projectKey = $clientModel->jira_project_key;
             }
         }
 
-        $meeting = ClientMeeting::updateOrCreate(
-            [
-                'scanned_by_user_id' => $this->user->id,
-                'google_calendar_id' => 'primary',
-                'google_event_id'    => $event->getId(),
-            ],
-            [
-                'google_ical_uid'    => $event->getICalUID(),
-                'title'              => $event->getSummary() ?? 'Untitled Meeting',
-                'meeting_start_at'   => $startDateTime ? Carbon::parse($startDateTime) : null,
-                'meeting_end_at'     => $endDateTime ? Carbon::parse($endDateTime) : null,
-                'timezone'           => $timezone,
-                'client_id'          => $clientId,
-                'project_key'        => $projectKey,
-                'internal_owner_id'  => $this->user->id,
-                'external_attendees' => $externalAttendees,
-                'internal_attendees' => $internalAttendees,
-                'status'             => $status,
-                'source'             => MeetingSource::GoogleCalendar,
-            ]
-        );
+        return ClientMeeting::create([
+            'scanned_by_user_id' => $this->user->id,
+            'google_calendar_id' => 'primary',
+            'google_event_id'    => $event->getId(),
+            'google_ical_uid'    => $iCalUid,
+            'title'              => $summary,
+            'meeting_start_at'   => $startCarbon,
+            'meeting_end_at'     => $endCarbon,
+            'timezone'           => $timezone,
+            'client_id'          => $clientId,
+            'project_key'        => $projectKey,
+            'internal_owner_id'  => $this->user->id,
+            'external_attendees' => $externalAttendees,
+            'internal_attendees' => $internalAttendees,
+            'status'             => $status,
+            'source'             => MeetingSource::GoogleCalendar,
+        ]);
+    }
 
-        return $meeting;
+    /**
+     * Helper to merge attendee lists, deduplicating by email address.
+     */
+    private function mergeAttendees(array $existing, array $new): array
+    {
+        $byEmail = [];
+        foreach ($existing as $item) {
+            if (! empty($item['email'])) {
+                $byEmail[strtolower($item['email'])] = $item;
+            }
+        }
+        foreach ($new as $item) {
+            if (! empty($item['email'])) {
+                $emailLower = strtolower($item['email']);
+                if (! isset($byEmail[$emailLower]) || empty($byEmail[$emailLower]['name'])) {
+                    $byEmail[$emailLower] = $item;
+                }
+            }
+        }
+        return array_values($byEmail);
     }
 
     /**

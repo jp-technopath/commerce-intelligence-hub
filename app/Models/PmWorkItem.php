@@ -113,12 +113,13 @@ class PmWorkItem extends Model
     public function getDeliveryStatusLabelAttribute(): string
     {
         return match ($this->normalized_delivery_status) {
-            'planned'         => 'Planned',
-            'ready'           => 'Ready for Dev',
-            'in_progress'     => 'In Progress',
-            'review_qa'       => 'Review / QA',
-            'customer_review' => 'Customer Review',
-            'completed'       => 'Completed',
+            'planned'               => 'Planned',
+            'ready'                 => 'Ready for Dev',
+            'in_progress'           => 'In Progress',
+            'review_qa'             => 'Review / QA',
+            'customer_review'       => 'Customer Review',
+            'ready_for_deployment' => 'Ready for Deployment',
+            'completed'             => 'Completed',
             default           => ucfirst(str_replace('_', ' ', $this->normalized_delivery_status)),
         };
     }

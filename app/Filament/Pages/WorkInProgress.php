@@ -148,6 +148,33 @@ class WorkInProgress extends Page implements HasForms, HasTable
                     ->date('M d, Y')
                     ->placeholder('None'),
             ])
+            ->filters([
+                Tables\Filters\SelectFilter::make('view_scope')
+                    ->label('View Scope')
+                    ->options([
+                        'in_progress'     => 'Work in Progress (Jira status = In Progress)',
+                        'all_pipeline'    => 'Work in Pipeline (All Active Tasks)',
+                        'review_qa'       => 'Review / QA & Testing',
+                        'customer_review' => 'Customer Review',
+                        'planned_ready'   => 'Planned / Ready for Dev',
+                    ])
+                    ->default('in_progress')
+                    ->query(function ($query, array $data) {
+                        $value = $data['value'] ?? 'in_progress';
+
+                        return match ($value) {
+                            'in_progress' => $query->where(function ($q) {
+                                $q->where('normalized_delivery_status', 'in_progress')
+                                  ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
+                            }),
+                            'review_qa' => $query->whereIn('normalized_delivery_status', ['review_qa', 'customer_review']),
+                            'customer_review' => $query->where('normalized_delivery_status', 'customer_review'),
+                            'planned_ready' => $query->whereIn('normalized_delivery_status', ['planned', 'ready']),
+                            'all_pipeline' => $query,
+                            default => $query,
+                        };
+                    }),
+            ])
             ->actions([
                 Action::make('view_details')
                     ->label('Details')
@@ -272,6 +299,18 @@ class WorkInProgress extends Page implements HasForms, HasTable
                                 'Low'     => 'Low',
                                 'Lowest'  => 'Lowest',
                             ])
+                            ->helperText(function (PmWorkItem $record) {
+                                $projectId = $record->pm_project_id;
+                                $clientId = $record->client_id;
+                                $count = PmWorkItem::query()
+                                    ->when($projectId, fn ($q) => $q->where('pm_project_id', $projectId))
+                                    ->when(! $projectId && $clientId, fn ($q) => $q->where('client_id', $clientId))
+                                    ->where('priority', 'Highest')
+                                    ->whereNotIn('normalized_delivery_status', ['completed', 'canceled'])
+                                    ->count();
+
+                                return "Active 'Highest Priority' tasks in this project workspace: {$count}/3 limit.";
+                            })
                             ->default(fn (PmWorkItem $record) => $record->priority ?? 'Medium')
                             ->required(),
 
@@ -288,7 +327,32 @@ class WorkInProgress extends Page implements HasForms, HasTable
                         $newPriority = $data['new_priority'];
                         $reason = trim($data['reason'] ?? '');
 
-                        // 1. Update priority in Jira & local DB
+                        // 1. Enforce max 3 active Highest Priority items per project
+                        if ($newPriority === 'Highest' && $oldPriority !== 'Highest') {
+                            $projectId = $record->pm_project_id;
+                            $clientId = $record->client_id;
+
+                            $activeHighestCount = PmWorkItem::query()
+                                ->when($projectId, fn ($q) => $q->where('pm_project_id', $projectId))
+                                ->when(! $projectId && $clientId, fn ($q) => $q->where('client_id', $clientId))
+                                ->where('priority', 'Highest')
+                                ->whereNotIn('normalized_delivery_status', ['completed', 'canceled'])
+                                ->where('id', '!=', $record->id)
+                                ->count();
+
+                            if ($activeHighestCount >= 3) {
+                                \Filament\Notifications\Notification::make()
+                                    ->title('Highest Priority Limit Reached (3/3)')
+                                    ->body("This project already has 3 active Highest Priority tasks ({$activeHighestCount}/3). Please lower the priority of another task before promoting this task to Highest.")
+                                    ->danger()
+                                    ->persistent()
+                                    ->send();
+
+                                return;
+                            }
+                        }
+
+                        // 2. Update priority in Jira & local DB
                         $jiraProvider->updatePriority($record, $newPriority, $user);
 
                         // 2. Add tracking comment in Jira

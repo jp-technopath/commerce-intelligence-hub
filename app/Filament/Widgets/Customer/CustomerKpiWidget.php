@@ -33,26 +33,33 @@ class CustomerKpiWidget extends BaseWidget
             ->sum('time_spent_seconds');
         $hoursThisMonth = round($secondsThisMonth / 3600, 1);
 
-        // 3. Approved Pipeline Hours
-        $approvedItemIds = PmWorkItem::where('client_id', $clientId)
-            ->where('normalized_delivery_status', '!=', 'completed')
-            ->get()
-            ->filter(fn ($item) => $item->estimate_approval_status === 'approved')
-            ->pluck('id');
-
-        $approvedPipelineSeconds = ForgeEstimateVersion::whereIn('pm_work_item_id', $approvedItemIds)
-            ->sum('estimated_seconds');
-        $approvedPipelineHours = round($approvedPipelineSeconds / 3600, 1);
-
-        // 4. Work in Progress Count
-        $wipCount = PmWorkItem::where('client_id', $clientId)
-            ->whereIn('normalized_delivery_status', ['ready', 'in_progress', 'review_qa', 'customer_review'])
+        // 3. Work in Pipeline (All active tasks in delivery pipeline)
+        $pipelineQuery = PmWorkItem::where('client_id', $clientId)
+            ->whereNotIn('normalized_delivery_status', ['completed', 'backlog', 'canceled'])
             ->whereRaw('UPPER(external_status) NOT LIKE ?', ['%BACKLOG%'])
             ->whereHas('project', function ($q) {
                 $q->where('external_project_key', '!=', 'SUP');
             })
-            ->where('external_item_key', 'NOT LIKE', 'SUP-%')
-            ->count();
+            ->where('external_item_key', 'NOT LIKE', 'SUP-%');
+
+        $pipelineTaskCount = $pipelineQuery->count();
+        $pipelineSeconds = (int) $pipelineQuery->sum('estimated_seconds');
+        $pipelineHours = round($pipelineSeconds / 3600, 1);
+
+        // 4. Work in Progress (Tasks where Jira status = In Progress)
+        $wipQuery = PmWorkItem::where('client_id', $clientId)
+            ->where(function ($q) {
+                $q->where('normalized_delivery_status', 'in_progress')
+                  ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
+            })
+            ->whereHas('project', function ($q) {
+                $q->where('external_project_key', '!=', 'SUP');
+            })
+            ->where('external_item_key', 'NOT LIKE', 'SUP-%');
+
+        $wipTaskCount = $wipQuery->count();
+        $wipSeconds = (int) $wipQuery->sum('estimated_seconds');
+        $wipHours = round($wipSeconds / 3600, 1);
 
         return [
             Stat::make('Needs Your Attention', $attentionCount)
@@ -65,13 +72,14 @@ class CustomerKpiWidget extends BaseWidget
                 ->descriptionIcon('heroicon-m-clock')
                 ->color('primary'),
 
-            Stat::make('Approved Pipeline', $approvedPipelineHours . ' hrs')
-                ->description('Approved work ready / in delivery')
-                ->descriptionIcon('heroicon-m-check-badge')
-                ->color('success'),
+            Stat::make('Work in Pipeline', "{$pipelineTaskCount} Tasks · {$pipelineHours} Estimated Hours")
+                ->description('All active tasks in delivery pipeline')
+                ->descriptionIcon('heroicon-m-rectangle-stack')
+                ->color('success')
+                ->url('/admin/work-in-progress'),
 
-            Stat::make('Work in Progress', $wipCount)
-                ->description('Active tasks being delivered (Click to view)')
+            Stat::make('Work in Progress', "{$wipTaskCount} Tasks · {$wipHours} Estimated Hours")
+                ->description('Tasks with Jira status In Progress')
                 ->descriptionIcon('heroicon-m-arrow-path')
                 ->color('info')
                 ->url('/admin/work-in-progress'),

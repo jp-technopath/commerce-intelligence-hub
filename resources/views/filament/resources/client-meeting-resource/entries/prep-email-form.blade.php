@@ -47,6 +47,8 @@
         creatingDraft: false,
         sendingEmail: false,
         hasDraft: @js($hasDraft),
+        wasSent: @js(! empty($emailSentAt)),
+        sentAtFormatted: @js($emailSentAtFormatted ?? ''),
 
         get isBusy() { return this.creatingDraft || this.sendingEmail; },
         get canSubmit() { return this.recipient && this.subject && !this.isBusy; },
@@ -99,13 +101,19 @@
         },
 
         async sendEmail() {
-            if (!confirm('Are you sure you want to send this email status report directly to ' + this.recipient + '?')) {
+            const promptText = this.wasSent
+                ? 'Are you sure you want to RESEND this email status report directly to ' + this.recipient + '?'
+                : 'Are you sure you want to send this email status report directly to ' + this.recipient + '?';
+
+            if (!confirm(promptText)) {
                 return;
             }
             this.sendingEmail = true;
             const bodyHtml = this.$refs.editor.innerHTML;
             try {
                 await $wire.sendPrepEmail(this.recipient, this.subject, bodyHtml, this.ccList);
+                this.wasSent = true;
+                this.sentAtFormatted = new Date().toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
             } catch (e) {
                 console.error(e);
             }
@@ -113,6 +121,19 @@
         }
     }"
 >
+    {{-- Sent Banner --}}
+    <template x-if="wasSent">
+        <div class="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs font-medium flex items-center justify-between shadow-xs mb-2">
+            <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Email Status: <strong class="font-bold text-emerald-900 dark:text-emerald-200">Sent</strong> (<span x-text="sentAtFormatted"></span>)</span>
+            </div>
+            <span class="px-2 py-0.5 rounded bg-emerald-200/80 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 font-extrabold uppercase text-[10px] tracking-wider">SENT</span>
+        </div>
+    </template>
+
     {{-- Recipient --}}
     <div class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">To</label>
@@ -251,7 +272,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
                         </svg>
                     </template>
-                    <span x-text="sendingEmail ? 'Sending Email...' : 'Send Email'"></span>
+                    <span x-text="sendingEmail ? (wasSent ? 'Resending Email...' : 'Sending Email...') : (wasSent ? 'Resend Email' : 'Send Email')"></span>
                 </button>
             @else
                 <p class="text-sm text-danger-600 dark:text-danger-400">
