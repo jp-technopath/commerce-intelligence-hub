@@ -228,7 +228,7 @@
 
     {{-- ── Action Bar ────────────────────────────────────────────────── --}}
     @if (!$isClientUser)
-        <div class="flex items-center gap-3 pt-2 flex-wrap">
+        <div class="flex items-start gap-3 pt-2 flex-wrap">
             @if ($hasGmailScope)
                 {{-- Create Draft --}}
                 <button
@@ -255,25 +255,31 @@
                 </button>
 
                 {{-- Send Email --}}
-                <button
-                    type="button"
-                    @click="sendEmail()"
-                    :disabled="!canSubmit"
-                    class="inline-flex items-center gap-x-2 rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-primary-500 dark:hover:bg-primary-400"
-                >
-                    <template x-if="sendingEmail">
-                        <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                        </svg>
-                    </template>
-                    <template x-if="!sendingEmail">
-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                        </svg>
-                    </template>
-                    <span x-text="sendingEmail ? (wasSent ? 'Resending Email...' : 'Sending Email...') : (wasSent ? 'Resend Email' : 'Send Email')"></span>
-                </button>
+                <div class="flex flex-col items-start gap-1">
+                    <button
+                        type="button"
+                        @click="sendEmail()"
+                        :disabled="!canSubmit"
+                        :style="'display: inline-flex; align-items: center; gap: 0.5rem; border-radius: 0.5rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: #ffffff !important; border: none; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.2s; background-color: ' + (wasSent ? '#d97706' : '#2563eb') + ';'"
+                        @mouseover="$el.style.backgroundColor = wasSent ? '#b45309' : '#1d4ed8'"
+                        @mouseout="$el.style.backgroundColor = wasSent ? '#d97706' : '#2563eb'"
+                        class="disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <template x-if="sendingEmail">
+                            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                            </svg>
+                        </template>
+                        <template x-if="!sendingEmail">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                            </svg>
+                        </template>
+                        <span x-text="sendingEmail ? (wasSent ? 'Resending Email...' : 'Sending Email...') : (wasSent ? 'Resend Email' : 'Send Email')"></span>
+                    </button>
+                    <span x-show="wasSent && !sendingEmail" x-text="'Last sent: ' + sentAtFormatted" class="text-xs text-gray-500 dark:text-gray-400 pl-0.5"></span>
+                </div>
             @else
                 <p class="text-sm text-danger-600 dark:text-danger-400">
                     <svg class="inline h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>

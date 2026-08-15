@@ -49,7 +49,10 @@
                         @endif
                         <a
                             href="{{ $ws['connect_url'] }}"
-                            class="mt-3 inline-flex items-center gap-x-2 rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-yellow-500"
+                            style="display: inline-flex; align-items: center; gap: 0.5rem; border-radius: 0.5rem; background-color: #d97706; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; color: #ffffff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.2s;"
+                            onmouseover="this.style.backgroundColor='#b45309'"
+                            onmouseout="this.style.backgroundColor='#d97706'"
+                            class="mt-3"
                         >
                             Reconnect
                         </a>
@@ -74,7 +77,10 @@
                         </ul>
                         <a
                             href="{{ $ws['connect_url'] }}"
-                            class="mt-3 inline-flex items-center gap-x-2 rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-yellow-500"
+                            style="display: inline-flex; align-items: center; gap: 0.5rem; border-radius: 0.5rem; background-color: #d97706; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; color: #ffffff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: background-color 0.2s;"
+                            onmouseover="this.style.backgroundColor='#b45309'"
+                            onmouseout="this.style.backgroundColor='#d97706'"
+                            class="mt-3"
                         >
                             Reconnect
                         </a>
