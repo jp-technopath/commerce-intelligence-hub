@@ -79,21 +79,32 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->navigationGroups([
                 \Filament\Navigation\NavigationGroup::make('Dashboard')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
+                \Filament\Navigation\NavigationGroup::make('Customer Portal')
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Clients')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Intelligence')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Delivery')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Deployments')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Financials')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Meetings')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make('Administration')
-                    ->collapsible(),
+                    ->collapsible()
+                    ->collapsed(),
             ]);
     }
 }

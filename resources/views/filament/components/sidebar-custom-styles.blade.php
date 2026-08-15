@@ -13,6 +13,23 @@
     .fi-sidebar-nav {
         padding-top: 1rem !important;
         padding-bottom: 2rem !important;
+        gap: 1.25rem !important; /* space between the search box and the first nav group */
+    }
+
+    /* Tighter spacing between nav groups (Dashboard, Clients, Intelligence, etc.) */
+    .fi-sidebar-nav-groups {
+        gap: 0.375rem !important; /* was Filament's default 1.75rem (gap-y-7) */
+    }
+
+    /* Slightly trim each collapsible group header's own padding */
+    .fi-sidebar-group-button {
+        padding-top: 0.375rem !important;
+        padding-bottom: 0.375rem !important;
+    }
+
+    /* Tighter spacing between items inside an expanded group */
+    .fi-sidebar-group-items {
+        gap: 0.125rem !important;
     }
 
     .fi-sidebar-nav::-webkit-scrollbar {
