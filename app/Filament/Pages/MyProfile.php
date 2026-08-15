@@ -28,6 +28,10 @@ class MyProfile extends Page implements HasForms
     protected static ?string $navigationGroup = 'System';
     protected static ?int $navigationSort = 10;
 
+    // Reachable via the top-right user menu (AdminPanelProvider::userMenuItems),
+    // so no need to also show it (and its own "System" nav group) in the sidebar.
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static string $view = 'filament.pages.my-profile';
 
     public ?array $data = [];
