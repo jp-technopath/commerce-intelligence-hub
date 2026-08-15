@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Pages\Concerns\HasScopedClientFilter;
 use App\Models\Client;
 use App\Models\PmWorkItem;
 use App\Services\PM\Providers\JiraProvider;
@@ -23,6 +24,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
 {
     use InteractsWithForms;
     use InteractsWithTable;
+    use HasScopedClientFilter;
 
     protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
@@ -44,8 +46,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
 
     public function mount(): void
     {
-        $this->selected_client_id = session('current_client_id') ?? Client::first()?->id ?? 1;
-        session(['current_client_id' => $this->selected_client_id]);
+        $this->selected_client_id = $this->resolveScopedClientId();
 
         $this->form->fill([
             'selected_client_id' => $this->selected_client_id,
@@ -58,10 +59,18 @@ class WorkInProgress extends Page implements HasForms, HasTable
             ->schema([
                 Select::make('selected_client_id')
                     ->label('Selected Client')
-                    ->options(Client::all()->pluck('name', 'id'))
+                    ->options($this->scopedClientsQuery()->orderBy('name')->pluck('name', 'id'))
                     ->searchable()
                     ->live()
                     ->afterStateUpdated(function ($state) {
+                        // Ignore any attempt (tampered request, stale option, etc.)
+                        // to select a client outside this user's scope.
+                        if (! $this->isClientIdInScope((int) $state)) {
+                            $this->selected_client_id = session('current_client_id');
+
+                            return;
+                        }
+
                         session(['current_client_id' => (int) $state]);
                         $this->dispatch('client-changed');
                     }),
@@ -70,8 +79,11 @@ class WorkInProgress extends Page implements HasForms, HasTable
 
     public function table(Table $table): Table
     {
-        $user = Auth::user();
-        $clientId = $user?->client_id ?? session('current_client_id') ?? 1;
+        // Defense in depth: even if session('current_client_id') were ever
+        // tampered with, fall back to a client within the current user's scope.
+        $clientId = $this->isClientIdInScope(session('current_client_id'))
+            ? (int) session('current_client_id')
+            : $this->defaultScopedClientId();
 
         return $table
             ->query(
