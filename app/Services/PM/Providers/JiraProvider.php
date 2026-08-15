@@ -127,15 +127,14 @@ class JiraProvider implements ProjectManagementProvider
             $projKey = $proj['key'] ?? '';
             $projName = $proj['name'] ?? $projKey;
 
-            // 1. Resolve target client by matching jira_project_key on Client model
+            // Resolve target client ONLY via an explicit, manually-configured link:
+            // Client.jira_project_key must be set to this project's key on the Clients page.
+            // We intentionally do NOT guess by fuzzy-matching project/client names anymore -
+            // clients are created and linked manually. Unmapped projects fall back to the
+            // "Technopath Internal" bucket (or the connection's owning client) instead of
+            // being silently attributed to a possibly-wrong customer.
             $matchedClient = Client::where('jira_project_key', $projKey)->first();
 
-            // 2. Fallback: match by client name
-            if (! $matchedClient) {
-                $matchedClient = Client::where('name', 'LIKE', "%{$projName}%")->first();
-            }
-
-            // 3. Non-null target client ID fallback (unassigned/deleted clients fall back to Technopath Internal)
             $targetClientId = $matchedClient?->id
                 ?? Client::where('jira_project_key', 'TEC')->first()?->id
                 ?? $connection->client_id;
@@ -566,7 +565,11 @@ class JiraProvider implements ProjectManagementProvider
     {
         $fields = $issue['fields'] ?? [];
 
-        // 1. For Service Desk SUP project: match Jira Organization / reporter email domain
+        // 1. SUP is a shared Service Desk project used by ALL customers - there is no
+        // per-ticket manual link, so we still route each individual ticket by its Jira
+        // Organization / reporter email domain. This is the one exception to "manual
+        // linking only": without it, every customer's support tickets would collapse
+        // into the same bucket.
         if ($project->external_project_key === 'SUP') {
             $orgs = $fields['customfield_10002'] ?? null;
             if (is_array($orgs) && ! empty($orgs)) {
@@ -602,30 +605,21 @@ class JiraProvider implements ProjectManagementProvider
             }
         }
 
-        // 2. Direct Jira project key match on Client model
+        // 2. Explicit, manually-configured link: Client.jira_project_key
         $clientBySpace = Client::where('jira_project_key', $project->external_project_key)->first();
         if ($clientBySpace) {
             return $clientBySpace->id;
         }
 
-        // 3. Explicit project-assigned client_id if present
+        // 3. Whatever client this project already resolved to in syncProjects()
+        // (either the explicit link above, or the Technopath Internal/connection
+        // fallback - never a guess).
         if ($project->client_id) {
             return $project->client_id;
         }
 
-        // 4. Heuristic name match on Client name vs Project key/name
-        $keyUpper = strtoupper($project->external_project_key);
-        $clientByName = Client::all()->first(function ($c) use ($keyUpper, $project) {
-            $cNameUpper = strtoupper($c->name);
-            return str_contains($cNameUpper, $keyUpper) 
-                || str_contains($keyUpper, $cNameUpper) 
-                || str_contains(strtoupper($project->name), $cNameUpper);
-        });
-
-        if ($clientByName) {
-            return $clientByName->id;
-        }
-
+        // No explicit link and no project-level fallback available - use the
+        // connection's owning client rather than guessing by name similarity.
         return $connection->client_id;
     }
 
