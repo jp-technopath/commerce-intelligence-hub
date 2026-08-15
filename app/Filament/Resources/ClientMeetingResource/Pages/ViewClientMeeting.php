@@ -770,7 +770,8 @@ class ViewClientMeeting extends ViewRecord
                 projectKey: $projectKey,
                 summary: $item->title,
                 description: $description,
-                assigneeAccountId: $assigneeAccountId
+                assigneeAccountId: $assigneeAccountId,
+                requestedBy: $item->owner_name ?: ($user->name ?? null)
             );
 
             $issueKey = $response['key'] ?? null;
@@ -807,9 +808,11 @@ class ViewClientMeeting extends ViewRecord
                 ]);
             }
 
-            $errorMessage = $isAuthError || !$jiraAccount
-                ? "Jira authentication error: {$e->getMessage()}. Please go to My Profile -> Connected Accounts to reconnect your Jira account."
-                : 'Error: ' . $e->getMessage();
+            $errorMessage = match (true) {
+                $isAuthError && $jiraAccount => "Jira authentication error: {$e->getMessage()}. Please go to My Profile -> Connected Accounts to reconnect your Jira account.",
+                $isAuthError && !$jiraAccount => "Jira authentication error: {$e->getMessage()}. The shared Jira integration credentials may need to be updated in System Settings.",
+                default => 'Error: ' . $e->getMessage(),
+            };
 
             Notification::make()
                 ->title('Jira Task Creation Failed')

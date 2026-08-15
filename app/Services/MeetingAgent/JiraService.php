@@ -3,6 +3,7 @@
 namespace App\Services\MeetingAgent;
 
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -234,13 +235,20 @@ class JiraService
 
     /**
      * Create a new issue in Jira.
+     *
+     * Before submitting, checks the target project/issue-type's create-screen
+     * for any *other* required fields (beyond project/summary/issuetype/
+     * description/assignee) so we don't blindly send a request Jira will
+     * reject with a 400 (e.g. Cambro's CMBR2 project requires a plain-text
+     * "Requested By" field on Task issues, which we can safely auto-fill).
      */
     public function createIssue(
         string $projectKey,
         string $summary,
         ?string $description = null,
         ?string $assigneeAccountId = null,
-        string $issueType = 'Task'
+        string $issueType = 'Task',
+        ?string $requestedBy = null
     ): array {
         $url = $this->isOAuth
             ? "https://api.atlassian.com/ex/jira/{$this->cloudId}/rest/api/3/issue"
@@ -274,6 +282,31 @@ class JiraService
             $fields['assignee'] = ['accountId' => $assigneeAccountId];
         }
 
+        // Detect any *other* required fields on this project/issue-type's
+        // create screen (e.g. a project-specific "Requested By" field) so we
+        // either fill them with a sensible value or fail with a clear,
+        // actionable message instead of a generic/misleading 400.
+        $missingFields = [];
+        foreach ($this->getExtraRequiredFields($projectKey, $issueType) as $key => $field) {
+            $name = $field['name'] ?? $key;
+            $schemaType = $field['schema']['type'] ?? null;
+
+            if (str_contains(strtolower($name), 'requested by') && $schemaType === 'string') {
+                $fields[$key] = $requestedBy ?: 'Technopath Forge';
+                continue;
+            }
+
+            $missingFields[] = $name;
+        }
+
+        if (!empty($missingFields)) {
+            throw new RuntimeException(
+                "Jira project {$projectKey} requires additional fields for '{$issueType}' issues that are not yet supported here: "
+                . implode(', ', $missingFields)
+                . '. Please create this task directly in Jira, or ask an admin to add support for these fields.'
+            );
+        }
+
         $body = ['fields' => $fields];
 
         $request = Http::timeout(30);
@@ -287,13 +320,92 @@ class JiraService
         $response = $request->post($url, $body);
 
         if (! $response->successful()) {
+            $responseBody = $response->json();
+            $details = array_merge(
+                $responseBody['errorMessages'] ?? [],
+                array_values($responseBody['errors'] ?? [])
+            );
+
             Log::error('JiraService: create issue failed', [
                 'status' => $response->status(),
                 'body'   => substr($response->body(), 0, 500),
             ]);
-            throw new RuntimeException('Jira API create issue failed with status ' . $response->status());
+
+            $message = 'Jira API create issue failed with status ' . $response->status();
+            if (!empty($details)) {
+                $message .= ': ' . implode(' ', $details);
+            }
+
+            throw new RuntimeException($message);
         }
 
         return $response->json();
+    }
+
+    /**
+     * Return required fields (beyond the standard ones this service already
+     * populates) for the given project + issue type, using Jira's createmeta
+     * endpoint. Cached briefly since a project's field configuration rarely
+     * changes. Fails soft (returns []) if the lookup itself errors, so a
+     * createmeta hiccup never blocks issue creation for projects that don't
+     * need it.
+     *
+     * @return array<string, array{name: string, schema: array}>
+     */
+    private function getExtraRequiredFields(string $projectKey, string $issueType): array
+    {
+        $standardFields = ['project', 'summary', 'issuetype', 'description', 'assignee', 'reporter'];
+
+        $cacheKey = "jira_createmeta_required_fields:{$projectKey}:{$issueType}";
+
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($projectKey, $issueType, $standardFields) {
+            try {
+                $url = $this->isOAuth
+                    ? "https://api.atlassian.com/ex/jira/{$this->cloudId}/rest/api/3/issue/createmeta"
+                    : $this->baseUrl . '/rest/api/3/issue/createmeta';
+
+                $request = Http::timeout(15);
+                $request = $this->isOAuth
+                    ? $request->withToken($this->accessToken)
+                    : $request->withBasicAuth($this->email, $this->token);
+
+                $response = $request->get($url, [
+                    'projectKeys'    => $projectKey,
+                    'issuetypeNames' => $issueType,
+                    'expand'         => 'projects.issuetypes.fields',
+                ]);
+
+                if (!$response->successful()) {
+                    return [];
+                }
+
+                $issueTypes = $response->json('projects.0.issuetypes', []);
+                $matched = collect($issueTypes)->firstWhere('name', $issueType);
+
+                if (!$matched) {
+                    return [];
+                }
+
+                $extra = [];
+                foreach (($matched['fields'] ?? []) as $key => $field) {
+                    if (in_array($key, $standardFields, true)) {
+                        continue;
+                    }
+                    if (!empty($field['required']) && empty($field['hasDefaultValue'])) {
+                        $extra[$key] = $field;
+                    }
+                }
+
+                return $extra;
+            } catch (\Throwable $e) {
+                Log::warning('JiraService: createmeta lookup failed, proceeding without extra-field detection', [
+                    'project_key' => $projectKey,
+                    'issue_type'  => $issueType,
+                    'error'       => $e->getMessage(),
+                ]);
+
+                return [];
+            }
+        });
     }
 }
