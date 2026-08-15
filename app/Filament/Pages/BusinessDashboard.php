@@ -98,7 +98,11 @@ class BusinessDashboard extends Page
     public function getDaysCount(): int
     {
         if ($this->period === 'ytd') {
-            return (int) now()->diffInDays(now()->startOfYear()) + 1;
+            // Carbon 3's diffInDays() now returns a signed result by default;
+            // now()->startOfYear() is earlier than now(), so that call returns
+            // a negative number here. dayOfYear (Jan 1 = 1) is the correct,
+            // unambiguous way to express "days elapsed so far this year".
+            return now()->dayOfYear;
         }
 
         return max(1, (int) $this->period);
