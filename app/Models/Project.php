@@ -44,4 +44,9 @@ class Project extends Model
     {
         return $this->hasMany(Deployment::class);
     }
+
+    public function environmentMappings(): HasMany
+    {
+        return $this->hasMany(ProjectEnvironmentMapping::class);
+    }
 }

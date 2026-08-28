@@ -39,4 +39,9 @@ class Repository extends Model
     {
         return $this->hasMany(UserRoleAssignment::class);
     }
+
+    public function environmentMappings(): HasMany
+    {
+        return $this->hasMany(ProjectEnvironmentMapping::class);
+    }
 }

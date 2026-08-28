@@ -9,6 +9,7 @@ use App\Models\Finding;
 use App\Models\Integration;
 use App\Models\Permission;
 use App\Models\Project;
+use App\Models\ProjectEnvironmentMapping;
 use App\Models\Role;
 use App\Models\User;
 use App\Observers\FindingObserver;
@@ -18,10 +19,12 @@ use App\Policies\DeploymentPolicy;
 use App\Policies\FindingPolicy;
 use App\Policies\IntegrationPolicy;
 use App\Policies\PermissionPolicy;
+use App\Policies\ProjectEnvironmentMappingPolicy;
 use App\Policies\ProjectPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\UserPolicy;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -41,6 +44,7 @@ class AppServiceProvider extends ServiceProvider
         // Explicit Policy Registrations
         Gate::policy(Client::class, ClientPolicy::class);
         Gate::policy(Project::class, ProjectPolicy::class);
+        Gate::policy(ProjectEnvironmentMapping::class, ProjectEnvironmentMappingPolicy::class);
         Gate::policy(Finding::class, FindingPolicy::class);
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(Role::class, RolePolicy::class);
@@ -55,7 +59,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // Register dynamic gates for permissions with optional scope arguments
-        if ($this->app->runningInConsole() === false || \Illuminate\Support\Facades\Schema::hasTable('permissions')) {
+        if ($this->app->runningInConsole() === false || Schema::hasTable('permissions')) {
             try {
                 $permissions = Permission::all();
                 foreach ($permissions as $permission) {

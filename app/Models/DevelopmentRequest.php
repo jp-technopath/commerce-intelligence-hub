@@ -23,18 +23,22 @@ class DevelopmentRequest extends Model
         'description',
         'status_reason',
         'environment_key',
+        'project_environment_mapping_id',
         'source_type',
         'source_id',
         'priority',
         'correlation_identifier',
         'active_run_correlation_id',
         'jira_snapshot',
+        'routing_snapshot',
+        'selected_capability_tier',
         'pm_work_item_id',
     ];
 
     protected $casts = [
         'state' => DevelopmentRequestStatus::class,
         'jira_snapshot' => 'json',
+        'routing_snapshot' => 'json',
     ];
 
     /**
@@ -92,6 +96,11 @@ class DevelopmentRequest extends Model
     public function pmWorkItem(): BelongsTo
     {
         return $this->belongsTo(PmWorkItem::class);
+    }
+
+    public function projectEnvironmentMapping(): BelongsTo
+    {
+        return $this->belongsTo(ProjectEnvironmentMapping::class);
     }
 
     /**
