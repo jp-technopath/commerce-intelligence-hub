@@ -12,26 +12,52 @@ use App\Models\User;
 use App\Services\ProjectEnvironmentResolver;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 class ProjectEnvironmentResolverTest extends TestCase
 {
+    private const TEST_CONNECTION = 'project_environment_resolver_test';
+
     private ProjectEnvironmentResolver $resolver;
 
     private Project $project;
 
     private Repository $repository;
 
+    private ?string $originalConnection = null;
+
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->originalConnection = DB::getDefaultConnection();
+        config()->set('database.connections.'.self::TEST_CONNECTION, [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'prefix' => '',
+            'foreign_key_constraints' => true,
+        ]);
+        DB::purge(self::TEST_CONNECTION);
+        DB::setDefaultConnection(self::TEST_CONNECTION);
+
         $this->createFocusedSchema();
         $this->resolver = new ProjectEnvironmentResolver;
         $client = Client::query()->create(['name' => 'Technopath', 'status' => 'active']);
         $this->project = Project::query()->create(['client_id' => $client->id, 'name' => 'Commerce Hub', 'code' => 'commerce-hub', 'status' => 'active']);
         $this->repository = Repository::query()->create(['client_id' => $client->id, 'project_id' => $this->project->id, 'name' => 'Commerce Hub', 'url' => 'https://github.com/example/commerce-hub.git', 'is_active' => true]);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->originalConnection !== null) {
+            DB::disconnect(self::TEST_CONNECTION);
+            DB::setDefaultConnection($this->originalConnection);
+        }
+
+        parent::tearDown();
     }
 
     #[Test]

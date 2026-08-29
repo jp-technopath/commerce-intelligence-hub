@@ -24,6 +24,9 @@ class DevelopmentRequest extends Model
         'status_reason',
         'environment_key',
         'project_environment_mapping_id',
+        'execution_target_key',
+        'vm_startup_deadline_at',
+        'vm_ready_at',
         'source_type',
         'source_id',
         'priority',
@@ -39,6 +42,8 @@ class DevelopmentRequest extends Model
         'state' => DevelopmentRequestStatus::class,
         'jira_snapshot' => 'json',
         'routing_snapshot' => 'json',
+        'vm_startup_deadline_at' => 'datetime',
+        'vm_ready_at' => 'datetime',
     ];
 
     /**
@@ -101,6 +106,11 @@ class DevelopmentRequest extends Model
     public function projectEnvironmentMapping(): BelongsTo
     {
         return $this->belongsTo(ProjectEnvironmentMapping::class);
+    }
+
+    public function vmLifecycleActions(): HasMany
+    {
+        return $this->hasMany(VmLifecycleAction::class);
     }
 
     /**

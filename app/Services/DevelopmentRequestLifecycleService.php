@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\DevelopmentRequestStatus;
+use App\Jobs\EnsureDevelopmentRequestVmReady;
 use App\Models\DevelopmentRequest;
 use App\Models\DevelopmentRequestStatusHistory;
 use App\Models\User;
@@ -44,7 +45,7 @@ class DevelopmentRequestLifecycleService
     ): DevelopmentRequestStatusHistory {
         $targetState = $this->normalizeState($newState);
 
-        return DB::transaction(function () use (
+        $history = DB::transaction(function () use (
             $request,
             $targetState,
             $actor,
@@ -119,6 +120,19 @@ class DevelopmentRequestLifecycleService
                 'metadata' => $metadata,
             ]);
         });
+
+        $currentRequest = $request->fresh();
+
+        if (
+            $history->new_state === DevelopmentRequestStatus::Queued->value
+            && $currentRequest?->state === DevelopmentRequestStatus::Queued
+            && config('devforge.orchestration_enabled')
+            && $currentRequest->routing_snapshot !== null
+        ) {
+            EnsureDevelopmentRequestVmReady::dispatch($request->getKey())->afterCommit();
+        }
+
+        return $history;
     }
 
     public function getCurrentState(DevelopmentRequest $request): string

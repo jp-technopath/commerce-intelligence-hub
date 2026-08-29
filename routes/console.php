@@ -44,3 +44,9 @@ Schedule::job(new \App\Jobs\ReconcilePmWorkItemsJob())
     ->hourly()
     ->name('reconcile-pm-work-items')
     ->withoutOverlapping(30);
+
+// Project VM lifecycle — starts an idle timer and safely stops unused mapped VMs.
+Schedule::command('devforge:shutdown-idle-vms')
+    ->everyMinute()
+    ->name('devforge:shutdown-idle-vms')
+    ->withoutOverlapping(5);
