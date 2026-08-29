@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\DevelopmentRequest;
 use App\Services\VmLifecycleManager;
+use App\Services\AgentJobQueue;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -24,7 +25,7 @@ class EnsureDevelopmentRequestVmReady implements ShouldBeUnique, ShouldQueue
         $this->onQueue(config('devforge.queue'));
     }
 
-    public function handle(VmLifecycleManager $manager): void
+    public function handle(VmLifecycleManager $manager, AgentJobQueue $jobs): void
     {
         $request = DevelopmentRequest::query()->find($this->developmentRequestId);
 
@@ -33,6 +34,12 @@ class EnsureDevelopmentRequestVmReady implements ShouldBeUnique, ShouldQueue
         }
 
         $result = $manager->ensureRequestVmReady($request);
+
+        if ($result->workerReady) {
+            $jobs->enqueueForRequest($request->freshOrFail());
+
+            return;
+        }
 
         if ($result->shouldPoll()) {
             $this->release(config('devforge.vm_poll_interval_seconds'));

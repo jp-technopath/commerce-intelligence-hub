@@ -31,6 +31,15 @@ class ProjectEnvironmentResolver
         if (! $mapping->gcp_project_id || ! $mapping->gcp_zone || ! $mapping->vm_name || ! $mapping->workspace_path) {
             $errors[] = 'The execution target is incomplete.';
         }
+        if (
+            ! $mapping->worker_service_account_email
+            || ! preg_match(
+                '/^[a-z0-9][a-z0-9._-]*@[a-z][a-z0-9-]{4,61}[a-z0-9]\.iam\.gserviceaccount\.com$/',
+                $mapping->worker_service_account_email
+            )
+        ) {
+            $errors[] = 'A valid mapped VM service-account identity is required.';
+        }
         if (! str_starts_with((string) $mapping->workspace_path, '/')) {
             $errors[] = 'The workspace path must be absolute.';
         }

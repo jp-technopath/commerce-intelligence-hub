@@ -140,6 +140,7 @@ class ProjectEnvironmentResolverTest extends TestCase
             'gcp_project_id' => 'development-project',
             'gcp_zone' => 'us-central1-a',
             'vm_name' => 'agent-commerce-hub',
+            'worker_service_account_email' => 'agent-commerce-hub@development-project.iam.gserviceaccount.com',
             'workspace_path' => '/workspaces/commerce-hub',
             'default_branch' => 'main',
             'allowed_agent_roles' => ['research_collector', 'lead_investigator', 'developer', 'qa'],
@@ -225,6 +226,7 @@ class ProjectEnvironmentResolverTest extends TestCase
             $table->string('gcp_project_id');
             $table->string('gcp_zone');
             $table->string('vm_name');
+            $table->string('worker_service_account_email')->nullable();
             $table->string('workspace_path');
             $table->string('default_branch');
             $table->json('allowed_agent_roles');

@@ -113,6 +113,11 @@ class DevelopmentRequest extends Model
         return $this->hasMany(VmLifecycleAction::class);
     }
 
+    public function agentJobs(): HasMany
+    {
+        return $this->hasMany(AgentJob::class);
+    }
+
     /**
      * Get all state transitions for this request in order.
      */

@@ -48,6 +48,10 @@ class CommerceHubDevelopmentMappingSeeder extends Seeder
                 'gcp_project_id' => 'development-501913',
                 'gcp_zone' => 'us-central1-a',
                 'vm_name' => 'agent-commerce-hub',
+                'worker_service_account_email' => env(
+                    'FORGE_COMMERCE_HUB_WORKER_SERVICE_ACCOUNT',
+                    'dev-coder@development-501913.iam.gserviceaccount.com'
+                ),
                 'workspace_path' => '/workspaces/commerce-hub',
                 'default_branch' => 'main',
                 'allowed_agent_roles' => ['research_collector', 'lead_investigator', 'developer', 'qa'],

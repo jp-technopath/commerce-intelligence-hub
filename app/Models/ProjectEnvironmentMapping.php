@@ -14,7 +14,7 @@ class ProjectEnvironmentMapping extends Model
 
     protected $fillable = [
         'project_id', 'pm_project_id', 'repository_id', 'environment_key',
-        'gcp_project_id', 'gcp_zone', 'vm_name', 'workspace_path', 'default_branch',
+        'gcp_project_id', 'gcp_zone', 'vm_name', 'worker_service_account_email', 'workspace_path', 'default_branch',
         'allowed_agent_roles', 'allowed_capability_tiers', 'default_capability_tier',
         'tier_recommendation_policy', 'model_group_aliases', 'version', 'is_active',
         'activated_at', 'activated_by', 'deactivated_at', 'deactivated_by',
@@ -65,7 +65,12 @@ class ProjectEnvironmentMapping extends Model
             'pm_project_id' => $this->pm_project_id,
             'repository_id' => $this->repository_id,
             'environment_key' => $this->environment_key,
-            'gcp' => ['project_id' => $this->gcp_project_id, 'zone' => $this->gcp_zone, 'vm_name' => $this->vm_name],
+            'gcp' => [
+                'project_id' => $this->gcp_project_id,
+                'zone' => $this->gcp_zone,
+                'vm_name' => $this->vm_name,
+                'worker_service_account_email' => $this->worker_service_account_email,
+            ],
             'workspace_path' => $this->workspace_path,
             'default_branch' => $this->default_branch,
             'allowed_agent_roles' => $this->allowed_agent_roles,

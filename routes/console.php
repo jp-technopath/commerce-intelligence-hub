@@ -50,3 +50,9 @@ Schedule::command('devforge:shutdown-idle-vms')
     ->everyMinute()
     ->name('devforge:shutdown-idle-vms')
     ->withoutOverlapping(5);
+
+// Worker API replay responses are short lived; completed job details are redacted after retention.
+Schedule::command('devforge:prune-worker-api-data')
+    ->dailyAt('03:30')
+    ->name('devforge:prune-worker-api-data')
+    ->withoutOverlapping(60);

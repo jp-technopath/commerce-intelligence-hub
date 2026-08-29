@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Contracts\ComputeEngineClient;
+use App\Contracts\WorkerIdentityVerifier;
 use App\Models\Client;
 use App\Models\ClientMeeting;
 use App\Models\Deployment;
@@ -25,6 +26,7 @@ use App\Policies\ProjectPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\UserPolicy;
 use App\Services\GoogleComputeEngineClient;
+use App\Services\GoogleWorkerIdentityVerifier;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
@@ -37,6 +39,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(ComputeEngineClient::class, GoogleComputeEngineClient::class);
+        $this->app->singleton(WorkerIdentityVerifier::class, GoogleWorkerIdentityVerifier::class);
     }
 
     public function boot(): void
