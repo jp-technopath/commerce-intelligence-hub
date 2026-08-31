@@ -6,6 +6,7 @@ use App\Contracts\ComputeEngineClient;
 use App\Contracts\WorkerIdentityVerifier;
 use App\Models\Client;
 use App\Models\ClientMeeting;
+use App\Models\DevelopmentRequest;
 use App\Models\Deployment;
 use App\Models\Finding;
 use App\Models\Integration;
@@ -17,6 +18,7 @@ use App\Models\User;
 use App\Observers\FindingObserver;
 use App\Policies\ClientMeetingPolicy;
 use App\Policies\ClientPolicy;
+use App\Policies\DevelopmentRequestPolicy;
 use App\Policies\DeploymentPolicy;
 use App\Policies\FindingPolicy;
 use App\Policies\IntegrationPolicy;
@@ -57,6 +59,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Deployment::class, DeploymentPolicy::class);
         Gate::policy(Integration::class, IntegrationPolicy::class);
         Gate::policy(ClientMeeting::class, ClientMeetingPolicy::class);
+        Gate::policy(DevelopmentRequest::class, DevelopmentRequestPolicy::class);
 
         // Bypass all permission checks for users with Super Admin privileges
         Gate::before(function ($user, $ability) {
