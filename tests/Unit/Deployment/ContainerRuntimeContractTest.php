@@ -51,6 +51,17 @@ class ContainerRuntimeContractTest extends TestCase
         $this->assertStringNotContainsString('credentials-file', $entrypoint);
     }
 
+    public function test_early_bootstrap_handles_an_unavailable_database(): void
+    {
+        $provider = file_get_contents(base_path('app/Providers/AppServiceProvider.php'));
+
+        $this->assertIsString($provider);
+        $this->assertMatchesRegularExpression(
+            '/try\s*\{\s*if \(\$this->app->runningInConsole\(\) === false \|\| Schema::hasTable\(\'permissions\'\)\)/s',
+            $provider,
+        );
+    }
+
     /**
      * @return array<string, array{string, string}>
      */
