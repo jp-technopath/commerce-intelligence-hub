@@ -83,6 +83,9 @@ case "$role" in
     scheduler)
         run_and_cleanup php artisan schedule:run --no-interaction
         ;;
+    bootstrap)
+        run_and_cleanup php artisan forge:bootstrap-staging-admin --no-interaction
+        ;;
     migrate)
         run_and_cleanup php artisan migrate --force --no-interaction
         ;;

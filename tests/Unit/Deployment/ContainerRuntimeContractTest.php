@@ -71,6 +71,7 @@ class ContainerRuntimeContractTest extends TestCase
             'web' => ['web', 'apache2-foreground'],
             'queue' => ['queue', 'queue:work'],
             'scheduler' => ['scheduler', 'schedule:run'],
+            'bootstrap' => ['bootstrap', 'forge:bootstrap-staging-admin'],
             'migrate' => ['migrate', 'migrate --force'],
         ];
     }
