@@ -72,6 +72,7 @@ class ContainerRuntimeContractTest extends TestCase
             'queue' => ['queue', 'queue:work'],
             'scheduler' => ['scheduler', 'schedule:run'],
             'bootstrap' => ['bootstrap', 'forge:bootstrap-staging-admin'],
+            'seed' => ['seed', 'forge:seed-staging-fixtures'],
             'migrate' => ['migrate', 'migrate --force'],
         ];
     }

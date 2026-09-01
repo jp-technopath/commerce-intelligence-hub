@@ -86,6 +86,9 @@ case "$role" in
     bootstrap)
         run_and_cleanup php artisan forge:bootstrap-staging-admin --no-interaction
         ;;
+    seed)
+        run_and_cleanup php artisan forge:seed-staging-fixtures --no-interaction
+        ;;
     migrate)
         run_and_cleanup php artisan migrate --force --no-interaction
         ;;
