@@ -67,17 +67,18 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // Register dynamic gates for permissions with optional scope arguments
-        if ($this->app->runningInConsole() === false || Schema::hasTable('permissions')) {
-            try {
+        try {
+            if ($this->app->runningInConsole() === false || Schema::hasTable('permissions')) {
                 $permissions = Permission::all();
                 foreach ($permissions as $permission) {
                     Gate::define($permission->name, function ($user, ?int $clientId = null, ?int $projectId = null) use ($permission) {
                         return $user->hasPermission($permission->name, $clientId, $projectId);
                     });
                 }
-            } catch (\Throwable $e) {
-                // Safeguard against missing DB tables or connection errors during early bootstrap
             }
+        } catch (\Throwable $e) {
+            // Safeguard against a missing database, missing tables, or connection errors
+            // during image builds, migrations, and other early bootstrap commands.
         }
     }
 }
