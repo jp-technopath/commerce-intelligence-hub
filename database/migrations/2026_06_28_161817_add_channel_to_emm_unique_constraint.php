@@ -11,6 +11,14 @@ return new class extends Migration
     {
         // Safely drop the old constraint if it still exists
         $driver = DB::getDriverName();
+
+        // The MySQL branch below uses index prefix lengths (for example
+        // source(50)), which SQLite cannot parse. The existing SQLite schema
+        // is sufficient for tests; this migration is for the MySQL index.
+        if ($driver === 'sqlite') {
+            return;
+        }
+
         $indexExists = false;
 
         if ($driver === 'pgsql') {
@@ -55,6 +63,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         Schema::table('email_marketing_metrics', function (Blueprint $table) {
             $table->dropUnique('emm_unique_metric');
             $table->unique(
