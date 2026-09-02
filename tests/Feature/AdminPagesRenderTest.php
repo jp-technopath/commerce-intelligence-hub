@@ -7,12 +7,12 @@ use App\Models\ClientMeeting;
 use App\Models\Finding;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class AdminPagesRenderTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected User $adminUser;
 
