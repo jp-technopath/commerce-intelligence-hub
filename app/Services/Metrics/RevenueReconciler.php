@@ -8,93 +8,121 @@ use App\Models\CommerceOrder;
 use App\Models\MetricReconciliationResult;
 use Carbon\Carbon;
 
-/**
- * RevenueReconciler
- *
- * Compares Adobe Net Valid Revenue against GA4 Tracked Purchase Revenue,
- * matches transaction IDs, and evaluates dual discrepancy thresholds (default: 5% & $250).
- */
 class RevenueReconciler
 {
-    /**
-     * Reconcile revenue for a client over a given period.
-     */
-    public function reconcile(Client $client, Carbon $from, Carbon $to): MetricReconciliationResult
-    {
-        // 1. Adobe orders
+    public function reconcile(
+        Client $client,
+        Carbon $from,
+        Carbon $to
+    ): MetricReconciliationResult {
         $adobeOrders = CommerceOrder::where('client_id', $client->id)
             ->where('is_valid', true)
             ->whereBetween('order_date', [$from, $to])
             ->get();
 
-        $adobeTxCount   = $adobeOrders->count();
-        $adobeNetRev    = (float) $adobeOrders->sum('net_revenue');
-        $adobeOrderIds  = $adobeOrders->pluck('source_order_id')->filter()->toArray();
-        $adobeIncrIds   = $adobeOrders->pluck('source_increment_id')->filter()->toArray();
-        $adobeLookup    = array_flip(array_merge($adobeOrderIds, $adobeIncrIds));
+        $adobeTxCount = $adobeOrders->count();
+        $adobeNetRev = (float) $adobeOrders->sum('net_revenue');
 
-        // 2. GA4 purchase events
+        $adobeOrderIds = $adobeOrders
+            ->pluck('source_order_id')
+            ->filter()
+            ->toArray();
+
+        $adobeIncrementIds = $adobeOrders
+            ->pluck('source_increment_id')
+            ->filter()
+            ->toArray();
+
+        $adobeLookup = array_flip(
+            array_merge($adobeOrderIds, $adobeIncrementIds)
+        );
+
         $ga4Events = AnalyticsPurchaseEvent::where('client_id', $client->id)
-            ->whereBetween('event_date', [$from->toDateString(), $to->toDateString()])
+            ->whereDate('event_date', '>=', $from->toDateString())
+            ->whereDate('event_date', '<=', $to->toDateString())
             ->get();
 
-        $ga4TxCount     = $ga4Events->count();
-        $ga4TrackedRev  = (float) $ga4Events->sum('tracked_revenue');
-        $duplicateGa4   = $ga4Events->where('is_duplicate', true)->count();
+        $ga4TxCount = $ga4Events->count();
+        $ga4TrackedRev = (float) $ga4Events->sum('tracked_revenue');
+        $duplicateGa4 = $ga4Events
+            ->where('is_duplicate', true)
+            ->count();
 
-        // 3. Match transaction IDs
-        $matchedCount      = 0;
+        $matchedCount = 0;
         $missingInAdobeCount = 0;
 
         foreach ($ga4Events as $event) {
-            $txId = $event->transaction_id;
-            if (isset($adobeLookup[$txId])) {
+            if (isset($adobeLookup[$event->transaction_id])) {
                 $matchedCount++;
             } else {
                 $missingInAdobeCount++;
             }
         }
 
-        $missingInGa4Count = max(0, $adobeTxCount - $matchedCount);
+        $missingInGa4Count = max(
+            0,
+            $adobeTxCount - $matchedCount
+        );
 
-        // 4. Differences
-        $absDiff = abs($ga4TrackedRev - $adobeNetRev);
-        $pctDiff = $adobeNetRev > 0 ? round(($absDiff / $adobeNetRev) * 100, 2) : 0.0;
+        $absoluteDifference = abs(
+            $ga4TrackedRev - $adobeNetRev
+        );
 
-        // 5. Configurable dual thresholds
-        $thresholds   = $client->monitoring_config['reconciliation_thresholds'] ?? [];
-        $pctThreshold = (float) ($thresholds['percentage'] ?? 5.0);
-        $absThreshold = (float) ($thresholds['absolute'] ?? 250.0);
+        $percentageDifference = $adobeNetRev > 0
+            ? round(
+                ($absoluteDifference / $adobeNetRev) * 100,
+                2
+            )
+            : 0.0;
 
-        // 6. Validation status
-        $status = 'valid';
-        if ($pctDiff >= $pctThreshold && $absDiff >= $absThreshold) {
-            $status = $pctDiff >= 15.0 || $absDiff >= 500.0 ? 'material_discrepancy' : 'review_recommended';
+        $thresholds = $client
+            ->monitoring_config['reconciliation_thresholds']
+            ?? [];
+
+        $percentageThreshold = (float) (
+            $thresholds['percentage'] ?? 5.0
+        );
+
+        $absoluteThreshold = (float) (
+            $thresholds['absolute'] ?? 250.0
+        );
+
+        $validationStatus = 'valid';
+
+        if (
+            $percentageDifference >= $percentageThreshold
+            && $absoluteDifference >= $absoluteThreshold
+        ) {
+            $validationStatus =
+                $percentageDifference >= 15.0
+                || $absoluteDifference >= 500.0
+                    ? 'material_discrepancy'
+                    : 'review_recommended';
         }
 
         return MetricReconciliationResult::updateOrCreate(
             [
-                'client_id'       => $client->id,
+                'client_id' => $client->id,
                 'reporting_start' => $from,
-                'reporting_end'   => $to,
+                'reporting_end' => $to,
             ],
             [
-                'adobe_transaction_count'   => $adobeTxCount,
-                'ga4_transaction_count'     => $ga4TxCount,
+                'adobe_transaction_count' => $adobeTxCount,
+                'ga4_transaction_count' => $ga4TxCount,
                 'matched_transaction_count' => $matchedCount,
-                'missing_in_ga4_count'      => $missingInGa4Count,
-                'missing_in_adobe_count'    => $missingInAdobeCount,
-                'duplicate_ga4_count'       => $duplicateGa4,
-                'adobe_net_revenue'         => $adobeNetRev,
-                'ga4_tracked_revenue'       => $ga4TrackedRev,
-                'absolute_difference'       => $absDiff,
-                'percentage_difference'     => $pctDiff,
-                'validation_status'         => $status,
-                'calculation_version'       => KpiMetadataRegistry::CALCULATION_VERSION,
-                'metadata_json'             => [
-                    'percentage_threshold'  => $pctThreshold,
-                    'absolute_threshold'    => $absThreshold,
-                    'triggers_warning'      => ($status !== 'valid'),
+                'missing_in_ga4_count' => $missingInGa4Count,
+                'missing_in_adobe_count' => $missingInAdobeCount,
+                'duplicate_ga4_count' => $duplicateGa4,
+                'adobe_net_revenue' => $adobeNetRev,
+                'ga4_tracked_revenue' => $ga4TrackedRev,
+                'absolute_difference' => $absoluteDifference,
+                'percentage_difference' => $percentageDifference,
+                'validation_status' => $validationStatus,
+                'calculation_version' => KpiMetadataRegistry::CALCULATION_VERSION,
+                'metadata_json' => [
+                    'percentage_threshold' => $percentageThreshold,
+                    'absolute_threshold' => $absoluteThreshold,
+                    'triggers_warning' => $validationStatus !== 'valid',
                 ],
             ]
         );

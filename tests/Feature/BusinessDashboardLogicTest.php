@@ -123,7 +123,11 @@ class BusinessDashboardLogicTest extends TestCase
         ]);
 
         $calc = new CommerceRevenueCalculator();
-        $revenue = $calc->calculate($this->client, Carbon::parse('2026-07-01 00:00:00'), Carbon::parse('2026-07-02 00:00:00'));
+        $revenue = $calc->calculate(
+            $this->client,
+            Carbon::parse('2026-07-01 00:00:00'),
+            Carbon::parse('2026-07-02 00:00:00')
+        );
 
         $this->assertEquals(400.00, $revenue['net_revenue']);
         $this->assertEquals(500.00, $revenue['gross_revenue']);
@@ -157,8 +161,15 @@ class BusinessDashboardLogicTest extends TestCase
 
     public function test_hmac_produces_deterministic_identities_within_client(): void
     {
-        $hash1 = $this->hasher->hashCustomerIdentity($this->client, email: 'buyer@goldkamp.test');
-        $hash2 = $this->hasher->hashCustomerIdentity($this->client, email: 'buyer@goldkamp.test');
+        $hash1 = $this->hasher->hashCustomerIdentity(
+            $this->client,
+            email: 'buyer@goldkamp.test'
+        );
+
+        $hash2 = $this->hasher->hashCustomerIdentity(
+            $this->client,
+            email: 'buyer@goldkamp.test'
+        );
 
         $this->assertNotNull($hash1);
         $this->assertEquals($hash1, $hash2);
@@ -166,18 +177,36 @@ class BusinessDashboardLogicTest extends TestCase
 
     public function test_same_identifier_produces_different_hmac_across_clients(): void
     {
-        $otherClient = Client::create(['name' => 'Other Client', 'industry' => 'retail', 'platform_type' => 'shopify']);
+        $otherClient = Client::create([
+            'name'          => 'Other Client',
+            'industry'      => 'retail',
+            'platform_type' => 'shopify',
+        ]);
 
-        $hash1 = $this->hasher->hashCustomerIdentity($this->client, email: 'buyer@goldkamp.test');
-        $hash2 = $this->hasher->hashCustomerIdentity($otherClient, email: 'buyer@goldkamp.test');
+        $hash1 = $this->hasher->hashCustomerIdentity(
+            $this->client,
+            email: 'buyer@goldkamp.test'
+        );
+
+        $hash2 = $this->hasher->hashCustomerIdentity(
+            $otherClient,
+            email: 'buyer@goldkamp.test'
+        );
 
         $this->assertNotEquals($hash1, $hash2);
     }
 
     public function test_plus_addressed_emails_remain_separate_by_default(): void
     {
-        $hashBase = $this->hasher->hashCustomerIdentity($this->client, email: 'customer@example.com');
-        $hashTag  = $this->hasher->hashCustomerIdentity($this->client, email: 'customer+tag@example.com');
+        $hashBase = $this->hasher->hashCustomerIdentity(
+            $this->client,
+            email: 'customer@example.com'
+        );
+
+        $hashTag = $this->hasher->hashCustomerIdentity(
+            $this->client,
+            email: 'customer+tag@example.com'
+        );
 
         $this->assertNotEquals($hashBase, $hashTag);
     }
@@ -194,7 +223,10 @@ class BusinessDashboardLogicTest extends TestCase
     public function test_anonymization_preserves_financial_transactions(): void
     {
         $email = 'privacy_user@goldkamp.test';
-        $hash  = $this->hasher->hashCustomerIdentity($this->client, email: $email);
+        $hash = $this->hasher->hashCustomerIdentity(
+            $this->client,
+            email: $email
+        );
 
         CommerceOrder::create([
             'client_id'                 => $this->client->id,
@@ -213,7 +245,7 @@ class BusinessDashboardLogicTest extends TestCase
 
         CommerceCustomerPurchaseFact::create([
             'client_id'                  => $this->client->id,
-            'customer_identity_hash'      => $hash,
+            'customer_identity_hash'     => $hash,
             'first_valid_order_at'       => now(),
             'latest_valid_order_at'      => now(),
             'lifetime_valid_order_count' => 1,
@@ -226,10 +258,16 @@ class BusinessDashboardLogicTest extends TestCase
         $this->assertEquals(1, $res['anonymized_orders']);
         $this->assertEquals(1, $res['purged_facts']);
 
-        // Verify order revenue preserved
-        $order = CommerceOrder::where('source_order_id', 'ORD_GDPR_1')->first();
+        $order = CommerceOrder::where(
+            'source_order_id',
+            'ORD_GDPR_1'
+        )->first();
+
         $this->assertEquals(1000.00, $order->net_revenue);
-        $this->assertStringStartsWith('ANONYMIZED_', $order->customer_identity_hash);
+        $this->assertStringStartsWith(
+            'ANONYMIZED_',
+            $order->customer_identity_hash
+        );
     }
 
     public function test_source_records_enforce_required_fields(): void
@@ -239,7 +277,6 @@ class BusinessDashboardLogicTest extends TestCase
         CommerceOrder::create([
             'client_id'      => $this->client->id,
             'integration_id' => $this->adobeIntegration->id,
-            // missing required fields
         ]);
     }
 
@@ -249,7 +286,9 @@ class BusinessDashboardLogicTest extends TestCase
             'client_id'        => $this->client->id,
             'integration_type' => 'adobe_commerce',
             'status'           => 'active',
-            'credentials_json' => ['base_url' => 'https://store2.test'],
+            'credentials_json' => [
+                'base_url' => 'https://store2.test',
+            ],
         ]);
 
         $order1 = CommerceOrder::create([
@@ -286,25 +325,42 @@ class BusinessDashboardLogicTest extends TestCase
             'source_order_id'           => 'JSON_TEST_1',
             'order_status'              => 'complete',
             'order_date'                => now(),
-            'metadata_json'             => ['coupon' => 'SUMMER2026'],
+            'metadata_json'             => [
+                'coupon' => 'SUMMER2026',
+            ],
             'financial_last_changed_at' => now(),
             'collected_at'              => now(),
         ]);
 
-        $this->assertEquals('SUMMER2026', $order->metadata_json['coupon']);
+        $this->assertEquals(
+            'SUMMER2026',
+            $order->metadata_json['coupon']
+        );
     }
 
     public function test_calculation_versions_persisted_and_displayed(): void
     {
-        $recon = (new RevenueReconciler())->reconcile($this->client, now()->subDays(7), now());
+        $recon = (new RevenueReconciler())->reconcile(
+            $this->client,
+            now()->subDays(7),
+            now()
+        );
 
-        $this->assertEquals('v1.0.0', $recon->calculation_version);
+        $this->assertEquals(
+            'v1.0.0',
+            $recon->calculation_version
+        );
     }
 
     public function test_mixed_calculation_versions_trigger_finding(): void
     {
         $evaluator = new DataQualityEvaluator();
-        $findings = $evaluator->evaluate($this->client, now()->subDays(7), now());
+
+        $findings = $evaluator->evaluate(
+            $this->client,
+            now()->subDays(7),
+            now()
+        );
 
         $this->assertIsArray($findings);
     }
@@ -312,82 +368,113 @@ class BusinessDashboardLogicTest extends TestCase
     public function test_data_quality_findings_lifecycle(): void
     {
         $finding = DataQualityFinding::create([
-            'client_id'          => $this->client->id,
-            'finding_type'       => 'test_finding',
-            'affected_metric'    => 'Revenue',
-            'severity'           => 'review_recommended',
-            'reporting_start'    => now()->subDays(7),
-            'reporting_end'      => now(),
-            'detection_rule'     => 'Mock test rule',
-            'first_detected_at'  => now(),
-            'last_detected_at'   => now(),
-            'status'             => 'open',
-            'calculation_version'=> 'v1.0.0',
+            'client_id'           => $this->client->id,
+            'finding_type'        => 'test_finding',
+            'affected_metric'     => 'Revenue',
+            'severity'             => 'review_recommended',
+            'reporting_start'     => now()->subDays(7),
+            'reporting_end'       => now(),
+            'detection_rule'      => 'Mock test rule',
+            'first_detected_at'   => now(),
+            'last_detected_at'    => now(),
+            'status'              => 'open',
+            'calculation_version' => 'v1.0.0',
         ]);
 
         $this->assertEquals('open', $finding->status);
 
-        $finding->update(['status' => 'acknowledged']);
-        $this->assertEquals('acknowledged', $finding->fresh()->status);
+        $finding->update([
+            'status' => 'acknowledged',
+        ]);
 
-        $finding->update(['status' => 'resolved', 'resolved_at' => now()]);
-        $this->assertEquals('resolved', $finding->fresh()->status);
+        $this->assertEquals(
+            'acknowledged',
+            $finding->fresh()->status
+        );
+
+        $finding->update([
+            'status'      => 'resolved',
+            'resolved_at' => now(),
+        ]);
+
+        $this->assertEquals(
+            'resolved',
+            $finding->fresh()->status
+        );
     }
 
     public function test_timezone_changes_do_not_reinterprete_historical_data(): void
     {
-        $this->assertEquals('America/New_York', $this->client->timezone);
+        $this->assertEquals(
+            'America/New_York',
+            $this->client->timezone
+        );
     }
 
     public function test_multi_currency_transactions_separated_when_rate_missing(): void
     {
-        $this->assertEquals('USD', $this->client->currency);
+        $this->assertEquals(
+            'USD',
+            $this->client->currency
+        );
     }
 
     public function test_delivered_email_used_as_rate_denominator(): void
     {
-        $sends   = 1000;
+        $sends = 1000;
         $bounces = 50;
         $delivered = max(0, $sends - $bounces);
-        $opens   = 200;
+        $opens = 200;
 
-        $openRate = $delivered > 0 ? round(($opens / $delivered) * 100, 1) : 0;
+        $openRate = $delivered > 0
+            ? round(($opens / $delivered) * 100, 1)
+            : 0;
 
         $this->assertEquals(950, $delivered);
         $this->assertEquals(21.1, $openRate);
     }
+public function test_goldkamp_validation_order_level_discrepancy_audit(): void
+{
+    $runAt = Carbon::create(2026, 9, 2, 12, 0, 0);
 
-    public function test_goldkamp_validation_order_level_discrepancy_audit(): void
-    {
-        CommerceOrder::create([
-            'client_id'                 => $this->client->id,
-            'integration_id'            => $this->adobeIntegration->id,
-            'source'                    => 'adobe_commerce',
-            'source_order_id'           => 'GK_1001',
-            'order_status'              => 'complete',
-            'order_date'                => now(),
-            'gross_revenue'             => 1000.00,
-            'net_revenue'               => 1000.00,
-            'is_valid'                  => true,
-            'financial_last_changed_at' => now(),
-            'collected_at'              => now(),
-        ]);
+    $order = CommerceOrder::create([
+        'client_id'                 => $this->client->id,
+        'integration_id'            => $this->adobeIntegration->id,
+        'source'                    => 'adobe_commerce',
+        'source_order_id'           => 'GK_1001',
+        'order_status'              => 'complete',
+        'order_date'                => $runAt->copy(),
+        'gross_revenue'             => 1000.00,
+        'net_revenue'               => 1000.00,
+        'is_valid'                  => true,
+        'financial_last_changed_at' => $runAt->copy(),
+        'collected_at'              => $runAt->copy(),
+    ]);
 
-        AnalyticsPurchaseEvent::create([
-            'client_id'       => $this->client->id,
-            'integration_id'  => $this->ga4Integration->id,
-            'source'          => 'ga4',
-            'transaction_id'  => 'GK_1001',
-            'event_date'      => now()->toDateString(),
-            'event_timestamp' => now(),
-            'tracked_revenue' => 1000.00,
-            'collected_at'    => now(),
-        ]);
+    $event = AnalyticsPurchaseEvent::create([
+        'client_id'       => $this->client->id,
+        'integration_id'  => $this->ga4Integration->id,
+        'source'          => 'ga4',
+        'transaction_id'  => 'GK_1001',
+        'event_date'      => $runAt->toDateString(),
+        'event_timestamp' => $runAt->copy(),
+        'tracked_revenue' => 1000.00,
+        'collected_at'    => $runAt->copy(),
+    ]);
 
-        $recon = (new RevenueReconciler())->reconcile($this->client, now()->startOfDay(), now()->endOfDay());
+    $from = $runAt->copy()->startOfDay();
+    $to = $runAt->copy()->endOfDay();
 
-        $this->assertEquals(1, $recon->matched_transaction_count);
-        $this->assertEquals(0.00, $recon->absolute_difference);
-        $this->assertEquals('valid', $recon->validation_status);
-    }
+    $recon = (new RevenueReconciler())->reconcile(
+        $this->client,
+        $from,
+        $to,
+    );
+
+    
+    $this->assertEquals(1, $recon->matched_transaction_count);
+    $this->assertEquals(0.00, $recon->absolute_difference);
+    $this->assertEquals('valid', $recon->validation_status);
+}
+    
 }
