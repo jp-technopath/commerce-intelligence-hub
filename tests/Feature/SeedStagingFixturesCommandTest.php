@@ -17,6 +17,7 @@ class SeedStagingFixturesCommandTest extends TestCase
     public function test_it_requires_an_explicit_staging_flag(): void
     {
         Config::set('app.env', 'staging');
+        $this->app->instance('env', 'staging');
         putenv('DEVFORGE_STAGING_FIXTURES_ENABLED=false');
 
         try {
@@ -31,6 +32,7 @@ class SeedStagingFixturesCommandTest extends TestCase
     public function test_it_loads_synthetic_qa_records_when_explicitly_enabled(): void
     {
         Config::set('app.env', 'staging');
+        $this->app->instance('env', 'staging');
         putenv('DEVFORGE_STAGING_FIXTURES_ENABLED=true');
         putenv('DEVFORGE_STAGING_ADMIN_EMAIL=admin+staging@technopath.co');
 
