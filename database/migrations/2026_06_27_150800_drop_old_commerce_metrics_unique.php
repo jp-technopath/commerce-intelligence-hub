@@ -8,6 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // SQLite (used by the feature-test suite) does not expose MySQL's
+        // information_schema. The constraint cleanup is only needed for the
+        // MySQL deployment path, so leave the SQLite schema as created.
+        if (Schema::getConnection()->getDriverName() !== 'mysql') {
+            return;
+        }
+
         // Only drop if the old constraint still exists (may have been removed already)
         $exists = \Illuminate\Support\Facades\DB::select("
             SELECT 1 FROM information_schema.table_constraints
