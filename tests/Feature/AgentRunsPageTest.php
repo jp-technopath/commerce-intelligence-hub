@@ -74,10 +74,10 @@ class AgentRunsPageTest extends TestCase
             'status' => 'active',
         ]);
         $clientUser = User::factory()->create(['is_admin' => false]);
-        $clientRole = Role::query()->create([
-            'name' => Role::ROLE_CLIENT_USER,
-            'description' => 'Client portal user',
-        ]);
+        $clientRole = Role::query()->firstOrCreate(
+            ['name' => Role::ROLE_CLIENT_USER],
+            ['description' => 'Client portal user'],
+        );
         UserRoleAssignment::query()->create([
             'user_id' => $clientUser->id,
             'role_id' => $clientRole->id,
