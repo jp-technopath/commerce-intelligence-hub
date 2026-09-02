@@ -3,7 +3,7 @@
 namespace Tests\Unit\Deployment;
 
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class ContainerRuntimeContractTest extends TestCase
 {
