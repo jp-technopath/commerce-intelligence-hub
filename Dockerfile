@@ -30,12 +30,13 @@ RUN apt-get update \
         libfreetype6-dev \
         libicu-dev \
         libjpeg62-turbo-dev \
+        default-libmysqlclient-dev
         libpng-dev \
         libpq-dev \
         libzip-dev \
         unzip \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j"$(nproc)" bcmath gd intl opcache pcntl pdo_pgsql zip \
+    && docker-php-ext-install -j"$(nproc)" bcmath gd intl opcache pcntl pdo_mysql pdo_pgsql zip \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
