@@ -214,37 +214,54 @@ class JiraProvider implements ProjectManagementProvider
     {
         $connection = $workItem->connection;
         $account = $this->resolveCredentials(null, $connection);
-        [$http, $url] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$workItem->external_item_id}/worklog");
-
-        $response = $http->get($url);
-
-        if (! $response->successful()) {
-            Log::error('JiraProvider: syncWorklogs failed', ['status' => $response->status(), 'item_key' => $workItem->external_item_key]);
-            return [];
-        }
-
-        $worklogs = $response->json()['worklogs'] ?? [];
+        
+        $startAt = 0;
+        $maxResults = 100;
         $syncedLogs = [];
 
-        foreach ($worklogs as $wl) {
-            $worklogModel = PmWorklog::updateOrCreate(
-                [
-                    'external_worklog_id' => (string) $wl['id'],
-                ],
-                [
-                    'pm_connection_id'    => $connection->id,
-                    'client_id'           => $workItem->client_id,
-                    'pm_work_item_id'     => $workItem->id,
-                    'author_name'         => $wl['author']['displayName'] ?? 'Unknown',
-                    'time_spent_seconds'  => (int) ($wl['timeSpentSeconds'] ?? 0),
-                    'worklog_started_at'  => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
-                    'external_created_at' => isset($wl['created']) ? Carbon::parse($wl['created']) : null,
-                    'external_updated_at' => isset($wl['updated']) ? Carbon::parse($wl['updated']) : null,
-                    'last_synced_at'      => now(),
-                ]
-            );
-            $syncedLogs[] = $worklogModel;
-        }
+        do {
+            $path = "/rest/api/3/issue/{$workItem->external_item_id}/worklog?startAt={$startAt}&maxResults={$maxResults}";
+            [$http, $url] = $this->buildRequestAndUrl($account, $connection, $path);
+
+            $response = $http->get($url);
+
+            if (! $response->successful()) {
+                Log::error('JiraProvider: syncWorklogs failed', [
+                    'status' => $response->status(),
+                    'item_key' => $workItem->external_item_key,
+                    'startAt' => $startAt,
+                ]);
+                break;
+            }
+
+            $json = $response->json();
+            $worklogs = $json['worklogs'] ?? [];
+            $total = $json['total'] ?? count($worklogs);
+
+            foreach ($worklogs as $wl) {
+                $worklogModel = PmWorklog::updateOrCreate(
+                    [
+                        'external_worklog_id' => (string) $wl['id'],
+                    ],
+                    [
+                        'pm_connection_id'    => $connection->id,
+                        'client_id'           => $workItem->client_id,
+                        'pm_work_item_id'     => $workItem->id,
+                        'author_name'         => $wl['author']['displayName'] ?? 'Unknown',
+                        'time_spent_seconds'  => (int) ($wl['timeSpentSeconds'] ?? 0),
+                        'worklog_started_at'  => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
+                        'external_created_at' => isset($wl['created']) ? Carbon::parse($wl['created']) : null,
+                        'external_updated_at' => isset($wl['updated']) ? Carbon::parse($wl['updated']) : null,
+                        'last_synced_at'      => now(),
+                    ]
+                );
+                $syncedLogs[] = $worklogModel;
+            }
+
+            $count = count($worklogs);
+            $startAt += $count;
+
+        } while ($count > 0 && $startAt < $total);
 
         return $syncedLogs;
     }
