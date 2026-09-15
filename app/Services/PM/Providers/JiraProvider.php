@@ -62,15 +62,20 @@ class JiraProvider implements ProjectManagementProvider
     }
 
     /**
-     * Build authorized HTTP request for Jira API calls.
+     * Build authorized HTTP request and resolve full URL for Jira API calls.
      */
-    protected function buildRequest(ConnectedAccount $account)
+    protected function buildRequestAndUrl(ConnectedAccount $account, PmConnection $connection, string $path): array
     {
+        $path = '/' . ltrim($path, '/');
+
         try {
             if ($account->exists && $account->credentials_json) {
                 $accessToken = $account->refreshJiraTokenIfNeeded();
-                if ($accessToken) {
-                    return Http::timeout(30)->withToken($accessToken);
+                $cloudId = $this->getCloudId($account, $connection);
+                if ($accessToken && $cloudId) {
+                    $client = Http::timeout(30)->withToken($accessToken);
+                    $url = "https://api.atlassian.com/ex/jira/{$cloudId}{$path}";
+                    return [$client, $url];
                 }
             }
         } catch (\Throwable $e) {
@@ -83,7 +88,9 @@ class JiraProvider implements ProjectManagementProvider
         $token = config('meeting_agent.jira.api_token');
 
         if ($baseUrl && $email && $token) {
-            return Http::timeout(30)->withBasicAuth($email, $token);
+            $client = Http::timeout(30)->withBasicAuth($email, $token);
+            $url = rtrim($baseUrl, '/') . $path;
+            return [$client, $url];
         }
 
         throw new PmSyncCredentialsException('Jira OAuth token and basic auth configuration are unavailable.');
@@ -106,14 +113,9 @@ class JiraProvider implements ProjectManagementProvider
     public function syncProjects(PmConnection $connection): array
     {
         $account = $this->resolveCredentials(null, $connection);
-        $cloudId = $this->getCloudId($account, $connection);
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, '/rest/api/3/project');
 
-        $isOAuth = $account->exists && $account->credentials_json;
-        $url = ($isOAuth && $cloudId)
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/project"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . '/rest/api/3/project';
-
-        $response = $this->buildRequest($account)->get($url);
+        $response = $http->get($url);
 
         if (! $response->successful()) {
             Log::error('JiraProvider: syncProjects failed', ['status' => $response->status(), 'body' => $response->body()]);
@@ -163,37 +165,45 @@ class JiraProvider implements ProjectManagementProvider
     {
         $connection = $project->connection;
         $account = $this->resolveCredentials(null, $connection);
-        $cloudId = $this->getCloudId($account, $connection);
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, '/rest/api/3/search/jql');
 
         $jql = $project->custom_filter_jql ?: "project = '{$project->external_project_key}' AND status != 'Backlog' AND status != 'backlog' AND updated >= -365d ORDER BY updated DESC";
 
-        $isOAuth = $account->exists && $account->credentials_json;
-        $url = ($isOAuth && $cloudId)
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/search/jql"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . '/rest/api/3/search/jql';
-
-        $body = [
-            'jql'        => $jql,
-            'maxResults' => 100,
-            'fields'     => ['summary', 'description', 'status', 'issuetype', 'priority', 'timetracking', 'assignee', 'duedate', 'updated', 'labels', 'customfield_10002', 'customfield_10028', 'reporter'],
-        ];
-
-        $response = $this->buildRequest($account)->post($url, $body);
-
-        if (! $response->successful()) {
-            Log::error('JiraProvider: syncWorkItems failed', ['status' => $response->status(), 'jql' => $jql]);
-            return [];
-        }
-
-        $issues = $response->json()['issues'] ?? [];
         $syncedItems = [];
+        $nextPageToken = null;
 
-        foreach ($issues as $issue) {
-            $item = $this->normalizeAndSaveWorkItem($issue, $project, $connection);
-            if ($item !== null) {
-                $syncedItems[] = $item;
+        do {
+            $body = [
+                'jql'        => $jql,
+                'maxResults' => 100,
+                'fields'     => ['summary', 'description', 'status', 'issuetype', 'priority', 'timetracking', 'assignee', 'duedate', 'updated', 'labels', 'customfield_10002', 'customfield_10028', 'reporter'],
+            ];
+
+            if ($nextPageToken) {
+                $body['nextPageToken'] = $nextPageToken;
             }
-        }
+
+            $response = $http->post($url, $body);
+
+            if (! $response->successful()) {
+                Log::error('JiraProvider: syncWorkItems failed', ['status' => $response->status(), 'jql' => $jql]);
+                break;
+            }
+
+            $json = $response->json();
+            $issues = $json['issues'] ?? [];
+
+            foreach ($issues as $issue) {
+                $item = $this->normalizeAndSaveWorkItem($issue, $project, $connection);
+                if ($item !== null) {
+                    $syncedItems[] = $item;
+                }
+            }
+
+            $isLast = $json['isLast'] ?? true;
+            $nextPageToken = $json['nextPageToken'] ?? null;
+
+        } while (! $isLast && $nextPageToken);
 
         $connection->update(['last_synced_at' => now()]);
 
@@ -204,14 +214,9 @@ class JiraProvider implements ProjectManagementProvider
     {
         $connection = $workItem->connection;
         $account = $this->resolveCredentials(null, $connection);
-        $cloudId = $this->getCloudId($account, $connection);
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$workItem->external_item_id}/worklog");
 
-        $isOAuth = $account->exists && $account->credentials_json;
-        $url = ($isOAuth && $cloudId)
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/issue/{$workItem->external_item_id}/worklog"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . "/rest/api/3/issue/{$workItem->external_item_id}/worklog";
-
-        $response = $this->buildRequest($account)->get($url);
+        $response = $http->get($url);
 
         if (! $response->successful()) {
             Log::error('JiraProvider: syncWorklogs failed', ['status' => $response->status(), 'item_key' => $workItem->external_item_key]);
@@ -247,13 +252,9 @@ class JiraProvider implements ProjectManagementProvider
     public function getWorkItem(PmConnection $connection, string $externalItemId, ?User $actor = null): array
     {
         $account = $this->resolveCredentials($actor, $connection);
-        $cloudId = $this->getCloudId($account, $connection);
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$externalItemId}");
 
-        $url = $cloudId
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/issue/{$externalItemId}"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . "/rest/api/3/issue/{$externalItemId}";
-
-        $response = $this->buildRequest($account)->get($url);
+        $response = $http->get($url);
 
         if (! $response->successful()) {
             return [];
@@ -266,13 +267,7 @@ class JiraProvider implements ProjectManagementProvider
     {
         $connection = $workItem->connection;
         $account = $this->resolveCredentials($actor, $connection);
-
-        $hasOAuthToken = $account->exists && ! empty($account->credentials_json['access_token']);
-        $cloudId = $hasOAuthToken ? $this->getCloudId($account, $connection) : null;
-
-        $url = ($hasOAuthToken && $cloudId)
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/issue/{$workItem->external_item_key}/comment"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . "/rest/api/3/issue/{$workItem->external_item_key}/comment";
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$workItem->external_item_key}/comment");
 
         $body = [
             'body' => [
@@ -305,13 +300,7 @@ class JiraProvider implements ProjectManagementProvider
     {
         $connection = $workItem->connection;
         $account = $this->resolveCredentials($actor, $connection);
-
-        $hasOAuthToken = $account->exists && ! empty($account->credentials_json['access_token']);
-        $cloudId = $hasOAuthToken ? $this->getCloudId($account, $connection) : null;
-
-        $url = ($hasOAuthToken && $cloudId)
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/issue/{$workItem->external_item_key}"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . "/rest/api/3/issue/{$workItem->external_item_key}";
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$workItem->external_item_key}");
 
         $body = [
             'fields' => [
@@ -337,15 +326,9 @@ class JiraProvider implements ProjectManagementProvider
     {
         $connection = $workItem->connection;
         $account = $this->resolveCredentials($actor, $connection);
+        [$http, $urlTransitions] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$workItem->external_item_key}/transitions");
 
-        $hasOAuthToken = $account->exists && ! empty($account->credentials_json['access_token']);
-        $cloudId = $hasOAuthToken ? $this->getCloudId($account, $connection) : null;
-
-        $urlTransitions = ($hasOAuthToken && $cloudId)
-            ? "https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/issue/{$workItem->external_item_key}/transitions"
-            : rtrim(config('meeting_agent.jira.base_url', ''), '/') . "/rest/api/3/issue/{$workItem->external_item_key}/transitions";
-
-        $response = $this->buildRequest($account)->get($urlTransitions);
+        $response = $http->get($urlTransitions);
 
         if (! $response->successful()) {
             return false;

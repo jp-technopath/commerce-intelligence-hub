@@ -86,13 +86,30 @@ class MeetingsCommitmentsWidget extends BaseWidget
                         ->weight('bold')
                         ->size(Tables\Columns\TextColumn\TextColumnSize::Large),
 
-                    Tables\Columns\TextColumn::make('action_items_count')
-                        ->counts('actionItems')
-                        ->formatStateUsing(fn ($state) => "📌 {$state} Action Items")
-                        ->color('primary'),
+                    Tables\Columns\Layout\Split::make([
+                        Tables\Columns\TextColumn::make('owner.name')
+                            ->formatStateUsing(fn ($state) => $state ? "👤 Host: {$state}" : '👤 Unassigned')
+                            ->color('gray')
+                            ->size(Tables\Columns\TextColumn\TextColumnSize::Small),
+
+                        Tables\Columns\TextColumn::make('action_items_count')
+                            ->counts('actionItems')
+                            ->formatStateUsing(fn ($state) => "📌 {$state} Action Items")
+                            ->color('primary')
+                            ->alignEnd(),
+                    ]),
                 ])->space(3),
             ])
             ->actions([
+                Action::make('join_meeting')
+                    ->label('Join Meeting')
+                    ->icon('heroicon-m-video-camera')
+                    ->color('success')
+                    ->button()
+                    ->url(fn (ClientMeeting $record): ?string => $record->metadata['meet_link'] ?? $record->metadata['html_link'] ?? null)
+                    ->openUrlInNewTab()
+                    ->visible(fn (ClientMeeting $record): bool => ! empty($record->metadata['meet_link'] ?? $record->metadata['html_link'] ?? null)),
+
                 Action::make('view_meeting_details')
                     ->label('View Details')
                     ->icon('heroicon-m-arrow-top-right-on-square')

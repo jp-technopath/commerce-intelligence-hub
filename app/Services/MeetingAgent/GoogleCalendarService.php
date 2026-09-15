@@ -292,43 +292,88 @@ class GoogleCalendarService
             $status = MeetingStatus::NeedsMapping;
         }
 
-        // Parse start/end times
+        // Parse start/end times in UTC
         $startDateTime = $event->getStart()?->getDateTime() ?? $event->getStart()?->getDate();
         $endDateTime = $event->getEnd()?->getDateTime() ?? $event->getEnd()?->getDate();
-        $startCarbon = $startDateTime ? Carbon::parse($startDateTime) : null;
-        $endCarbon = $endDateTime ? Carbon::parse($endDateTime) : null;
+        $startCarbon = $startDateTime ? Carbon::parse($startDateTime)->setTimezone('UTC') : null;
+        $endCarbon = $endDateTime ? Carbon::parse($endDateTime)->setTimezone('UTC') : null;
         $timezone = $event->getStart()?->getTimeZone() ?? config('app.timezone', 'UTC');
 
         $iCalUid = $event->getICalUID();
+        $eventId = $event->getId();
         $existingMeeting = null;
 
-        // 1. Occurrence-Aware Primary Matching: iCalUID + start_at (5-minute window for timezone safety)
-        if ($iCalUid && $startCarbon) {
-            $existingMeeting = ClientMeeting::where('google_ical_uid', $iCalUid)
+        // 1. Primary Match: exact Google Event ID (global across all users scanning the same event)
+        if ($eventId) {
+            $existingMeeting = ClientMeeting::where('google_event_id', $eventId)->first();
+        }
+
+        // 2. Secondary Match: iCalUID (exact or base prefix) + start time window (+/- 15 min for timezone/occurrence safety)
+        if (! $existingMeeting && $iCalUid && $startCarbon) {
+            $baseUid = explode('_R', $iCalUid)[0];
+            $existingMeeting = ClientMeeting::where(function ($q) use ($iCalUid, $baseUid) {
+                    $q->where('google_ical_uid', $iCalUid)
+                      ->orWhere('google_ical_uid', 'like', $baseUid . '%');
+                })
                 ->whereBetween('meeting_start_at', [
-                    $startCarbon->copy()->subMinutes(5),
-                    $startCarbon->copy()->addMinutes(5)
+                    $startCarbon->copy()->subMinutes(15),
+                    $startCarbon->copy()->addMinutes(15)
                 ])
                 ->first();
         }
 
-        // 2. Secondary Match: user ID + event ID
-        if (! $existingMeeting) {
-            $existingMeeting = ClientMeeting::where('scanned_by_user_id', $this->user->id)
-                ->where('google_calendar_id', 'primary')
-                ->where('google_event_id', $event->getId())
-                ->first();
-        }
-
-        // 3. Controlled Fallback Match: exact title & start time window (when iCalUID missing)
-        if (! $existingMeeting && empty($iCalUid) && $startCarbon) {
+        // 3. Fallback Match: exact title & start time window (+/- 15 min)
+        if (! $existingMeeting && $startCarbon) {
             $existingMeeting = ClientMeeting::whereRaw('LOWER(title) = ?', [strtolower(trim($summary))])
                 ->whereBetween('meeting_start_at', [
-                    $startCarbon->copy()->subMinutes(5),
-                    $startCarbon->copy()->addMinutes(5)
+                    $startCarbon->copy()->subMinutes(15),
+                    $startCarbon->copy()->addMinutes(15)
                 ])
                 ->first();
         }
+
+        // Resolve event organizer and internal owner
+        $organizerEmail = $event->getOrganizer()?->getEmail() ?? $event->getCreator()?->getEmail();
+        $organizerUser = null;
+        if ($organizerEmail) {
+            $organizerUser = User::whereRaw('LOWER(email) = ?', [strtolower(trim($organizerEmail))])->first();
+        }
+
+        // Determine owner ID: prefer event organizer User, then internal organizer attendee (e.g. Nour), then internal attendee User, then scanner
+        if ($organizerUser) {
+            $ownerId = $organizerUser->id;
+        } else {
+            $matchedUser = null;
+
+            // Prioritize Nour if in internal attendees
+            $nourUser = User::whereIn('email', ['nour@technopath.co', 'nour@technopath.ai'])->first();
+            $internalEmails = array_map(fn ($a) => strtolower(trim($a['email'] ?? '')), $internalAttendees);
+            if ($nourUser && (in_array('nour@technopath.co', $internalEmails, true) || in_array('nour@technopath.ai', $internalEmails, true))) {
+                $matchedUser = $nourUser;
+            } else {
+                foreach ($internalAttendees as $intAtt) {
+                    if (! empty($intAtt['email'])) {
+                        $u = User::whereRaw('LOWER(email) = ?', [strtolower(trim($intAtt['email']))])->first();
+                        if ($u) {
+                            $matchedUser = $u;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $ownerId = $matchedUser ? $matchedUser->id : $this->user->id;
+        }
+
+        // Extract meeting links and organizer metadata
+        $meetLink = $event->getHangoutLink() ?? $event->getConferenceData()?->getEntryPoints()[0]?->getUri();
+        $htmlLink = $event->getHtmlLink();
+        $eventMeta = array_filter([
+            'organizer_email' => $organizerEmail,
+            'creator_email'   => $event->getCreator()?->getEmail(),
+            'meet_link'       => $meetLink,
+            'html_link'       => $htmlLink,
+        ]);
 
         if ($existingMeeting) {
             // Merge attendee lists across attendees' scans
@@ -345,6 +390,10 @@ class GoogleCalendarService
                 }
             }
 
+            // Update owner_id if organizerUser is found, otherwise keep existing owner_id if already set
+            $finalOwnerId = $organizerUser ? $organizerUser->id : ($existingMeeting->internal_owner_id ?? $ownerId);
+            $mergedMeta = array_merge($existingMeeting->metadata ?? [], $eventMeta);
+
             $existingMeeting->update([
                 'google_ical_uid'    => $iCalUid ?: $existingMeeting->google_ical_uid,
                 'google_event_id'    => $event->getId(),
@@ -355,8 +404,10 @@ class GoogleCalendarService
                 'timezone'           => $timezone,
                 'client_id'          => $targetClientId,
                 'project_key'        => $projectKey,
+                'internal_owner_id'  => $finalOwnerId,
                 'external_attendees' => $mergedExternal,
                 'internal_attendees' => $mergedInternal,
+                'metadata'           => $mergedMeta,
                 'status'             => ($existingMeeting->status === MeetingStatus::Canceled || $status === MeetingStatus::Canceled) ? $status : $existingMeeting->status,
             ]);
 
@@ -382,9 +433,10 @@ class GoogleCalendarService
             'timezone'           => $timezone,
             'client_id'          => $clientId,
             'project_key'        => $projectKey,
-            'internal_owner_id'  => $this->user->id,
+            'internal_owner_id'  => $ownerId,
             'external_attendees' => $externalAttendees,
             'internal_attendees' => $internalAttendees,
+            'metadata'           => $eventMeta,
             'status'             => $status,
             'source'             => MeetingSource::GoogleCalendar,
         ]);

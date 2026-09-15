@@ -141,6 +141,34 @@ class ClientMeetingResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                Tables\Filters\SelectFilter::make('view_scope')
+                    ->label('View Scope')
+                    ->options([
+                        'my_invites' => 'My Calendar Invites',
+                        'all_team'   => 'All Team Invites',
+                    ])
+                    ->default('my_invites')
+                    ->query(function (Builder $query, array $data) {
+                        $value = $data['value'] ?? 'my_invites';
+                        /** @var \App\Models\User|null $user */
+                        $user = \Illuminate\Support\Facades\Auth::user();
+
+                        if (! $user) {
+                            return;
+                        }
+
+                        if ($value === 'my_invites') {
+                            $email = strtolower($user->email ?? '');
+                            $query->where(function ($q) use ($user, $email) {
+                                $q->where('internal_owner_id', $user->id)
+                                  ->orWhere('scanned_by_user_id', $user->id);
+                                if (! empty($email)) {
+                                    $q->orWhere('internal_attendees', 'like', "%{$email}%");
+                                }
+                            });
+                        }
+                    }),
+
                 Tables\Filters\SelectFilter::make('status')
                     ->options(collect(MeetingStatus::cases())->mapWithKeys(
                         fn ($case) => [$case->value => $case->label()]

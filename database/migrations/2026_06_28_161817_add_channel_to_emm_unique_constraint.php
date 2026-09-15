@@ -38,7 +38,13 @@ return new class extends Migration
             }
         }
 
-        if ($indexExists) {
+        if ($driver === 'sqlite') {
+            try {
+                DB::statement('DROP INDEX IF EXISTS emm_unique_metric');
+            } catch (\Throwable $e) {
+                // Ignore
+            }
+        } elseif ($indexExists) {
             try {
                 Schema::table('email_marketing_metrics', function (Blueprint $table) {
                     $table->dropUnique('emm_unique_metric');
@@ -49,7 +55,7 @@ return new class extends Migration
         }
 
         // Create the unique constraint with channel included
-        if ($driver === 'pgsql') {
+        if ($driver === 'pgsql' || $driver === 'sqlite') {
             Schema::table('email_marketing_metrics', function (Blueprint $table) {
                 $table->unique(
                     ['client_id', 'date', 'source', 'type', 'channel', 'campaign_name'],
