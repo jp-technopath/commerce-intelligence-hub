@@ -631,9 +631,11 @@ class JiraProvider implements ProjectManagementProvider
             return $customMappings[strtolower($jiraStatus)];
         }
 
-        $jiraStatusLower = strtolower($jiraStatus);
+        $jiraStatusLower = strtolower(trim($jiraStatus));
 
         return match (true) {
+            str_contains($jiraStatusLower, 'on hold') || str_contains($jiraStatusLower, 'hold') || str_contains($jiraStatusLower, 'paused') => 'on_hold',
+            str_contains($jiraStatusLower, 'rework') || str_contains($jiraStatusLower, 'revision') || str_contains($jiraStatusLower, 're-work') => 'rework',
             str_contains($jiraStatusLower, 'done') || str_contains($jiraStatusLower, 'closed') || str_contains($jiraStatusLower, 'resolved') => 'completed',
             str_contains($jiraStatusLower, 'deployment') || str_contains($jiraStatusLower, 'ready for deployment') => 'ready_for_deployment',
             str_contains($jiraStatusLower, 'uat') || str_contains($jiraStatusLower, 'customer') => 'customer_review',

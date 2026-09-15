@@ -133,7 +133,9 @@ class PmWorkItem extends Model
             'customer_review'       => 'Customer Review',
             'ready_for_deployment' => 'Ready for Deployment',
             'completed'             => 'Completed',
-            default           => ucfirst(str_replace('_', ' ', $this->normalized_delivery_status)),
+            'on_hold'               => 'On Hold',
+            'rework'                => 'Rework',
+            default                 => ucfirst(str_replace('_', ' ', $this->normalized_delivery_status)),
         };
     }
 }

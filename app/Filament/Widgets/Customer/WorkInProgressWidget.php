@@ -59,21 +59,26 @@ class WorkInProgressWidget extends BaseWidget
                     ->label('Delivery Status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
-                        'completed'       => 'success',
-                        'customer_review' => 'warning',
-                        'review_qa'       => 'info',
-                        'in_progress'     => 'primary',
-                        'ready'           => 'gray',
-                        default           => 'gray',
+                        'completed', 'ready_for_deployment' => 'success',
+                        'customer_review'                   => 'warning',
+                        'review_qa'                         => 'info',
+                        'in_progress'                       => 'primary',
+                        'rework'                            => 'danger',
+                        'on_hold'                           => 'gray',
+                        'ready'                             => 'gray',
+                        default                             => 'gray',
                     })
                     ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'planned'         => 'Planned',
-                        'ready'           => 'Ready for Dev',
-                        'in_progress'     => 'In Progress',
-                        'review_qa'       => 'Review / QA',
-                        'customer_review' => 'Customer Review',
-                        'completed'       => 'Completed',
-                        default           => ucfirst($state),
+                        'planned'               => 'Planned',
+                        'ready'                 => 'Ready for Dev',
+                        'in_progress'           => 'In Progress',
+                        'review_qa'             => 'Review / QA',
+                        'customer_review'       => 'Customer Review',
+                        'ready_for_deployment' => 'Ready for Deployment',
+                        'completed'             => 'Completed',
+                        'on_hold'               => 'On Hold',
+                        'rework'                => 'Rework',
+                        default                 => ucfirst(str_replace('_', ' ', $state)),
                     }),
 
                 Tables\Columns\TextColumn::make('estimate_approval_status')

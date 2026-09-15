@@ -137,21 +137,26 @@ class WorkInProgress extends Page implements HasForms, HasTable
                     ->label('Delivery Status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
-                        'completed'       => 'success',
-                        'customer_review' => 'warning',
-                        'review_qa'       => 'info',
-                        'in_progress'     => 'primary',
-                        'ready'           => 'gray',
-                        default           => 'gray',
+                        'completed', 'ready_for_deployment' => 'success',
+                        'customer_review'                   => 'warning',
+                        'review_qa'                         => 'info',
+                        'in_progress'                       => 'primary',
+                        'rework'                            => 'danger',
+                        'on_hold'                           => 'gray',
+                        'ready'                             => 'gray',
+                        default                             => 'gray',
                     })
                     ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'planned'         => 'Planned',
-                        'ready'           => 'Ready for Dev',
-                        'in_progress'     => 'In Progress',
-                        'review_qa'       => 'Review / QA',
-                        'customer_review' => 'Customer Review',
-                        'completed'       => 'Completed',
-                        default           => ucfirst($state),
+                        'planned'               => 'Planned',
+                        'ready'                 => 'Ready for Dev',
+                        'in_progress'           => 'In Progress',
+                        'review_qa'             => 'Review / QA',
+                        'customer_review'       => 'Customer Review',
+                        'ready_for_deployment' => 'Ready for Deployment',
+                        'completed'             => 'Completed',
+                        'on_hold'               => 'On Hold',
+                        'rework'                => 'Rework',
+                        default                 => ucfirst(str_replace('_', ' ', $state)),
                     }),
 
                 Tables\Columns\TextColumn::make('external_status')
@@ -174,6 +179,8 @@ class WorkInProgress extends Page implements HasForms, HasTable
                         'planned_ready'   => 'Planned / Ready for Dev',
                         'review_qa'       => 'Review / QA & Testing',
                         'customer_review' => 'Customer Review',
+                        'on_hold'         => 'On Hold',
+                        'rework'          => 'Rework',
                     ])
                     ->default(fn () => request()->query('scope') ?? 'all_pipeline')
                     ->query(function ($query, array $data) {
@@ -184,11 +191,13 @@ class WorkInProgress extends Page implements HasForms, HasTable
                                 $q->where('normalized_delivery_status', 'in_progress')
                                   ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
                             }),
-                            'review_qa' => $query->whereIn('normalized_delivery_status', ['review_qa', 'customer_review']),
+                            'review_qa'       => $query->whereIn('normalized_delivery_status', ['review_qa', 'customer_review']),
                             'customer_review' => $query->where('normalized_delivery_status', 'customer_review'),
-                            'planned_ready' => $query->whereIn('normalized_delivery_status', ['planned', 'ready']),
-                            'all_pipeline' => $query,
-                            default => $query,
+                            'planned_ready'   => $query->whereIn('normalized_delivery_status', ['planned', 'ready']),
+                            'on_hold'         => $query->where('normalized_delivery_status', 'on_hold'),
+                            'rework'          => $query->where('normalized_delivery_status', 'rework'),
+                            'all_pipeline'    => $query,
+                            default           => $query,
                         };
                     }),
             ])
@@ -226,6 +235,8 @@ class WorkInProgress extends Page implements HasForms, HasTable
                             'customer_review' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
                             'review_qa'       => 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800',
                             'in_progress'     => 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800',
+                            'rework'          => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
+                            'on_hold'         => 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
                             default           => 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700',
                         };
 
