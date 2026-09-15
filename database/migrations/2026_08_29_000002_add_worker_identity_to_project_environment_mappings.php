@@ -8,16 +8,18 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('project_environment_mappings', function (Blueprint $table) {
-            $table->string('worker_service_account_email')
-                ->nullable()
-                ->after('vm_name');
+        if (Schema::hasTable('project_environment_mappings') && ! Schema::hasColumn('project_environment_mappings', 'worker_service_account_email')) {
+            Schema::table('project_environment_mappings', function (Blueprint $table) {
+                $table->string('worker_service_account_email')
+                    ->nullable()
+                    ->after('vm_name');
 
-            $table->index(
-                ['worker_service_account_email', 'is_active'],
-                'project_environment_mapping_worker_identity_idx'
-            );
-        });
+                $table->index(
+                    ['worker_service_account_email', 'is_active'],
+                    'project_environment_mapping_worker_identity_idx'
+                );
+            });
+        }
     }
 
     public function down(): void
