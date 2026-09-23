@@ -314,7 +314,6 @@ class IntegrationResource extends Resource
                     ->revealable()
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'adobe_commerce'),
 
-                // ── GA4 — OAuth2 flow ─────────────────────────────────────
                 // Step 1: Property ID (always needed)
                 Forms\Components\TextInput::make('ga4_property_id')
                     ->label('GA4 Property ID')
@@ -322,12 +321,22 @@ class IntegrationResource extends Resource
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
                     ->columnSpanFull(),
 
-                // Step 2: Service Account / OAuth status display
+                // Step 2: Service Account JSON override (optional)
+                Forms\Components\Textarea::make('ga4_service_account_json')
+                    ->label('Service Account JSON (Optional Override)')
+                    ->helperText('Paste Service Account JSON or Base64 string here if not configured globally via GA4_SERVICE_ACCOUNT_JSON in environment variables.')
+                    ->rows(3)
+                    ->live(onBlur: true)
+                    ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
+                    ->columnSpanFull(),
+
+                // Step 3: Service Account / OAuth status display
                 Forms\Components\Placeholder::make('ga4_auth_status')
                     ->label('Google Analytics Authentication')
-                    ->content(function (?Integration $record): \Illuminate\Support\HtmlString {
+                    ->content(function (?Integration $record, Forms\Get $get): \Illuminate\Support\HtmlString {
+                        $formSa = $get('ga4_service_account_json');
                         $creds = $record?->credentials_json ?? [];
-                        $saEmail = GA4Connector::getServiceAccountEmail($creds['service_account_json'] ?? null);
+                        $saEmail = GA4Connector::getServiceAccountEmail($formSa ?: ($creds['service_account_json'] ?? null));
                         $hasOauth = ! empty($creds['refresh_token']);
 
                         if ($saEmail) {
@@ -494,12 +503,19 @@ class IntegrationResource extends Resource
 
         if ($integrationType === 'ga4') {
             $propertyId = trim((string) ($data['ga4_property_id'] ?? ''));
-            if ($propertyId !== '') {
-                $saEmail = GA4Connector::getServiceAccountEmail($existing['service_account_json'] ?? null);
-                $hasOauth = ! empty($existing['refresh_token']);
-                $authMethod = $existing['auth_method'] ?? ($saEmail ? 'service_account' : ($hasOauth ? 'oauth2_user' : 'service_account'));
+            $saJsonRaw = trim((string) ($data['ga4_service_account_json'] ?? ''));
 
-                $data['credentials_json'] = array_merge($existing, [
+            $mergedCreds = $existing;
+            if ($saJsonRaw !== '') {
+                $mergedCreds['service_account_json'] = $saJsonRaw;
+            }
+
+            if ($propertyId !== '') {
+                $saEmail = GA4Connector::getServiceAccountEmail($mergedCreds['service_account_json'] ?? null);
+                $hasOauth = ! empty($mergedCreds['refresh_token']);
+                $authMethod = $mergedCreds['auth_method'] ?? ($saEmail ? 'service_account' : ($hasOauth ? 'oauth2_user' : 'service_account'));
+
+                $data['credentials_json'] = array_merge($mergedCreds, [
                     'property_id' => $propertyId,
                     'auth_method' => $authMethod,
                 ]);
@@ -508,7 +524,7 @@ class IntegrationResource extends Resource
                     $data['status'] = IntegrationStatus::Active->value;
                 }
             } else {
-                $data['credentials_json'] = $existing;
+                $data['credentials_json'] = $mergedCreds;
             }
         }
 
@@ -579,6 +595,9 @@ class IntegrationResource extends Resource
 
         if ($type === 'ga4') {
             $data['ga4_property_id'] = $credentials['property_id'] ?? null;
+            $data['ga4_service_account_json'] = is_array($credentials['service_account_json'] ?? null)
+                ? json_encode($credentials['service_account_json'])
+                : ($credentials['service_account_json'] ?? null);
         }
 
         if ($type === 'clarity') {

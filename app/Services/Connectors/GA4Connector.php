@@ -94,56 +94,56 @@ class GA4Connector
     public function hasServiceAccountConfigured(): bool
     {
         $sa = $this->credentials['service_account_json'] ?? config('google.service_account_json');
-        if (empty($sa)) {
-            return false;
-        }
-
-        if (is_array($sa)) {
-            return ! empty($sa['client_email']);
-        }
-
-        if (is_string($sa)) {
-            $trimmed = trim($sa);
-            if (str_starts_with($trimmed, '{')) {
-                $decoded = json_decode($trimmed, true);
-                return is_array($decoded) && ! empty($decoded['client_email']);
-            }
-
-            return file_exists($trimmed) || file_exists(base_path($trimmed));
-        }
-
-        return false;
+        return self::parseServiceAccountConfig($sa) !== null;
     }
 
-    public static function getServiceAccountEmail(?string $saConfig = null): ?string
+    public static function parseServiceAccountConfig(mixed $sa): ?array
     {
-        $sa = $saConfig ?? config('google.service_account_json');
         if (empty($sa)) {
             return null;
         }
 
         if (is_array($sa)) {
-            return $sa['client_email'] ?? null;
+            return ! empty($sa['client_email']) ? $sa : null;
         }
 
         if (is_string($sa)) {
             $trimmed = trim($sa);
+
+            // 1. Direct JSON string
             if (str_starts_with($trimmed, '{')) {
                 $decoded = json_decode($trimmed, true);
-                return $decoded['client_email'] ?? null;
+                return (is_array($decoded) && ! empty($decoded['client_email'])) ? $decoded : null;
             }
 
+            // 2. Base64 encoded JSON string
+            $b64 = base64_decode($trimmed, true);
+            if ($b64 && str_starts_with(trim($b64), '{')) {
+                $decoded = json_decode(trim($b64), true);
+                if (is_array($decoded) && ! empty($decoded['client_email'])) {
+                    return $decoded;
+                }
+            }
+
+            // 3. File path
             $path = file_exists($trimmed) ? $trimmed : (file_exists(base_path($trimmed)) ? base_path($trimmed) : null);
             if ($path) {
                 $content = @file_get_contents($path);
                 if ($content) {
                     $decoded = json_decode($content, true);
-                    return $decoded['client_email'] ?? null;
+                    return (is_array($decoded) && ! empty($decoded['client_email'])) ? $decoded : null;
                 }
             }
         }
 
         return null;
+    }
+
+    public static function getServiceAccountEmail(?string $saConfig = null): ?string
+    {
+        $sa = $saConfig ?? config('google.service_account_json');
+        $parsed = self::parseServiceAccountConfig($sa);
+        return $parsed['client_email'] ?? null;
     }
 
     public function buildService(?string $refreshToken = null): AnalyticsData
@@ -153,27 +153,11 @@ class GA4Connector
 
         // 1. Prioritize Service Account authentication
         $saConfig = $this->credentials['service_account_json'] ?? config('google.service_account_json');
+        $parsed = self::parseServiceAccountConfig($saConfig);
 
-        if (! empty($saConfig)) {
-            $resolvedAuth = null;
-
-            if (is_array($saConfig)) {
-                $resolvedAuth = $saConfig;
-            } elseif (is_string($saConfig)) {
-                $trimmed = trim($saConfig);
-                if (str_starts_with($trimmed, '{')) {
-                    $resolvedAuth = json_decode($trimmed, true);
-                } elseif (file_exists($trimmed)) {
-                    $resolvedAuth = $trimmed;
-                } elseif (file_exists(base_path($trimmed))) {
-                    $resolvedAuth = base_path($trimmed);
-                }
-            }
-
-            if ($resolvedAuth !== null) {
-                $client->setAuthConfig($resolvedAuth);
-                return new AnalyticsData($client);
-            }
+        if ($parsed !== null) {
+            $client->setAuthConfig($parsed);
+            return new AnalyticsData($client);
         }
 
         // 2. Fallback to OAuth 2.0 user refresh token

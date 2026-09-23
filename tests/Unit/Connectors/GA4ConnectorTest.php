@@ -152,5 +152,28 @@ class GA4ConnectorTest extends TestCase
 
         $this->assertNotNull($email);
         $this->assertStringContainsString('@technopath.iam.gserviceaccount.com', $email);
+
+        $json = json_encode(['client_email' => 'test-sa@example.com']);
+        $this->assertEquals('test-sa@example.com', GA4Connector::getServiceAccountEmail($json));
+
+        $b64 = base64_encode($json);
+        $this->assertEquals('test-sa@example.com', GA4Connector::getServiceAccountEmail($b64));
+    }
+
+    public function test_has_credentials_detects_base64_encoded_service_account(): void
+    {
+        config(['google.service_account_json' => null]);
+
+        $b64 = base64_encode(json_encode(['client_email' => 'base64-sa@example.com']));
+        $integration = new Integration([
+            'credentials_json' => [
+                'property_id'          => '123456789',
+                'service_account_json' => $b64,
+            ],
+        ]);
+        $connector = new GA4Connector($integration);
+
+        $this->assertTrue($connector->hasCredentials());
+        $this->assertTrue($connector->hasServiceAccountConfigured());
     }
 }
