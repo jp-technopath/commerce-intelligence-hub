@@ -11,7 +11,7 @@ interface ProjectManagementProvider
 {
     public function syncProjects(PmConnection $connection): array;
 
-    public function syncWorkItems(PmProject $project): array;
+    public function syncWorkItems(PmProject $project, ?int $days = 30): array;
 
     public function syncWorklogs(PmWorkItem $workItem): array;
 

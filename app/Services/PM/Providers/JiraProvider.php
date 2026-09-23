@@ -125,35 +125,64 @@ class JiraProvider implements ProjectManagementProvider
         $projects = $response->json();
         $synced = [];
 
+        // Preload mapped clients, fallback TEC client, and other active dedicated connections
+        $mappedClientsByKey = Client::whereNotNull('jira_project_key')
+            ->where('jira_project_key', '!=', '')
+            ->get()
+            ->keyBy('jira_project_key');
+
+        $tecClientId = $mappedClientsByKey->get('TEC')?->id;
+
+        $dedicatedConnectionClientIds = PmConnection::where('is_active', true)
+            ->whereNotNull('client_id')
+            ->where('id', '!=', $connection->id)
+            ->pluck('client_id')
+            ->flip()
+            ->all();
+
+        $existingProjects = PmProject::where('pm_connection_id', $connection->id)
+            ->get()
+            ->keyBy('external_project_key');
+
         foreach ($projects as $proj) {
             $projKey = $proj['key'] ?? '';
             $projName = $proj['name'] ?? $projKey;
 
             // Resolve target client ONLY via an explicit, manually-configured link:
             // Client.jira_project_key must be set to this project's key on the Clients page.
-            // We intentionally do NOT guess by fuzzy-matching project/client names anymore -
-            // clients are created and linked manually. Unmapped projects fall back to the
-            // "Technopath Internal" bucket (or the connection's owning client) instead of
-            // being silently attributed to a possibly-wrong customer.
-            $matchedClient = Client::where('jira_project_key', $projKey)->first();
+            $matchedClient = $mappedClientsByKey->get($projKey);
 
             $targetClientId = $matchedClient?->id
-                ?? Client::where('jira_project_key', 'TEC')->first()?->id
+                ?? $tecClientId
                 ?? $connection->client_id;
 
-            $pmProject = PmProject::updateOrCreate(
-                [
-                    'pm_connection_id'     => $connection->id,
-                    'external_project_key' => $projKey,
-                ],
-                [
+            $isActive = $this->shouldProjectBeActive(
+                $connection,
+                $projKey,
+                $matchedClient,
+                $dedicatedConnectionClientIds
+            );
+
+            $existing = $existingProjects->get($projKey);
+
+            if ($existing) {
+                $existing->update([
                     'client_id'           => $targetClientId,
                     'name'                => $projName,
                     'external_project_id' => $proj['id'] ?? null,
-                    'is_active'           => true,
-                ]
-            );
-            $synced[] = $pmProject;
+                    'is_active'           => $isActive,
+                ]);
+                $synced[] = $existing;
+            } else {
+                $synced[] = PmProject::create([
+                    'pm_connection_id'     => $connection->id,
+                    'external_project_key' => $projKey,
+                    'client_id'           => $targetClientId,
+                    'name'                => $projName,
+                    'external_project_id' => $proj['id'] ?? null,
+                    'is_active'           => $isActive,
+                ]);
+            }
         }
 
         $connection->update(['last_synced_at' => now()]);
@@ -161,13 +190,48 @@ class JiraProvider implements ProjectManagementProvider
         return $synced;
     }
 
-    public function syncWorkItems(PmProject $project): array
+    public function shouldProjectBeActive(
+        PmConnection $connection,
+        string $projKey,
+        ?Client $matchedClient,
+        array $otherDedicatedConnections = []
+    ): bool {
+        // 1. SUP is the shared customer service desk project across customers - keep active on primary connection #32 or unassigned
+        if ($projKey === 'SUP') {
+            return $connection->id === 32 || $connection->client_id === null;
+        }
+
+        // 2. If this connection belongs to a specific client:
+        if ($connection->client_id) {
+            // Direct match with this connection's client
+            if ($matchedClient && $matchedClient->id === $connection->client_id) {
+                return true;
+            }
+
+            // Primary connection (#32) also handles active mapped clients without their own dedicated connection
+            if ($connection->id === 32 && $matchedClient) {
+                return ! isset($otherDedicatedConnections[$matchedClient->id]);
+            }
+
+            return false;
+        }
+
+        // 3. For an unassigned/global connection:
+        return $matchedClient !== null;
+    }
+
+    public function syncWorkItems(PmProject $project, ?int $days = 30): array
     {
         $connection = $project->connection;
         $account = $this->resolveCredentials(null, $connection);
         [$http, $url] = $this->buildRequestAndUrl($account, $connection, '/rest/api/3/search/jql');
 
-        $jql = $project->custom_filter_jql ?: "project = '{$project->external_project_key}' AND status != 'Backlog' AND status != 'backlog' AND updated >= -365d ORDER BY updated DESC";
+        if ($project->custom_filter_jql) {
+            $jql = $project->custom_filter_jql;
+        } else {
+            $timeFilter = ($days !== null && $days > 0) ? " AND updated >= -{$days}d" : "";
+            $jql = "project = '{$project->external_project_key}' AND status != 'Backlog' AND status != 'backlog'{$timeFilter} ORDER BY updated DESC";
+        }
 
         $syncedItems = [];
         $nextPageToken = null;

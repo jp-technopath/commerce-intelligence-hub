@@ -126,12 +126,15 @@ class PmConnectionResource extends Resource
                     ->action(function (PmConnection $record): void {
                         try {
                             $jiraProvider = app(\App\Services\PM\Providers\JiraProvider::class);
-                            $syncedProjects = $jiraProvider->syncProjects($record);
-                            ReconcilePmWorkItemsJob::dispatch();
+                            $jiraProvider->syncProjects($record);
+                            $activeProjects = $record->projects()->where('is_active', true)->get();
+                            foreach ($activeProjects as $project) {
+                                \App\Jobs\SyncPmProjectJob::dispatch($project, 30);
+                            }
 
                             Notification::make()
                                 ->title('PM Integration Sync Started')
-                                ->body("Synced " . count($syncedProjects) . " project(s). Work item reconciliation job queued.")
+                                ->body("Dispatched sync for {$activeProjects->count()} active project(s).")
                                 ->success()
                                 ->send();
                         } catch (\Throwable $e) {
