@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Enums\IntegrationStatus;
 use App\Enums\IntegrationType;
 use App\Jobs\TriggerIntegrationSync;
+use App\Services\Connectors\GA4Connector;
 use App\Filament\Resources\IntegrationResource\Pages;
 use App\Filament\Resources\IntegrationResource\RelationManagers;
 use App\Models\Integration;
@@ -321,20 +322,37 @@ class IntegrationResource extends Resource
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
                     ->columnSpanFull(),
 
-                // Step 2: OAuth status display (read-only, shown on edit)
+                // Step 2: Service Account / OAuth status display
                 Forms\Components\Placeholder::make('ga4_auth_status')
-                    ->label('Google Account Authorization')
+                    ->label('Google Analytics Authentication')
                     ->content(function (?Integration $record): \Illuminate\Support\HtmlString {
-                        if (! $record) {
-                            return new \Illuminate\Support\HtmlString(
-                                '<p class="text-sm text-gray-500">Save this integration first, then authorize your Google account.</p>'
-                            );
+                        $creds = $record?->credentials_json ?? [];
+                        $saEmail = GA4Connector::getServiceAccountEmail($creds['service_account_json'] ?? null);
+                        $hasOauth = ! empty($creds['refresh_token']);
+
+                        if ($saEmail) {
+                            $saHtml = '<div class="space-y-2 rounded-lg border border-green-200 bg-green-50 p-4">'
+                                . '<div class="flex items-center gap-2">'
+                                . '<span class="inline-flex items-center gap-1.5 rounded-full bg-green-200 px-2.5 py-0.5 text-xs font-semibold text-green-900">'
+                                . '<svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-4.121-4.121a1 1 0 011.414-1.414L8.414 12.172l7.879-7.879a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>'
+                                . 'Service Account Active'
+                                . '</span>'
+                                . '<span class="text-xs text-green-900 font-mono font-medium">' . e($saEmail) . '</span>'
+                                . '</div>'
+                                . '<p class="text-xs text-green-800">'
+                                . 'Add <strong>' . e($saEmail) . '</strong> as a <strong>Viewer</strong> in the client\'s Google Analytics property (<em>Admin &rarr; Property Access Management</em>). Background syncs will run automatically with zero token expirations.'
+                                . '</p>'
+                                . '</div>';
+
+                            if ($hasOauth) {
+                                $oauthEmail = $creds['authorized_email'] ?? 'Unknown';
+                                $saHtml .= '<p class="mt-2 text-xs text-gray-500">Also linked to OAuth account: <strong>' . e($oauthEmail) . '</strong> (Service Account will be used primarily).</p>';
+                            }
+
+                            return new \Illuminate\Support\HtmlString($saHtml);
                         }
 
-                        $creds = $record->credentials_json ?? [];
-                        $authorized = ! empty($creds['refresh_token']);
-
-                        if ($authorized) {
+                        if ($hasOauth) {
                             $email = $creds['authorized_email'] ?? 'Unknown';
                             $date  = isset($creds['authorized_at'])
                                 ? \Carbon\Carbon::parse($creds['authorized_at'])->diffForHumans()
@@ -342,9 +360,8 @@ class IntegrationResource extends Resource
 
                             return new \Illuminate\Support\HtmlString(
                                 '<div class="flex items-center gap-3">'
-                                . '<span class="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-800">'
-                                . '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-4.121-4.121a1 1 0 011.414-1.414L8.414 12.172l7.879-7.879a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>'
-                                . 'Connected'
+                                . '<span class="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-800">'
+                                . 'OAuth Connected'
                                 . '</span>'
                                 . '<span class="text-sm text-gray-600">Authorized as <strong>' . e($email) . '</strong>' . ($date ? " &mdash; {$date}" : '') . '</span>'
                                 . '</div>'
@@ -357,19 +374,19 @@ class IntegrationResource extends Resource
                             . '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>'
                             . 'Not authorized'
                             . '</span>'
-                            . '<span class="text-sm text-gray-500">Click the button below to authorize your Google account.</span>'
+                            . '<span class="text-sm text-gray-500">Enter a Property ID above to use the Service Account, or authorize via OAuth below.</span>'
                             . '</div>'
                         );
                     })
                     ->visible(fn (Forms\Get $get) => $get('integration_type') === 'ga4')
                     ->columnSpanFull(),
 
-                // Step 3: Authorize / Disconnect button (shown on edit only)
+                // Step 3: OAuth Actions (shown if manual OAuth is needed or active)
                 Forms\Components\Actions::make([
                     Forms\Components\Actions\Action::make('authorize_google')
-                        ->label('Authorize Google Account')
+                        ->label('Authorize via OAuth')
                         ->icon('heroicon-o-arrow-top-right-on-square')
-                        ->color('primary')
+                        ->color('gray')
                         ->action(function (?Integration $record, Forms\Get $get, $livewire) {
                             if (! $record) return null;
                             $propertyId = $get('ga4_property_id');
@@ -394,12 +411,12 @@ class IntegrationResource extends Resource
                         ),
 
                     Forms\Components\Actions\Action::make('disconnect_google')
-                        ->label('Disconnect Google Account')
+                        ->label('Disconnect OAuth')
                         ->icon('heroicon-o-x-circle')
                         ->color('danger')
                         ->requiresConfirmation()
-                        ->modalHeading('Disconnect Google Account')
-                        ->modalDescription('This will revoke the OAuth token and set the integration back to Pending. You will need to re-authorize to resume syncing.')
+                        ->modalHeading('Disconnect OAuth Token')
+                        ->modalDescription('This will revoke the OAuth token. If a Service Account is configured, background syncs will continue via Service Account.')
                         ->url(fn (?Integration $record) => $record
                             ? route('google.oauth.revoke', $record)
                             : null
@@ -478,10 +495,18 @@ class IntegrationResource extends Resource
         if ($integrationType === 'ga4') {
             $propertyId = trim((string) ($data['ga4_property_id'] ?? ''));
             if ($propertyId !== '') {
+                $saEmail = GA4Connector::getServiceAccountEmail($existing['service_account_json'] ?? null);
+                $hasOauth = ! empty($existing['refresh_token']);
+                $authMethod = $existing['auth_method'] ?? ($saEmail ? 'service_account' : ($hasOauth ? 'oauth2_user' : 'service_account'));
+
                 $data['credentials_json'] = array_merge($existing, [
                     'property_id' => $propertyId,
-                    'auth_method' => 'oauth2_user',
+                    'auth_method' => $authMethod,
                 ]);
+
+                if ($saEmail && (! isset($data['status']) || $data['status'] === IntegrationStatus::Pending->value || $data['status'] === IntegrationStatus::Pending)) {
+                    $data['status'] = IntegrationStatus::Active->value;
+                }
             } else {
                 $data['credentials_json'] = $existing;
             }

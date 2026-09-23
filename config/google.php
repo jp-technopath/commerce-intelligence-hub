@@ -38,4 +38,13 @@ return [
     'access_type'   => 'offline',   // Required to receive a refresh token
     'prompt'        => 'consent',   // Force consent screen to always get refresh token
 
+    /*
+    |--------------------------------------------------------------------------
+    | Service Account Credentials
+    |--------------------------------------------------------------------------
+    | Path to JSON key file or raw JSON string for server-to-server sync.
+    |
+    */
+    'service_account_json' => env('GA4_SERVICE_ACCOUNT_JSON'),
+
 ];

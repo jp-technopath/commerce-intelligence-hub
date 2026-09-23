@@ -31,20 +31,19 @@ class GA4Connector
 
     public function sync(SyncLog $syncLog, int $numOfDays = 30): void
     {
-        $propertyId   = $this->credentials['property_id'] ?? null;
-        $refreshToken = $this->credentials['refresh_token'] ?? null;
+        $propertyId = $this->credentials['property_id'] ?? null;
 
-        if (! $propertyId || ! $refreshToken) {
+        if (! $propertyId || ! $this->hasCredentials()) {
             $syncLog->update([
                 'status'        => SyncStatus::Failed,
-                'error_message' => 'GA4 integration is missing property_id or refresh_token. Please complete authorization.',
+                'error_message' => 'GA4 integration is missing property_id or valid credentials (Service Account or OAuth). Please complete configuration.',
                 'completed_at'  => now(),
             ]);
             return;
         }
 
         try {
-            $service = $this->buildService($refreshToken);
+            $service = $this->buildService();
             $startDate = "{$numOfDays}daysAgo";
             $endDate   = "yesterday";
 
@@ -87,37 +86,129 @@ class GA4Connector
         }
     }
 
-    private function buildService(string $refreshToken): AnalyticsData
+    public function hasCredentials(): bool
+    {
+        return $this->hasServiceAccountConfigured() || ! empty($this->credentials['refresh_token']);
+    }
+
+    public function hasServiceAccountConfigured(): bool
+    {
+        $sa = $this->credentials['service_account_json'] ?? config('google.service_account_json');
+        if (empty($sa)) {
+            return false;
+        }
+
+        if (is_array($sa)) {
+            return ! empty($sa['client_email']);
+        }
+
+        if (is_string($sa)) {
+            $trimmed = trim($sa);
+            if (str_starts_with($trimmed, '{')) {
+                $decoded = json_decode($trimmed, true);
+                return is_array($decoded) && ! empty($decoded['client_email']);
+            }
+
+            return file_exists($trimmed) || file_exists(base_path($trimmed));
+        }
+
+        return false;
+    }
+
+    public static function getServiceAccountEmail(?string $saConfig = null): ?string
+    {
+        $sa = $saConfig ?? config('google.service_account_json');
+        if (empty($sa)) {
+            return null;
+        }
+
+        if (is_array($sa)) {
+            return $sa['client_email'] ?? null;
+        }
+
+        if (is_string($sa)) {
+            $trimmed = trim($sa);
+            if (str_starts_with($trimmed, '{')) {
+                $decoded = json_decode($trimmed, true);
+                return $decoded['client_email'] ?? null;
+            }
+
+            $path = file_exists($trimmed) ? $trimmed : (file_exists(base_path($trimmed)) ? base_path($trimmed) : null);
+            if ($path) {
+                $content = @file_get_contents($path);
+                if ($content) {
+                    $decoded = json_decode($content, true);
+                    return $decoded['client_email'] ?? null;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public function buildService(?string $refreshToken = null): AnalyticsData
     {
         $client = new GoogleClient();
-        $client->setClientId(config('google.client_id'));
-        $client->setClientSecret(config('google.client_secret'));
-        $client->setAccessType('offline');
         $client->setScopes([AnalyticsData::ANALYTICS_READONLY]);
 
-        $client->setAccessToken([
-            'access_token'  => 'placeholder',
-            'refresh_token' => $refreshToken,
-            'expires_in'    => 0,
-            'created'       => 0,
-        ]);
+        // 1. Prioritize Service Account authentication
+        $saConfig = $this->credentials['service_account_json'] ?? config('google.service_account_json');
 
-        $newToken = $client->fetchAccessTokenWithRefreshToken($refreshToken);
+        if (! empty($saConfig)) {
+            $resolvedAuth = null;
 
-        if (isset($newToken['error'])) {
-            throw new \RuntimeException(
-                'Failed to refresh Google access token: ' . ($newToken['error_description'] ?? $newToken['error'])
-            );
+            if (is_array($saConfig)) {
+                $resolvedAuth = $saConfig;
+            } elseif (is_string($saConfig)) {
+                $trimmed = trim($saConfig);
+                if (str_starts_with($trimmed, '{')) {
+                    $resolvedAuth = json_decode($trimmed, true);
+                } elseif (file_exists($trimmed)) {
+                    $resolvedAuth = $trimmed;
+                } elseif (file_exists(base_path($trimmed))) {
+                    $resolvedAuth = base_path($trimmed);
+                }
+            }
+
+            if ($resolvedAuth !== null) {
+                $client->setAuthConfig($resolvedAuth);
+                return new AnalyticsData($client);
+            }
         }
 
-        $grantedScope = $newToken['scope'] ?? '';
-        if (! str_contains($grantedScope, 'analytics.readonly')) {
-            throw new \RuntimeException(
-                'SCOPE_MISSING: The authorized Google account does not have the Analytics scope.'
-            );
+        // 2. Fallback to OAuth 2.0 user refresh token
+        $token = $refreshToken ?? ($this->credentials['refresh_token'] ?? null);
+        if ($token) {
+            $client->setClientId(config('google.client_id'));
+            $client->setClientSecret(config('google.client_secret'));
+            $client->setAccessType('offline');
+
+            $client->setAccessToken([
+                'access_token'  => 'placeholder',
+                'refresh_token' => $token,
+                'expires_in'    => 0,
+                'created'       => 0,
+            ]);
+
+            $newToken = $client->fetchAccessTokenWithRefreshToken($token);
+
+            if (isset($newToken['error'])) {
+                throw new \RuntimeException(
+                    'Failed to refresh Google access token: ' . ($newToken['error_description'] ?? $newToken['error'])
+                );
+            }
+
+            $grantedScope = $newToken['scope'] ?? '';
+            if (! str_contains($grantedScope, 'analytics.readonly')) {
+                throw new \RuntimeException(
+                    'SCOPE_MISSING: The authorized Google account does not have the Analytics scope.'
+                );
+            }
+
+            return new AnalyticsData($client);
         }
 
-        return new AnalyticsData($client);
+        throw new \RuntimeException('No valid GA4 credentials found (neither Service Account nor OAuth refresh token).');
     }
 
     private function fetchReport(AnalyticsData $service, string $propertyId, string $startDate = '30daysAgo', string $endDate = 'yesterday'): array
@@ -316,13 +407,12 @@ class GA4Connector
 
     public function fetchForDateRange(Carbon $from, Carbon $to): int
     {
-        $propertyId   = $this->credentials['property_id'] ?? null;
-        $refreshToken = $this->credentials['refresh_token'] ?? null;
+        $propertyId = $this->credentials['property_id'] ?? null;
 
-        if (! $propertyId || ! $refreshToken) return 0;
+        if (! $propertyId || ! $this->hasCredentials()) return 0;
 
         try {
-            $service = $this->buildService($refreshToken);
+            $service = $this->buildService();
             $fromStr = $from->format('Y-m-d');
             $toStr   = $to->format('Y-m-d');
 
@@ -457,15 +547,14 @@ class GA4Connector
 
     public function testConnection(): array
     {
-        $propertyId   = $this->credentials['property_id'] ?? null;
-        $refreshToken = $this->credentials['refresh_token'] ?? null;
+        $propertyId = $this->credentials['property_id'] ?? null;
 
-        if (! $propertyId || ! $refreshToken) {
-            return ['success' => false, 'message' => 'Missing property ID or authorization.'];
+        if (! $propertyId || ! $this->hasCredentials()) {
+            return ['success' => false, 'message' => 'Missing property ID or authorization (Service Account or OAuth).'];
         }
 
         try {
-            $service = $this->buildService($refreshToken);
+            $service = $this->buildService();
 
             $request = new RunReportRequest();
 
