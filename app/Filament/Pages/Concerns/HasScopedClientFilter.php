@@ -74,4 +74,13 @@ trait HasScopedClientFilter
 
         return $clientId;
     }
+
+    /**
+     * Whether to show the customer account filter UI block.
+     * Hidden if the current user only has access to one customer (or none).
+     */
+    public function shouldShowClientFilter(): bool
+    {
+        return $this->scopedClientsQuery()->count() > 1;
+    }
 }

@@ -17,20 +17,22 @@
     </div>
 
     {{-- Top Customer Selector Bar --}}
-    <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 mb-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-            <div class="p-2.5 bg-primary-50 dark:bg-primary-950 text-primary-600 dark:text-primary-400 rounded-lg">
-                <x-heroicon-m-building-office-2 class="w-6 h-6" />
+    @if ($this->shouldShowClientFilter())
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 mb-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-primary-50 dark:bg-primary-950 text-primary-600 dark:text-primary-400 rounded-lg">
+                    <x-heroicon-m-building-office-2 class="w-6 h-6" />
+                </div>
+                <div>
+                    <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">Customer Account Filter</h2>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Select a customer account to inspect active tasks currently in delivery.</p>
+                </div>
             </div>
-            <div>
-                <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">Customer Account Filter</h2>
-                <p class="text-xs text-gray-500 dark:text-gray-400">Select a customer account to inspect active tasks currently in delivery.</p>
+            <div class="w-full sm:w-80">
+                {{ $this->form }}
             </div>
         </div>
-        <div class="w-full sm:w-80">
-            {{ $this->form }}
-        </div>
-    </div>
+    @endif
 
     {{-- Active Work Items Table --}}
     <div>
