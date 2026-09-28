@@ -26,7 +26,7 @@ class MeetingsCommitmentsWidget extends BaseWidget
     public function table(Table $table): Table
     {
         $user = Auth::user();
-        $clientId = $user?->client_id ?? session('current_client_id') ?? 1;
+        $clientId = session('current_client_id') ?? $user?->client_id ?? ($user ? ($user->getAssignedClientIds()[0] ?? 1) : 1);
 
         // 1. Get 1 upcoming meeting ID
         $upcomingId = ClientMeeting::where('client_id', $clientId)
@@ -112,9 +112,28 @@ class MeetingsCommitmentsWidget extends BaseWidget
 
                 Action::make('view_meeting_details')
                     ->label('View Details')
-                    ->icon('heroicon-m-arrow-top-right-on-square')
-                    ->url(fn (ClientMeeting $record): string => "/admin/client-meetings/{$record->id}?tab=-summary-tab")
-                    ->openUrlInNewTab(),
+                    ->icon('heroicon-m-information-circle')
+                    ->modalHeading(fn (ClientMeeting $record): string => $record->title)
+                    ->modalDescription(function (ClientMeeting $record): string {
+                        $start = $record->meeting_start_at ? $record->meeting_start_at->format('l, F j, Y \a\t g:i A T') : 'Scheduled Sync';
+                        $host = $record->owner?->name ?? 'Technopath Team';
+
+                        return "📅 {$start} • 👤 Host: {$host}";
+                    })
+                    ->modalWidth(MaxWidth::FourExtraLarge)
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('Close')
+                    ->form(function (ClientMeeting $record): array {
+                        $record->loadMissing(['owner', 'prep', 'followUp', 'actionItems']);
+
+                        return [
+                            Placeholder::make('meeting_modal_content')
+                                ->hiddenLabel()
+                                ->content(fn () => view('filament.widgets.customer.meeting-details-modal', [
+                                    'meeting' => $record,
+                                ])),
+                        ];
+                    }),
             ]);
     }
 }
