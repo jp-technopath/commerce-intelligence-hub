@@ -162,7 +162,8 @@ class WorkInProgress extends Page implements HasForms, HasTable
                 Tables\Columns\TextColumn::make('external_status')
                     ->label('Jira Status (Raw)')
                     ->badge()
-                    ->color('info'),
+                    ->color('info')
+                    ->visible(fn () => ! auth()->user()?->isClientOnly()),
 
                 Tables\Columns\TextColumn::make('target_due_date')
                     ->label('Target Date')
