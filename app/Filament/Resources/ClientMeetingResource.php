@@ -25,6 +25,40 @@ class ClientMeetingResource extends Resource
     protected static ?string $modelLabel = 'Customer Meeting';
     protected static ?string $pluralModelLabel = 'Customer Meetings';
 
+    public static function canViewAny(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $user->hasPermission('meetings.view_any') || $user->hasPermission('meetings.view');
+    }
+
+    public static function canCreate(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        if ($user->isClientOnly()) {
+            return false;
+        }
+
+        return $user->hasPermission('meetings.create');
+    }
+
     public static function form(Form $form): Form
     {
         return $form->schema([

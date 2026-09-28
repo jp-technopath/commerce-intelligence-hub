@@ -178,7 +178,18 @@ class User extends Authenticatable implements FilamentUser
      */
     public function isClientOnly(): bool
     {
-        if ($this->isSuperAdmin()) {
+        if ($this->is_admin) {
+            return false;
+        }
+
+        $hasSuperAdminRole = $this->activeRoleAssignments()
+            ->whereHas('role', function ($q) {
+                $q->where('name', Role::ROLE_SUPER_ADMIN)
+                  ->orWhere('name', 'Super Admin');
+            })
+            ->exists();
+
+        if ($hasSuperAdminRole) {
             return false;
         }
 

@@ -114,7 +114,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'description' => 'Customer-facing client portal user with access to customer-approved project status, findings, and recommendations.',
                 'permissions' => [
                     'dashboard.view', 'projects.view', 'findings.view', 'recommendations.view',
-                    'project_briefs.view', 'knowledge_base.view', 'meetings.view', 'financials.view_customer',
+                    'project_briefs.view', 'knowledge_base.view', 'financials.view_customer',
                 ],
             ],
             Role::ROLE_ENGINEER => [
