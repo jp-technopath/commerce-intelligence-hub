@@ -27,7 +27,8 @@ class HoursCapacityWidget extends BaseWidget
 
         // 2. Total Approved Pipeline Hours
         $approvedItemIds = PmWorkItem::where('client_id', $clientId)
-            ->where('normalized_delivery_status', '!=', 'completed')
+            ->whereNotIn('normalized_delivery_status', ['completed', 'backlog'])
+            ->whereRaw('UPPER(external_status) NOT LIKE ?', ['%BACKLOG%'])
             ->get()
             ->filter(fn ($item) => $item->estimate_approval_status === 'approved')
             ->pluck('id');
@@ -46,6 +47,8 @@ class HoursCapacityWidget extends BaseWidget
 
         // 4. Pending Approval Hours
         $pendingItemIds = PmWorkItem::where('client_id', $clientId)
+            ->whereNotIn('normalized_delivery_status', ['completed', 'backlog'])
+            ->whereRaw('UPPER(external_status) NOT LIKE ?', ['%BACKLOG%'])
             ->get()
             ->filter(fn ($item) => in_array($item->estimate_approval_status, ['pending_approval', 'reapproval_required'], true))
             ->pluck('id');

@@ -45,14 +45,34 @@ class ProcessJiraWebhookJob implements ShouldQueue
 
         $connection = $pmProject->connection;
 
-        // 1. Process issue created or updated
+        // 1. Process issue deleted
+        if (in_array($this->webhookEvent, ['jira:issue_deleted', 'issue_deleted'], true)) {
+            $externalId = (string) ($issueData['id'] ?? '');
+            $externalKey = (string) ($issueData['key'] ?? '');
+
+            PmWorkItem::query()
+                ->where('pm_project_id', $pmProject->id)
+                ->where(function ($q) use ($externalId, $externalKey) {
+                    if ($externalId) {
+                        $q->where('external_item_id', $externalId);
+                    }
+                    if ($externalKey) {
+                        $q->orWhere('external_item_key', $externalKey);
+                    }
+                })
+                ->delete();
+
+            return;
+        }
+
+        // 2. Process issue created or updated
         if (in_array($this->webhookEvent, ['jira:issue_created', 'jira:issue_updated', 'issue_created', 'issue_updated'], true) || empty($this->webhookEvent)) {
             $oldOriginalEstimate = $issueData['fields']['timetracking']['originalEstimateSeconds'] ?? 0;
 
             $workItem = $jiraProvider->normalizeAndSaveWorkItem($issueData, $pmProject, $connection);
 
             // Check if estimate reapproval is needed
-            if ($oldOriginalEstimate > 0) {
+            if ($oldOriginalEstimate > 0 && $workItem) {
                 $approvalService->checkEstimateReapprovalNeeded($workItem, (int) $oldOriginalEstimate);
             }
         }

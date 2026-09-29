@@ -97,6 +97,31 @@ class JiraProvider implements ProjectManagementProvider
     }
 
     /**
+     * Build authorized HTTP request for Jira API calls.
+     */
+    protected function buildRequest(?ConnectedAccount $account = null): \Illuminate\Http\Client\PendingRequest
+    {
+        try {
+            if ($account && $account->exists && $account->credentials_json) {
+                $accessToken = $account->refreshJiraTokenIfNeeded();
+                if ($accessToken) {
+                    return Http::timeout(30)->withToken($accessToken);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::info("JiraProvider: OAuth token decrypt/refresh unavailable in buildRequest: " . $e->getMessage());
+        }
+
+        $email = config('meeting_agent.jira.email');
+        $token = config('meeting_agent.jira.api_token');
+        if ($email && $token) {
+            return Http::timeout(30)->withBasicAuth($email, $token);
+        }
+
+        return Http::timeout(30);
+    }
+
+    /**
      * Get Cloud ID for Jira OAuth endpoint URLs.
      */
     protected function getCloudId(ConnectedAccount $account, PmConnection $connection): string
@@ -228,12 +253,15 @@ class JiraProvider implements ProjectManagementProvider
 
         if ($project->custom_filter_jql) {
             $jql = $project->custom_filter_jql;
+        } elseif ($days !== null && $days > 0) {
+            // Fetch all non-Done items regardless of age, and completed items updated within $days
+            $jql = "project = '{$project->external_project_key}' AND (statusCategory != 'Done' OR updated >= -{$days}d) ORDER BY updated DESC";
         } else {
-            $timeFilter = ($days !== null && $days > 0) ? " AND updated >= -{$days}d" : "";
-            $jql = "project = '{$project->external_project_key}' AND status != 'Backlog' AND status != 'backlog'{$timeFilter} ORDER BY updated DESC";
+            $jql = "project = '{$project->external_project_key}' ORDER BY updated DESC";
         }
 
         $syncedItems = [];
+        $syncedItemIds = [];
         $nextPageToken = null;
 
         do {
@@ -261,6 +289,7 @@ class JiraProvider implements ProjectManagementProvider
                 $item = $this->normalizeAndSaveWorkItem($issue, $project, $connection);
                 if ($item !== null) {
                     $syncedItems[] = $item;
+                    $syncedItemIds[] = (string) $item->external_item_id;
                 }
             }
 
@@ -269,9 +298,81 @@ class JiraProvider implements ProjectManagementProvider
 
         } while (! $isLast && $nextPageToken);
 
+        // Reconcile deleted tickets and status updates for active items not returned in sync
+        $this->reconcileMissingWorkItems($project, $connection, $account, $syncedItemIds);
+
         $connection->update(['last_synced_at' => now()]);
 
         return $syncedItems;
+    }
+
+    /**
+     * Reconcile active work items in Forge that were not returned by the current Jira sync query.
+     * If an issue is marked Done/Closed in Jira, update it in Forge.
+     * If an issue was permanently deleted in Jira (HTTP 404), remove it from Forge.
+     */
+    protected function reconcileMissingWorkItems(PmProject $project, PmConnection $connection, ?ConnectedAccount $account, array $syncedItemIds): void
+    {
+        $unreconciledItems = PmWorkItem::where('pm_project_id', $project->id)
+            ->where('normalized_delivery_status', '!=', 'completed')
+            ->whereNotIn('external_item_id', $syncedItemIds)
+            ->get();
+
+        if ($unreconciledItems->isEmpty()) {
+            return;
+        }
+
+        [$http, $searchUrl] = $this->buildRequestAndUrl($account, $connection, '/rest/api/3/search/jql');
+
+        foreach ($unreconciledItems->chunk(50) as $chunk) {
+            $keys = $chunk->pluck('external_item_key')->filter()->values()->all();
+            if (empty($keys)) {
+                continue;
+            }
+
+            $escapedKeys = array_map(fn ($k) => "'" . addslashes($k) . "'", $keys);
+            $checkJql = "key in (" . implode(',', $escapedKeys) . ")";
+
+            $checkResp = $http->post($searchUrl, [
+                'jql' => $checkJql,
+                'maxResults' => count($keys),
+                'fields' => ['status', 'updated'],
+            ]);
+
+            $existingKeys = [];
+            if ($checkResp->successful()) {
+                $foundIssues = $checkResp->json('issues') ?? [];
+                foreach ($foundIssues as $found) {
+                    $foundKey = $found['key'] ?? null;
+                    if ($foundKey) {
+                        $existingKeys[] = $foundKey;
+                        $jiraStatus = $found['fields']['status']['name'] ?? 'Done';
+                        $normalizedStatus = $this->mapJiraStatusToForge($jiraStatus, $connection);
+
+                        PmWorkItem::where('pm_project_id', $project->id)
+                            ->where('external_item_key', $foundKey)
+                            ->update([
+                                'external_status' => $jiraStatus,
+                                'normalized_delivery_status' => $normalizedStatus,
+                                'last_synced_at' => now(),
+                            ]);
+                    }
+                }
+            }
+
+            $missingKeys = array_diff($keys, $existingKeys);
+            foreach ($missingKeys as $missingKey) {
+                [$singleHttp, $singleUrl] = $this->buildRequestAndUrl($account, $connection, "/rest/api/3/issue/{$missingKey}");
+                $singleResp = $singleHttp->get($singleUrl);
+
+                if ($singleResp->status() === 404) {
+                    Log::info("JiraProvider: Deleting work item {$missingKey} (project {$project->external_project_key}) as it was deleted in Jira");
+                    PmWorkItem::where('pm_project_id', $project->id)
+                        ->where('external_item_key', $missingKey)
+                        ->delete();
+                }
+            }
+        }
     }
 
     public function syncWorklogs(PmWorkItem $workItem): array
@@ -586,12 +687,6 @@ class JiraProvider implements ProjectManagementProvider
         $fields = $issue['fields'] ?? [];
         $jiraStatus = $fields['status']['name'] ?? 'To Do';
 
-        if (strcasecmp($jiraStatus, 'backlog') === 0 || str_contains(strtolower($jiraStatus), 'backlog')) {
-            PmWorkItem::where('external_item_id', (string) $issue['id'])
-                ->delete();
-            return null;
-        }
-
         $normalizedStatus = $this->mapJiraStatusToForge($jiraStatus, $connection);
 
         $originalEstimateSeconds = (int) ($fields['timetracking']['originalEstimateSeconds'] ?? 0);
@@ -698,6 +793,7 @@ class JiraProvider implements ProjectManagementProvider
         $jiraStatusLower = strtolower(trim($jiraStatus));
 
         return match (true) {
+            str_contains($jiraStatusLower, 'backlog') => 'backlog',
             str_contains($jiraStatusLower, 'on hold') || str_contains($jiraStatusLower, 'hold') || str_contains($jiraStatusLower, 'paused') => 'on_hold',
             str_contains($jiraStatusLower, 'rework') || str_contains($jiraStatusLower, 'revision') || str_contains($jiraStatusLower, 're-work') => 'rework',
             str_contains($jiraStatusLower, 'done') || str_contains($jiraStatusLower, 'closed') || str_contains($jiraStatusLower, 'resolved') => 'completed',

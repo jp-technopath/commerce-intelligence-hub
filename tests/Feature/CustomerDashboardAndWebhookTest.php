@@ -18,7 +18,7 @@ use App\Models\PmWorklog;
 use App\Models\User;
 use App\Services\EstimateApprovalService;
 use App\Services\PM\Providers\JiraProvider;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
@@ -26,7 +26,7 @@ use Tests\TestCase;
 
 class CustomerDashboardAndWebhookTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected Client $client;
     protected User $syncUser;
