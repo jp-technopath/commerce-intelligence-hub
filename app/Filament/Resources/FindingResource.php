@@ -29,8 +29,32 @@ class FindingResource extends Resource
     protected static ?string $navigationGroup = 'Intelligence';
     protected static ?int    $navigationSort  = 1;
 
+    public static function canViewAny(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $user->hasPermission('findings.view_any') || $user->hasPermission('findings.view');
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canViewAny();
+    }
+
     public static function getNavigationBadge(): ?string
     {
+        if (! static::canViewAny()) {
+            return null;
+        }
+
         $count = static::getEloquentQuery()
             ->whereIn('status', [
                 FindingStatus::New->value,

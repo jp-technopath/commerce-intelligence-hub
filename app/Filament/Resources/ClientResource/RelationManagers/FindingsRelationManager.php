@@ -14,6 +14,21 @@ class FindingsRelationManager extends RelationManager
 {
     protected static string $relationship = 'findings';
 
+    public static function canViewForRecord(\Illuminate\Database\Eloquent\Model $ownerRecord, string $pageClass): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $user->hasPermission('findings.view_any') || $user->hasPermission('findings.view', $ownerRecord->id);
+    }
+
     public function form(Form $form): Form
     {
         return $form->schema([]);

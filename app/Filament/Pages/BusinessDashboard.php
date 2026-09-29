@@ -17,6 +17,7 @@ use App\Services\Metrics\KpiMetadataRegistry;
 use App\Services\Metrics\RepeatCustomerCalculator;
 use App\Services\Metrics\RevenueReconciler;
 use App\Services\Metrics\UserParticipationFunnelCalculator;
+use App\Services\VisibilityService;
 use Filament\Pages\Page;
 use Livewire\Attributes\Url;
 
@@ -147,12 +148,39 @@ class BusinessDashboard extends Page
         ];
     }
 
+    public function canViewFindings(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $user->hasPermission('findings.view_any')
+            || $user->hasPermission('findings.view', $this->selectedClientId);
+    }
+
     public function getFindingsSummary(): array
     {
+        if (! $this->canViewFindings()) {
+            return [];
+        }
+
         $client = $this->getSelectedClientProperty();
         if (! $client) return ['total' => 0, 'critical' => 0, 'open' => 0, 'resolved' => 0, 'recent' => collect()];
 
         $allFindings  = Finding::where('client_id', $client->id)->get();
+
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if ($user && ! $user->isSuperAdmin()) {
+            $allFindings = $allFindings->filter(fn ($f) => VisibilityService::canViewRecord($user, $f));
+        }
+
         $openFindings = $allFindings->reject(fn ($f) => in_array($f->status, [FindingStatus::Resolved, FindingStatus::Ignored]));
 
         return [
@@ -160,7 +188,7 @@ class BusinessDashboard extends Page
             'critical' => $openFindings->where('severity', FindingSeverity::Critical)->count(),
             'open'     => $openFindings->count(),
             'resolved' => $allFindings->where('status', FindingStatus::Resolved)->count(),
-            'recent'   => Finding::where('client_id', $client->id)->latest()->take(5)->get(),
+            'recent'   => $allFindings->sortByDesc('detected_at')->take(5),
         ];
     }
 

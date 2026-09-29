@@ -213,7 +213,8 @@ class ClientResource extends Resource
                     ->label('Open Findings')
                     ->counts('openFindings')
                     ->badge()
-                    ->color(fn ($state) => $state > 0 ? 'danger' : 'success'),
+                    ->color(fn ($state) => $state > 0 ? 'danger' : 'success')
+                    ->visible(fn () => auth()->user()?->isSuperAdmin() || auth()->user()?->hasPermission('findings.view_any') || auth()->user()?->hasPermission('findings.view')),
 
                 Tables\Columns\TextColumn::make('integrations_count')
                     ->label('Integrations')

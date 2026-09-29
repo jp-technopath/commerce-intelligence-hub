@@ -353,7 +353,8 @@
     @endif
 
     {{-- ── Revenue Chart + Findings ──────────────────────────────────────── --}}
-    <div class="bottom-panel">
+    @php $canViewFindings = $this->canViewFindings(); @endphp
+    <div class="bottom-panel" @if(! $canViewFindings) style="grid-template-columns: 1fr;" @endif>
         {{-- Revenue Trend Chart --}}
         <div style="border-radius: 1rem; background: white; border: 1px solid rgba(148,163,184,0.15); padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
              class="dark:!bg-slate-800 dark:!border-slate-700">
@@ -520,6 +521,7 @@
             @endif
         </div>
 
+        @if($canViewFindings)
         {{-- Findings Panel --}}
         <div style="border-radius: 1rem; background: white; border: 1px solid rgba(148,163,184,0.15); padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
              class="dark:!bg-slate-800 dark:!border-slate-700">
@@ -553,9 +555,9 @@
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                         @foreach($findings['recent'] as $f)
                             <a href="{{ route('filament.admin.resources.findings.view', $f) }}"
-                               style="display: block; padding: 0.75rem; border-radius: 0.625rem; border: 1px solid rgba(148,163,184,0.1); text-decoration: none; transition: all 0.2s;"
-                               class="hover:!border-indigo-300 dark:hover:!border-indigo-600 hover:!bg-gray-50 dark:hover:!bg-slate-700/50"
-                               onmouseover="this.style.transform='translateX(4px)'" onmouseout="this.style.transform='none'">
+                                style="display: block; padding: 0.75rem; border-radius: 0.625rem; border: 1px solid rgba(148,163,184,0.1); text-decoration: none; transition: all 0.2s;"
+                                class="hover:!border-indigo-300 dark:hover:!border-indigo-600 hover:!bg-gray-50 dark:hover:!bg-slate-700/50"
+                                onmouseover="this.style.transform='translateX(4px)'" onmouseout="this.style.transform='none'">
                                 <div style="display: flex; align-items: flex-start; gap: 0.625rem;">
                                     <span style="margin-top: 0.375rem; flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 9999px;
                                         background: {{ match($f->severity->value) {
@@ -594,6 +596,7 @@
                 @endif
             @endif
         </div>
+        @endif
     </div>
 
     {{-- Developer Diagnostics Telemetry Drawer --}}

@@ -11,8 +11,12 @@ class FindingPolicy
 {
     public function viewAny(User $user): bool
     {
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
         return $user->hasPermission('findings.view_any')
-            || count($user->getAssignedClientIds()) > 0;
+            || $user->hasPermission('findings.view');
     }
 
     public function view(User $user, Finding $finding): bool
@@ -25,6 +29,10 @@ class FindingPolicy
         $isClientAssigned = in_array('*', $assignedClientIds) || in_array($finding->client_id, $assignedClientIds);
 
         if (! $isClientAssigned) {
+            return false;
+        }
+
+        if (! ($user->hasPermission('findings.view', $finding->client_id) || $user->hasPermission('findings.view_any'))) {
             return false;
         }
 

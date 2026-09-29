@@ -13,6 +13,21 @@ class RecentFindingsWidget extends BaseWidget
     protected static ?int $sort = 2;
     protected int|string|array $columnSpan = 'full';
 
+    public static function canView(): bool
+    {
+        /** @var \App\Models\User|null $user */
+        $user = auth()->user();
+        if (! $user) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $user->hasPermission('findings.view_any') || $user->hasPermission('findings.view');
+    }
+
     public function table(Table $table): Table
     {
         return $table
