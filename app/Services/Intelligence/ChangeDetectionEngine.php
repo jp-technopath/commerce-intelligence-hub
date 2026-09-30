@@ -39,14 +39,21 @@ class ChangeDetectionEngine
         $newFindings = 0;
 
         try {
-            $enabledCommerce   = $client->getMonitoredMetricsForType('commerce');
-            $enabledBehavioral = $client->getMonitoredMetricsForType('behavioral');
+            if ($client->builtinDetectorsEnabled()) {
+                $enabledCommerce   = $client->getMonitoredMetricsForType('commerce');
+                $enabledBehavioral = $client->getMonitoredMetricsForType('behavioral');
 
-            $newFindings += $this->detectCommerceChanges($client, $enabledCommerce);
-            $newFindings += $this->detectBehavioralChanges($client, $enabledBehavioral);
-            $newFindings += $this->detectUnifiedConversionRate($client);
-            $newFindings += $this->detectFunnelChanges($client);
-            $newFindings += $this->detectCrossDatasetChanges($client);
+                $newFindings += $this->detectCommerceChanges($client, $enabledCommerce);
+                $newFindings += $this->detectBehavioralChanges($client, $enabledBehavioral);
+                $newFindings += $this->detectUnifiedConversionRate($client);
+                $newFindings += $this->detectFunnelChanges($client);
+                $newFindings += $this->detectCrossDatasetChanges($client);
+            } else {
+                Log::info('ChangeDetectionEngine: Built-in detectors disabled for client; running custom finding rules only', [
+                    'client_id' => $client->id,
+                ]);
+            }
+
             $newFindings += (new FindingRuleEvaluator())->evaluate($client);
         } catch (\Exception $e) {
             Log::error('ChangeDetectionEngine: error for client', [

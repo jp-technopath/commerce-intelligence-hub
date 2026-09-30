@@ -109,6 +109,13 @@ class ClientResource extends Resource
                                 ->rows(4)
                                 ->columnSpanFull(),
 
+                            // Built-in Detectors Toggle
+                            Forms\Components\Toggle::make('monitoring_config.disable_builtin_detectors')
+                                ->label('Disable Built-in Anomaly Detectors')
+                                ->helperText('When enabled, built-in single-metric trend detectors (revenue drops, clarity spikes, checkout drops) are turned off. Only custom finding rules from the Findings Rules tab will evaluate.')
+                                ->default(false)
+                                ->columnSpanFull(),
+
                             // Findings Comparison Period
                             Forms\Components\Select::make('findings_comparison_period')
                                 ->label('Findings Comparison Period')

@@ -100,6 +100,15 @@ class Client extends Model
     }
 
     /**
+     * Check whether built-in anomaly detectors (commerce, behavioral, funnels) are enabled.
+     * When false, only custom client finding rules evaluate.
+     */
+    public function builtinDetectorsEnabled(): bool
+    {
+        return ! ($this->monitoring_config['disable_builtin_detectors'] ?? false);
+    }
+
+    /**
      * Get the integration types this client actually has connected.
      * Returns array like ['ga4', 'adobe_commerce', 'clarity'].
      */

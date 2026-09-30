@@ -526,4 +526,78 @@ class ClientFindingRulesTest extends TestCase
         $this->assertNotNull($recommendation);
         $this->assertSame($finding->id, $recommendation->finding_id);
     }
+
+    /** 17. Disabling built-in detectors skips built-in checks and only evaluates custom rules */
+    public function test_disabling_builtin_detectors_only_runs_custom_finding_rules(): void
+    {
+        // Disable built-in detectors for client
+        $this->client->update([
+            'monitoring_config' => [
+                'disable_builtin_detectors' => true,
+            ],
+        ]);
+
+        $this->assertFalse($this->client->builtinDetectorsEnabled());
+
+        // Create data that would normally trigger a severe built-in revenue drop:
+        // Prior 7 days: $50,000/day
+        for ($i = 8; $i <= 14; $i++) {
+            CommerceMetric::create([
+                'client_id' => $this->client->id,
+                'source'    => 'ga4',
+                'date'      => now()->subDays($i)->toDateString(),
+                'revenue'   => 50000.00,
+            ]);
+        }
+        // Current 7 days: $1,000/day (a 98% drop)
+        for ($i = 1; $i <= 7; $i++) {
+            CommerceMetric::create([
+                'client_id' => $this->client->id,
+                'source'    => 'ga4',
+                'date'      => now()->subDays($i)->toDateString(),
+                'revenue'   => 1000.00,
+                'source_breakdown_json' => [
+                    'email' => ['revenue' => 500.00],
+                ],
+            ]);
+        }
+
+        // Also create Klaviyo metric that triggers the custom attribution variance rule ($10,000 vs $500)
+        $this->createKlaviyoMetric(10000.00, 3);
+
+        // Activate custom finding config
+        ClientFindingConfiguration::create([
+            'client_id'          => $this->client->id,
+            'version'            => 1,
+            'configuration_json' => (new FindingConfigurationService())->generateTemplate($this->client),
+            'rules_count'        => 1,
+            'status'             => ClientFindingConfiguration::STATUS_ACTIVE,
+            'activated_at'       => now(),
+        ]);
+
+        $engine = new ChangeDetectionEngine();
+        $engine->run($this->client);
+
+        // Assert that NO built-in revenue_decrease finding was generated
+        $this->assertDatabaseMissing('findings', [
+            'client_id'    => $this->client->id,
+            'finding_type' => 'revenue_decrease',
+        ]);
+
+        // Assert that the custom attribution rule STILL triggered
+        $this->assertDatabaseHas('findings', [
+            'client_id'    => $this->client->id,
+            'finding_type' => 'ga4_klaviyo_attribution_variance',
+        ]);
+    }
+
+    /** 18. Built-in detectors are enabled by default */
+    public function test_builtin_detectors_are_enabled_by_default(): void
+    {
+        $this->assertTrue($this->client->builtinDetectorsEnabled());
+
+        $this->client->update(['monitoring_config' => []]);
+        $this->assertTrue($this->client->fresh()->builtinDetectorsEnabled());
+    }
 }
+
