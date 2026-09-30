@@ -349,16 +349,19 @@ class NeedsAttentionWidget extends BaseWidget
 
     public static function syncCustomerActionItems(int $clientId): void
     {
-        // 1. Clean up non-customer-facing attention items if any exist
-        $nonCustomerFacingIds = \App\Models\MeetingActionItem::whereHas('meeting', fn ($q) => $q->where('client_id', $clientId))
-            ->where('is_customer_facing', false)
+        // 1. Clean up non-customer-facing or completed/resolved attention items if any exist
+        $cleanedUpIds = \App\Models\MeetingActionItem::whereHas('meeting', fn ($q) => $q->where('client_id', $clientId))
+            ->where(function ($q) {
+                $q->where('is_customer_facing', false)
+                  ->orWhereIn('status', ['completed', 'cancelled', 'resolved']);
+            })
             ->pluck('id')
             ->map(fn ($id) => (string) $id);
 
-        if ($nonCustomerFacingIds->isNotEmpty()) {
+        if ($cleanedUpIds->isNotEmpty()) {
             CustomerAttentionItem::where('client_id', $clientId)
                 ->where('source_type', 'meeting_action_item')
-                ->whereIn('source_id', $nonCustomerFacingIds)
+                ->whereIn('source_id', $cleanedUpIds)
                 ->delete();
         }
 
