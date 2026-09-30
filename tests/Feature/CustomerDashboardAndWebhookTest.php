@@ -184,4 +184,47 @@ class CustomerDashboardAndWebhookTest extends TestCase
             'is_resolved' => false,
         ]);
     }
+
+    public function test_pending_estimate_updates_when_jira_estimate_changes(): void
+    {
+        $workItem = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'pm_project_id'              => $this->project->id,
+            'external_item_id'           => '20004',
+            'external_item_key'          => 'ACME-104',
+            'summary'                    => 'Database Migration',
+            'normalized_delivery_status' => 'planned',
+            'estimated_seconds'          => 0,
+            'labels_json'                => ['approval-needed'],
+        ]);
+
+        /** @var EstimateApprovalService $service */
+        $service = app(EstimateApprovalService::class);
+
+        // 1. Initial check with 0 hours should not create an estimate version
+        $res = $service->checkInitialEstimateApprovalNeeded($workItem);
+        $this->assertNull($res);
+        $this->assertEquals(0, $workItem->estimateVersions()->count());
+
+        // 2. If an estimate version was submitted at 0 hours (e.g. legacy or manual)
+        $v1 = $service->submitEstimate($workItem, 0, 'Initial submission');
+        $this->assertEquals(0, $v1->estimated_hours);
+
+        // 3. Jira syncs and sets estimate to 15 hrs (54000s)
+        $workItem->update(['estimated_seconds' => 54000]);
+        $updatedVersion = $service->checkEstimateReapprovalNeeded($workItem, 54000);
+
+        $this->assertNotNull($updatedVersion);
+        $this->assertEquals(15.0, $updatedVersion->fresh()->estimated_hours);
+        $this->assertEquals(54000, $updatedVersion->fresh()->estimated_seconds);
+
+        // 4. Verify CustomerAttentionItem description was updated with the 15 hrs
+        $this->assertDatabaseHas('customer_attention_items', [
+            'client_id'   => $this->client->id,
+            'source_type' => 'jira',
+            'source_id'   => (string) $v1->id,
+            'description' => "Proposed estimate v1: 15 hrs for Database Migration",
+        ]);
+    }
 }

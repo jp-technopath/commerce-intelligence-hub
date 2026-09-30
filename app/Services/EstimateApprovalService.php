@@ -182,7 +182,7 @@ class EstimateApprovalService
     }
 
     /**
-     * Check if an external estimate modification requires reapproval.
+     * Check if an external estimate modification requires reapproval or updates a pending estimate.
      */
     public function checkEstimateReapprovalNeeded(PmWorkItem $workItem, int $newOriginalEstimateSeconds): ?ForgeEstimateVersion
     {
@@ -193,7 +193,30 @@ class EstimateApprovalService
 
         $latestEvent = $latestVersion->latestEvent;
 
-        // If the latest version was approved, but the estimate in Jira was changed:
+        // Case A: The latest version is pending customer approval ('submitted'), but Jira's estimate was updated
+        if ((! $latestEvent || in_array($latestEvent->event_type, ['submitted', 'reapproval_required'], true))
+            && $latestVersion->estimated_seconds !== $newOriginalEstimateSeconds
+            && $newOriginalEstimateSeconds > 0
+        ) {
+            $latestVersion->update([
+                'estimated_seconds'                => $newOriginalEstimateSeconds,
+                'external_estimate_at_submission' => $newOriginalEstimateSeconds,
+            ]);
+
+            // Update associated customer attention items so the title/description reflect the updated estimate
+            $newHours = round($newOriginalEstimateSeconds / 3600, 1);
+            CustomerAttentionItem::where('client_id', $workItem->client_id)
+                ->where('source_type', 'jira')
+                ->where('source_id', (string) $latestVersion->id)
+                ->where('is_resolved', false)
+                ->update([
+                    'description' => "Proposed estimate v{$latestVersion->version}: {$newHours} hrs for {$workItem->summary}",
+                ]);
+
+            return $latestVersion;
+        }
+
+        // Case B: If the latest version was approved, but the estimate in Jira was changed:
         if ($latestEvent && $latestEvent->event_type === 'approved' && $latestVersion->estimated_seconds !== $newOriginalEstimateSeconds) {
             return DB::transaction(function () use ($workItem, $latestVersion, $newOriginalEstimateSeconds) {
                 // Record reapproval_required event on previous version
@@ -250,10 +273,15 @@ class EstimateApprovalService
             return null;
         }
 
+        // Only create initial estimate version if an estimate has actually been entered in Jira (> 0 hrs)
         if ($workItem->estimateVersions()->count() === 0) {
+            if ($workItem->estimated_seconds <= 0) {
+                return null;
+            }
+
             return $this->submitEstimate(
                 $workItem,
-                $workItem->estimated_seconds > 0 ? $workItem->estimated_seconds : 0,
+                $workItem->estimated_seconds,
                 'Estimate approval required (Label: approval-needed).'
             );
         }

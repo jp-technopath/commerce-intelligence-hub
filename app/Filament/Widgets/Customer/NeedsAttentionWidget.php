@@ -390,6 +390,7 @@ class NeedsAttentionWidget extends BaseWidget
         $clientWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)->get();
         foreach ($clientWorkItems as $wi) {
             $approvalService->checkInitialEstimateApprovalNeeded($wi);
+            $approvalService->checkEstimateReapprovalNeeded($wi, $wi->estimated_seconds);
         }
 
         // Clean up unapproved estimate approval items for work items that DO NOT have approval-needed label

@@ -71,9 +71,10 @@ class ProcessJiraWebhookJob implements ShouldQueue
 
             $workItem = $jiraProvider->normalizeAndSaveWorkItem($issueData, $pmProject, $connection);
 
-            // Check if estimate reapproval is needed
-            if ($oldOriginalEstimate > 0 && $workItem) {
-                $approvalService->checkEstimateReapprovalNeeded($workItem, (int) $oldOriginalEstimate);
+            // Check if estimate approval or reapproval is needed
+            if ($workItem) {
+                $approvalService->checkInitialEstimateApprovalNeeded($workItem);
+                $approvalService->checkEstimateReapprovalNeeded($workItem, $workItem->estimated_seconds);
             }
         }
 
