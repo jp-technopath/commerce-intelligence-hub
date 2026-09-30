@@ -3,8 +3,8 @@
 namespace App\Filament\Resources\FindingResource\Pages;
 
 use App\Filament\Resources\FindingResource;
+use App\Jobs\Intelligence\GenerateAIAnalysis;
 use App\Models\Client;
-use App\Services\Intelligence\AIAnalyst;
 use App\Services\Intelligence\ChangeDetectionEngine;
 use Filament\Actions;
 use Filament\Forms;
@@ -70,21 +70,28 @@ class ListFindings extends ListRecords
 
                     $newFindings = $engine->run($client);
 
-                    // Optionally run AI on new findings
-                    if ($data['include_ai'] && $newFindings > 0) {
-                        $analyst = new AIAnalyst();
+                    // Optionally dispatch AI analysis for findings in the background
+                    $pendingFindings = $client->findings()
+                        ->whereDoesntHave('recommendations')
+                        ->where('detected_at', '>=', now()->subHours(1))
+                        ->get();
 
-                        $client->findings()
-                            ->whereDoesntHave('recommendations')
-                            ->where('detected_at', '>=', now()->subHours(1))
-                            ->get()
-                            ->each(fn ($finding) => $analyst->analyse($finding, $data['model'] ?? null));
+                    $aiDispatched = false;
+                    if ($data['include_ai'] && $pendingFindings->isNotEmpty()) {
+                        $pendingFindings->each(fn ($finding) => GenerateAIAnalysis::dispatch($finding, $data['model'] ?? null));
+                        $aiDispatched = true;
                     }
 
                     if ($newFindings > 0) {
                         Notification::make()
                             ->title("Analysis Complete")
-                            ->body("{$newFindings} new finding(s) detected for {$client->name}." . ($data['include_ai'] ? ' AI analysis generated.' : ''))
+                            ->body("{$newFindings} new finding(s) detected for {$client->name}." . ($aiDispatched ? ' AI analysis dispatched in the background.' : ''))
+                            ->success()
+                            ->send();
+                    } elseif ($aiDispatched) {
+                        Notification::make()
+                            ->title("AI Analysis Queued")
+                            ->body("Dispatched AI analysis in the background for {$pendingFindings->count()} finding(s) on {$client->name}.")
                             ->success()
                             ->send();
                     } else {

@@ -599,5 +599,37 @@ class ClientFindingRulesTest extends TestCase
         $this->client->update(['monitoring_config' => []]);
         $this->assertTrue($this->client->fresh()->builtinDetectorsEnabled());
     }
+
+    /** 19. Run analysis queues GenerateAIAnalysis job to background */
+    public function test_run_analysis_queues_generate_ai_analysis_job(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $this->createKlaviyoMetric(100000.00, 2);
+        $this->createGa4Metric(100000.00, 50000.00, 2);
+
+        ClientFindingConfiguration::create([
+            'client_id'          => $this->client->id,
+            'version'            => 1,
+            'configuration_json' => (new FindingConfigurationService())->generateTemplate($this->client),
+            'rules_count'        => 1,
+            'status'             => ClientFindingConfiguration::STATUS_ACTIVE,
+            'activated_at'       => now(),
+        ]);
+
+        $engine = new ChangeDetectionEngine();
+        $engine->run($this->client);
+
+        $pendingFindings = $this->client->findings()
+            ->whereDoesntHave('recommendations')
+            ->where('detected_at', '>=', now()->subHours(1))
+            ->get();
+
+        $this->assertTrue($pendingFindings->isNotEmpty());
+
+        $pendingFindings->each(fn ($finding) => \App\Jobs\Intelligence\GenerateAIAnalysis::dispatch($finding, 'openai/gpt-4o'));
+
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Intelligence\GenerateAIAnalysis::class);
+    }
 }
 
