@@ -85,7 +85,7 @@ class MeetingsCommitmentsWidgetTest extends TestCase
             ->assertSee('Review proposed Q4 roadmap');
     }
 
-    public function test_client_user_sees_properly_formatted_meeting_agenda_and_breakdown(): void
+    public function test_client_user_sees_prep_and_followup_sourced_from_sent_emails(): void
     {
         $client = Client::create([
             'name'          => 'Cambro Test',
@@ -116,11 +116,24 @@ class MeetingsCommitmentsWidgetTest extends TestCase
         ]);
 
         \App\Models\MeetingPrep::create([
-            'client_meeting_id'  => $meeting->id,
-            'recommended_agenda' => "1. Welcome and review of completed work – email fix (5 min)\n2. Staging review and sign-off – PDP FAQ (10 min)",
-            'internal_summary'   => "PROJECT HEALTH: Overall GREEN/AMBER. Snapshot shows 10 tickets: 4 Done, 6 In Progress.\n\nCOMPLETED SINCE LAST MEETING (4):\n- CMBR2-2224 (Highest) Emails being sent to spam – Done 30 Sep (Nour).\n\nREADY FOR REVIEW / QA ON STAGING (2):\n- CMBR2-2188 (High) PDP FAQ/Specification vertical layout (Donia).\nAction: request client sign-off on staging.",
-            'ai_provider'        => 'openai',
-            'ai_model'           => 'gpt-4o',
+            'client_meeting_id'              => $meeting->id,
+            'recommended_agenda'             => "1. Welcome and review of completed work – email fix (5 min)\n2. Staging review and sign-off – PDP FAQ (10 min)",
+            'internal_summary'               => "PROJECT HEALTH: Overall GREEN/AMBER. Snapshot shows 10 tickets.\n\nCOMPLETED:\n- CMBR2-2224 (Internal only; exclude from customer comms).",
+            'edited_status_email_subject'    => 'Status Update Before Our Meeting – Cambro',
+            'edited_status_email_body'       => '<p>Hi Cambro team,</p><p>Ahead of our meeting, here is our reviewed status update.</p>',
+            'email_sent_at'                  => now()->subHour(),
+            'email_to'                       => 'client_prep@cambro.com',
+            'ai_provider'                    => 'openai',
+            'ai_model'                       => 'gpt-4o',
+        ]);
+
+        \App\Models\MeetingFollowUp::create([
+            'client_meeting_id'                => $meeting->id,
+            'edited_followup_email_subject'    => 'Meeting Summary and Next Steps – Cambro',
+            'edited_followup_email_body'       => '<p>Thank you for meeting today. Here are the agreed next steps from our sync.</p>',
+            'decisions'                        => ['Approved release for staging fixes', 'Next sync scheduled for next week'],
+            'email_sent_at'                    => now()->subMinutes(30),
+            'email_to'                         => 'client_prep@cambro.com',
         ]);
 
         Livewire::actingAs($clientUser)
@@ -129,14 +142,95 @@ class MeetingsCommitmentsWidgetTest extends TestCase
             ->mountTableAction('view_meeting_details', $meeting->id)
             ->assertSee('Meeting Agenda & Schedule')
             ->assertSee('Welcome and review of completed work')
-            ->assertSee('email fix')
             ->assertSee('5 min')
-            ->assertSee('Project Health Assessment')
-            ->assertSee('GREEN/AMBER')
-            ->assertSee('Ticket Breakdown')
-            ->assertSee('CMBR2-2224')
-            ->assertSee('Emails being sent to spam')
-            ->assertSee('CMBR2-2188');
+            ->assertSee('Status Update Before Our Meeting – Cambro')
+            ->assertSee('Ahead of our meeting, here is our reviewed status update.')
+            ->assertSee('Meeting Summary and Next Steps – Cambro')
+            ->assertSee('Here are the agreed next steps from our sync.')
+            ->assertSee('Approved release for staging fixes')
+            ->assertDontSee('CMBR2-2224')
+            ->assertDontSee('PROJECT HEALTH');
+    }
+
+    public function test_client_user_sees_in_preparation_placeholder_when_email_not_sent(): void
+    {
+        $client = Client::create([
+            'name'          => 'Cambro Pending',
+            'industry'      => 'Manufacturing',
+            'platform_type' => 'Shopify',
+            'status'        => 'active',
+        ]);
+
+        $clientUser = User::factory()->create([
+            'email'    => 'client_pending@cambro.com',
+            'is_admin' => false,
+        ]);
+
+        $clientRole = Role::where('name', Role::ROLE_CLIENT_USER)->first();
+
+        UserRoleAssignment::create([
+            'user_id'   => $clientUser->id,
+            'role_id'   => $clientRole->id,
+            'client_id' => $client->id,
+            'is_active' => true,
+        ]);
+
+        $meeting = ClientMeeting::create([
+            'client_id'         => $client->id,
+            'title'             => 'Cambro Pending Sync',
+            'meeting_start_at'  => now()->addDays(1),
+            'status'            => MeetingStatus::Detected,
+        ]);
+
+        \App\Models\MeetingPrep::create([
+            'client_meeting_id'           => $meeting->id,
+            'generated_status_email_body' => '<p>Internal unreviewed draft body</p>',
+            'email_sent_at'               => null,
+        ]);
+
+        Livewire::actingAs($clientUser)
+            ->test(MeetingsCommitmentsWidget::class)
+            ->assertSuccessful()
+            ->mountTableAction('view_meeting_details', $meeting->id)
+            ->assertSee('Pre-Meeting Status Update In Preparation')
+            ->assertDontSee('Internal unreviewed draft body');
+    }
+
+    public function test_admin_user_can_preview_draft_prep_before_sending(): void
+    {
+        $client = Client::create([
+            'name'          => 'Cambro Admin Test',
+            'industry'      => 'Manufacturing',
+            'platform_type' => 'Shopify',
+            'status'        => 'active',
+        ]);
+
+        $adminUser = User::factory()->create([
+            'email'    => 'admin@technopath.co',
+            'is_admin' => true,
+        ]);
+
+        $meeting = ClientMeeting::create([
+            'client_id'         => $client->id,
+            'title'             => 'Admin Draft Test Meeting',
+            'meeting_start_at'  => now()->addDays(1),
+            'status'            => MeetingStatus::Detected,
+        ]);
+
+        \App\Models\MeetingPrep::create([
+            'client_meeting_id'           => $meeting->id,
+            'generated_status_email_body' => '<p>AI drafted email for internal review</p>',
+            'email_sent_at'               => null,
+        ]);
+
+        session(['current_client_id' => $client->id]);
+
+        Livewire::actingAs($adminUser)
+            ->test(MeetingsCommitmentsWidget::class)
+            ->assertSuccessful()
+            ->mountTableAction('view_meeting_details', $meeting->id)
+            ->assertSee('In Draft / Not Sent to Client Yet')
+            ->assertSee('AI drafted email for internal review');
     }
 }
 

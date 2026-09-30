@@ -109,4 +109,21 @@ SUMMARY;
         $this->assertCount(2, $parsed2);
         $this->assertEquals('Deploy cookie banner immediately', $parsed2[0]);
     }
+
+    public function test_format_email_body_cleans_html_and_styles(): void
+    {
+        $dirtyHtml = '<html><head><title>Test</title></head><body><p style="--tw-border-spacing-y: 0; color: #fff;">Hello <strong>World</strong></p></body></html>';
+        $cleaned = MeetingContentPresenter::formatEmailBody($dirtyHtml);
+
+        $this->assertStringNotContainsString('<html>', $cleaned);
+        $this->assertStringNotContainsString('<head>', $cleaned);
+        $this->assertStringNotContainsString('--tw-border-spacing-y', $cleaned);
+        $this->assertStringContainsString('Hello <strong>World</strong>', $cleaned);
+
+        $plain = "Line 1\nLine 2";
+        $formattedPlain = MeetingContentPresenter::formatEmailBody($plain);
+        $this->assertEquals("Line 1<br />\nLine 2", $formattedPlain);
+
+        $this->assertEquals('', MeetingContentPresenter::formatEmailBody(null));
+    }
 }

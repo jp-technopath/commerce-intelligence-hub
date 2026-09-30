@@ -431,4 +431,33 @@ class MeetingContentPresenter
 
         return $items;
     }
+
+    /**
+     * Clean and format email HTML for display on the board/dashboard.
+     */
+    public static function formatEmailBody(?string $rawHtml): string
+    {
+        if (empty($rawHtml)) {
+            return '';
+        }
+
+        $html = $rawHtml;
+
+        // Strip HTML / HEAD / BODY / DOCTYPE wrappers
+        $html = preg_replace('/<!DOCTYPE[^>]*>/i', '', $html);
+        $html = preg_replace('/<\/?html[^>]*>/i', '', $html);
+        $html = preg_replace('/<\/?body[^>]*>/i', '', $html);
+        $html = preg_replace('/<head[^>]*>.*?<\/head>/is', '', $html);
+
+        // If body has no HTML tags at all, convert newlines to breaks
+        if (strip_tags($html) === $html) {
+            return nl2br(e(trim($html)));
+        }
+
+        // Clean up redundant Tailwind CSS variables from inline styles pasted into rich text
+        $html = preg_replace('/--tw-[^;]+;\s*/', '', $html);
+        $html = preg_replace('/\s*style="\s*"/', '', $html);
+
+        return trim($html);
+    }
 }
