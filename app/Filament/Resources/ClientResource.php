@@ -178,6 +178,28 @@ class ClientResource extends Resource
                                 ->cloneable(),
                         ]),
 
+                    // ── Tab 3: Findings Rules ─────────────────────────
+                    Forms\Components\Tabs\Tab::make('Findings Rules')
+                        ->icon('heroicon-o-adjustments-horizontal')
+                        ->schema([
+                            Forms\Components\Placeholder::make('findings_rules_preview')
+                                ->label('')
+                                ->content(function (?Client $record) {
+                                    if (! $record) {
+                                        return new \Illuminate\Support\HtmlString('<div class="p-4 text-sm text-gray-500">Save client first to manage findings rules.</div>');
+                                    }
+                                    $active = \App\Models\ClientFindingConfiguration::where('client_id', $record->id)->active()->first();
+                                    $previewer = new \App\Services\Intelligence\FindingRulePreviewer();
+                                    $preview = $active ? $previewer->generatePreview($active->configuration_json) : [];
+
+                                    return view('filament.components.finding-rules-preview', [
+                                        'preview' => $preview,
+                                        'config'  => $active,
+                                    ]);
+                                })
+                                ->columnSpanFull(),
+                        ]),
+
                 ])
                 ->columnSpanFull(),
         ]);

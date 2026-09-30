@@ -47,6 +47,7 @@ class ChangeDetectionEngine
             $newFindings += $this->detectUnifiedConversionRate($client);
             $newFindings += $this->detectFunnelChanges($client);
             $newFindings += $this->detectCrossDatasetChanges($client);
+            $newFindings += (new FindingRuleEvaluator())->evaluate($client);
         } catch (\Exception $e) {
             Log::error('ChangeDetectionEngine: error for client', [
                 'client_id' => $client->id,

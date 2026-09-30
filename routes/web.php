@@ -63,3 +63,14 @@ Route::get('/server-ip', function () {
     }
 });
 
+// Client Findings Configuration Activation / Rollback
+Route::middleware(['web', 'auth'])->group(function () {
+    Route::post('/clients/{client}/findings-config/{config}/activate', function (\App\Models\Client $client, \App\Models\ClientFindingConfiguration $config) {
+        if ($config->client_id !== $client->id) {
+            abort(403);
+        }
+        $config->activate();
+        return back();
+    })->name('clients.findings-config.activate');
+});
+

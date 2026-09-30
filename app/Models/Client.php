@@ -180,4 +180,15 @@ class Client extends Model
     {
         return $this->hasMany(ClientMeeting::class);
     }
+
+    public function findingConfigurations(): HasMany
+    {
+        return $this->hasMany(ClientFindingConfiguration::class);
+    }
+
+    public function activeFindingConfiguration(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(ClientFindingConfiguration::class)->where('status', ClientFindingConfiguration::STATUS_ACTIVE);
+    }
 }
+
