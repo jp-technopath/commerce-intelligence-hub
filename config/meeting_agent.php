@@ -25,7 +25,7 @@ return [
     'ai' => [
         'provider'         => env('AI_PROVIDER', 'openrouter'),
         'openrouter_key'   => env('OPENROUTER_API_KEY'),
-        'openrouter_model' => env('OPENROUTER_MODEL', 'openai/gpt-4o'),
+        'openrouter_model' => env('OPENROUTER_MODEL', 'openai/gpt-5.6-luna-pro'),
         'openrouter_models' => array_filter(explode(',', env('OPENROUTER_AVAILABLE_MODELS', '~anthropic/claude-fable-latest,anthropic/claude-opus-4.8,openai/gpt-5.6-luna-pro,~google/gemini-pro-latest'))),
         'openai_key'       => env('OPENAI_API_KEY'),
         'openai_model'     => env('OPENAI_MODEL', 'gpt-4o'),

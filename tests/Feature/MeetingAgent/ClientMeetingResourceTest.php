@@ -128,4 +128,70 @@ class ClientMeetingResourceTest extends TestCase
         $this->assertTrue(ClientMeetingResource::canViewAny());
         $this->assertTrue(ClientMeetingResource::canCreate());
     }
+
+    public function test_generate_prep_action_defaults_to_gpt_5_6_luna_pro_and_disables_other_models(): void
+    {
+        config([
+            'meeting_agent.ai.provider' => 'openrouter',
+            'meeting_agent.ai.openrouter_models' => [
+                '~anthropic/claude-fable-latest',
+                'anthropic/claude-opus-4.8',
+                'openai/gpt-5.6-luna-pro',
+                '~google/gemini-pro-latest',
+            ],
+        ]);
+
+        $action = \App\Filament\Resources\ClientMeetingResource\Actions\GeneratePrepAction::make();
+        $ref = new \ReflectionProperty($action, 'form');
+        $ref->setAccessible(true);
+        $fields = value($ref->getValue($action));
+
+        $modelField = collect($fields)->first(fn ($field) => $field->getName() === 'model');
+        $this->assertNotNull($modelField);
+
+        $this->assertEquals('openai/gpt-5.6-luna-pro', $modelField->getDefaultState());
+
+        $options = $modelField->getOptions();
+        $this->assertArrayHasKey('openai/gpt-5.6-luna-pro', $options);
+        $this->assertFalse($modelField->isOptionDisabled('openai/gpt-5.6-luna-pro', $options['openai/gpt-5.6-luna-pro']));
+
+        foreach ($options as $key => $label) {
+            if ($key !== 'openai/gpt-5.6-luna-pro') {
+                $this->assertTrue($modelField->isOptionDisabled($key, $label), "Option {$key} should be disabled.");
+            }
+        }
+    }
+
+    public function test_generate_follow_up_action_defaults_to_gpt_5_6_luna_pro_and_disables_other_models(): void
+    {
+        config([
+            'meeting_agent.ai.provider' => 'openrouter',
+            'meeting_agent.ai.openrouter_models' => [
+                '~anthropic/claude-fable-latest',
+                'anthropic/claude-opus-4.8',
+                'openai/gpt-5.6-luna-pro',
+                '~google/gemini-pro-latest',
+            ],
+        ]);
+
+        $action = \App\Filament\Resources\ClientMeetingResource\Actions\GenerateFollowUpAction::make();
+        $ref = new \ReflectionProperty($action, 'form');
+        $ref->setAccessible(true);
+        $fields = value($ref->getValue($action));
+
+        $modelField = collect($fields)->first(fn ($field) => $field->getName() === 'model');
+        $this->assertNotNull($modelField);
+
+        $this->assertEquals('openai/gpt-5.6-luna-pro', $modelField->getDefaultState());
+
+        $options = $modelField->getOptions();
+        $this->assertArrayHasKey('openai/gpt-5.6-luna-pro', $options);
+        $this->assertFalse($modelField->isOptionDisabled('openai/gpt-5.6-luna-pro', $options['openai/gpt-5.6-luna-pro']));
+
+        foreach ($options as $key => $label) {
+            if ($key !== 'openai/gpt-5.6-luna-pro') {
+                $this->assertTrue($modelField->isOptionDisabled($key, $label), "Option {$key} should be disabled.");
+            }
+        }
+    }
 }

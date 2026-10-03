@@ -48,23 +48,25 @@ class GeneratePrepAction extends Action
                         $options = [];
                         foreach ($models as $model) {
                             $cleanModel = ltrim($model, '~');
-                            $label = $model;
-                            if (str_starts_with($model, '~')) {
-                                $label = $cleanModel . ' (Recommended)';
-                            }
-                            $options[$model] = $label;
+                            $options[$cleanModel] = $cleanModel;
+                        }
+                        if (! isset($options['openai/gpt-5.6-luna-pro'])) {
+                            $options['openai/gpt-5.6-luna-pro'] = 'openai/gpt-5.6-luna-pro';
                         }
                         return $options;
                     })
                     ->default(function () {
                         $models = config('meeting_agent.ai.openrouter_models', []);
                         foreach ($models as $model) {
-                            if (str_starts_with($model, '~')) {
-                                return $model;
+                            $clean = ltrim($model, '~');
+                            if (str_contains($clean, 'gpt-5.6-luna-pro')) {
+                                return $clean;
                             }
                         }
-                        return config('meeting_agent.ai.openrouter_model', 'openai/gpt-4o');
+                        return 'openai/gpt-5.6-luna-pro';
                     })
+                    ->disableOptionWhen(fn (string $value): bool => ! str_contains($value, 'gpt-5.6-luna-pro'))
+                    ->in(fn (Forms\Components\Select $component): array => array_keys($component->getEnabledOptions()))
                     ->visible(fn () => config('meeting_agent.ai.provider') === 'openrouter')
                     ->required(fn () => config('meeting_agent.ai.provider') === 'openrouter'),
             ])
