@@ -40,6 +40,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'users' => ['view', 'view_any', 'create', 'update', 'delete', 'assign_roles'],
             'roles' => ['view', 'view_any', 'create', 'update', 'delete'],
             'platform_settings' => ['view', 'manage'],
+            'system_prompts' => ['view', 'view_any', 'update', 'publish', 'rollback'],
         ];
 
         $createdPermissions = [];
@@ -92,6 +93,7 @@ class RolesAndPermissionsSeeder extends Seeder
                     'agent_runs.view_any', 'agent_runs.approve', 'testing.view', 'testing.approve',
                     'deployments.view', 'deployments.view_any', 'meetings.view', 'meetings.view_any',
                     'meetings.create', 'meetings.update', 'financials.view_customer',
+                    'system_prompts.view', 'system_prompts.view_any', 'system_prompts.update', 'system_prompts.publish', 'system_prompts.rollback',
                 ],
             ],
             Role::ROLE_ANALYST => [

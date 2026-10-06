@@ -3,6 +3,8 @@
 namespace App\Services\MeetingAgent;
 
 use App\Models\ClientMeeting;
+use App\Services\SystemPrompt\PromptManager;
+use App\Services\SystemPrompt\ResponseContractValidator;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -14,8 +16,19 @@ use Illuminate\Support\Facades\Log;
  */
 class AiFollowUpService
 {
-    public function __construct(private readonly AiProviderService $ai)
-    {
+    private readonly PromptManager $promptManager;
+    private readonly MeetingContextResolver $contextResolver;
+    private readonly ResponseContractValidator $validator;
+
+    public function __construct(
+        private readonly AiProviderService $ai,
+        ?PromptManager $promptManager = null,
+        ?MeetingContextResolver $contextResolver = null,
+        ?ResponseContractValidator $validator = null,
+    ) {
+        $this->promptManager = $promptManager ?? app(PromptManager::class);
+        $this->contextResolver = $contextResolver ?? app(MeetingContextResolver::class);
+        $this->validator = $validator ?? app(ResponseContractValidator::class);
     }
 
     /**
@@ -34,144 +47,69 @@ class AiFollowUpService
      */
     public function generateFollowUp(ClientMeeting $meeting, string $notes, ?string $transcript = null): array
     {
-        $client = $meeting->client;
-        $clientName = $client?->name ?? 'Unknown Client';
+        $variables = $this->contextResolver->buildMeetingFollowUpVariables($meeting, $notes, $transcript);
+        $resolved = $this->promptManager->resolve('meeting_followup', $variables);
 
-        $meetingTitle = $meeting->title;
-        $meetingDate = $meeting->meeting_start_at?->format('l, F j, Y') ?? 'TBD';
-        $attendees = $this->formatAttendeeList($meeting);
+        $result = $this->ai->completeJson($resolved['system_prompt'], $resolved['user_prompt']);
 
-        $systemPrompt = $this->buildFollowUpSystemPrompt();
-        $userPrompt = $this->buildFollowUpUserPrompt(
-            $clientName,
-            $meetingTitle,
-            $meetingDate,
-            $attendees,
-            $notes,
-            $transcript
-        );
+        $validation = $this->validator->validate('meeting_followup', $result);
+        if (! $validation['valid']) {
+            Log::warning('AiFollowUpService: AI response deviated from schema contract', [
+                'meeting_id' => $meeting->id,
+                'errors'     => $validation['errors'],
+            ]);
+        }
 
-        $result = $this->ai->completeJson($systemPrompt, $userPrompt);
+        $sanitizedActionItems = $this->validator->sanitizeActionItems($result['suggested_action_items'] ?? []);
+        $clientName = $variables['client_name'];
 
         return [
-            'summary'                           => $result['summary'] ?? '',
-            'generated_followup_email_subject'   => $result['followup_email_subject'] ?? "Meeting Summary and Next Steps – {$clientName}",
-            'generated_followup_email_body'      => $result['followup_email_body'] ?? '',
-            'decisions'                          => $result['decisions'] ?? '',
-            'open_questions'                     => $result['open_questions'] ?? '',
-            'suggested_action_items'             => $result['suggested_action_items'] ?? [],
-            'ai_provider'                        => $this->ai->getProviderName(),
-            'ai_model'                           => $this->ai->getModelName(),
+            'summary'                         => $result['summary'] ?? '',
+            'generated_followup_email_subject' => $result['followup_email_subject'] ?? "Meeting Summary and Next Steps – {$clientName}",
+            'generated_followup_email_body'    => $result['followup_email_body'] ?? '',
+            'decisions'                        => $result['decisions'] ?? '',
+            'open_questions'                   => $result['open_questions'] ?? '',
+            'suggested_action_items'           => $sanitizedActionItems,
+            'ai_provider'                      => $this->ai->getProviderName(),
+            'ai_model'                         => $this->ai->getModelName(),
         ];
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Prompt construction
+    // Prompt construction fallbacks
     // ─────────────────────────────────────────────────────────────────────
 
-    private function buildFollowUpSystemPrompt(): string
+    public function buildFollowUpSystemPrompt(): string
     {
-        return <<<'SYSTEM'
-You are a senior project manager assistant at a digital agency. Your task is to generate post-meeting follow-up materials from meeting notes and optional transcripts.
-
-CRITICAL GUARDRAILS:
-- Do NOT invent or fabricate information not present in the notes/transcript.
-- If something is unclear, flag it as an open question rather than guessing.
-- Clearly distinguish between decisions made and items still open.
-- Action items must include a specific owner and realistic due date when possible.
-- Mark items as customer_facing: true if they require the customer's attention or action.
-- The follow-up email should be professional, concise, and action-oriented.
-- Do not include internal commentary or confidential details in the customer-facing email.
-
-Respond in this exact JSON format (no markdown, no code blocks, just raw JSON):
-{
-  "summary": "A concise summary of the meeting covering key discussions and outcomes",
-  "followup_email_subject": "Meeting Summary and Next Steps – [Client / Project Name]",
-  "followup_email_body": "The full customer-facing follow-up email body in HTML format",
-  "decisions": "A list of decisions made during the meeting, one per line",
-  "open_questions": "A list of unresolved questions or items needing further discussion",
-  "suggested_action_items": [
-    {
-      "title": "Brief description of the action item",
-      "owner_name": "Name of the responsible person",
-      "due_date": "YYYY-MM-DD or null if not discussed",
-      "is_customer_facing": true
-    }
-  ]
-}
-SYSTEM;
+        return $this->promptManager->getDefinition('meeting_followup')->getDefaultSystemPrompt();
     }
 
-    private function buildFollowUpUserPrompt(
+    public function buildFollowUpUserPrompt(
         string $clientName,
         string $meetingTitle,
         string $meetingDate,
         string $attendees,
         string $notes,
-        ?string $transcript
+        ?string $transcript = null
     ): string {
-        $prompt = <<<PROMPT
-MEETING CONTEXT:
-- Client: {$clientName}
-- Meeting: {$meetingTitle}
-- Date: {$meetingDate}
-- Attendees: {$attendees}
+        $vars = [
+            'client_name'         => $clientName,
+            'client_contact_name' => '[Not Provided]',
+            'meeting_title'       => $meetingTitle,
+            'meeting_date'        => $meetingDate,
+            'attendees'           => $attendees,
+            'notes'               => $notes,
+            'transcript'          => $transcript ?? '',
+        ];
 
-MEETING NOTES:
-{$notes}
-PROMPT;
-
-        if ($transcript) {
-            $prompt .= <<<TRANSCRIPT
-
-MEETING TRANSCRIPT:
-{$transcript}
-TRANSCRIPT;
-        }
-
-        $prompt .= <<<INSTRUCTIONS
-
-Please generate:
-
-1. A concise MEETING SUMMARY covering key points discussed and outcomes.
-
-2. A CUSTOMER-FACING FOLLOW-UP EMAIL with:
-   Subject: Meeting Summary and Next Steps – {$clientName}
-   Body structure:
-   - Greeting: "Hi [client contact name],"
-   - Opening: "Thank you for taking the time to meet with us on {$meetingDate}. Here's a summary of our discussion and agreed next steps:"
-   - Key Points Discussed (bullet points)
-   - Decisions Made (bullet points)
-   - Action Items (table or list with owner and due date)
-   - Open Questions (if any)
-   - Next Steps / Next Meeting
-   - Closing: "Please don't hesitate to reach out if anything needs clarification."
-   - Sign-off: "Best,"
-
-3. A list of DECISIONS made during the meeting.
-
-4. A list of OPEN QUESTIONS that still need resolution.
-
-5. SUGGESTED ACTION ITEMS in the specified JSON format, with owner_name, due_date, and is_customer_facing flag.
-INSTRUCTIONS;
-
-        return $prompt;
+        return $this->promptManager->interpolate(
+            $this->promptManager->getDefinition('meeting_followup')->getDefaultUserPromptTemplate(),
+            $vars
+        );
     }
 
-    private function formatAttendeeList(ClientMeeting $meeting): string
+    public function formatAttendeeList(ClientMeeting $meeting): string
     {
-        $parts = [];
-
-        $internal = $meeting->internal_attendees ?? [];
-        foreach ($internal as $attendee) {
-            $parts[] = ($attendee['name'] ?? $attendee['email'] ?? 'Unknown') . ' (internal)';
-        }
-
-        $external = $meeting->external_attendees ?? [];
-        foreach ($external as $attendee) {
-            $parts[] = ($attendee['name'] ?? $attendee['email'] ?? 'Unknown') . ' (external)';
-        }
-
-        return implode(', ', $parts) ?: 'No attendees listed';
+        return $this->contextResolver->resolveAttendeesString($meeting);
     }
 }
