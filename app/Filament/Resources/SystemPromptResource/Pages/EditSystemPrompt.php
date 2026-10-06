@@ -9,7 +9,6 @@ use Filament\Actions;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
-use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -31,13 +30,13 @@ class EditSystemPrompt extends EditRecord
                 ->modalDescription('Inspect the system instructions and user prompt with sample variables substituted.')
                 ->modalSubmitAction(false)
                 ->modalCancelActionLabel('Close')
-                ->form(function () {
+                ->modalWidth('4xl')
+                ->modalContent(function () {
                     $promptManager = app(PromptManager::class);
 
-                    // Grab current state from form if user made edits without saving yet
-                    $data = $this->form->getRawState();
-                    $systemPrompt = $data['draft_system_prompt'] ?? $this->record->draft_system_prompt ?? '';
-                    $userTemplate = $data['draft_user_prompt_template'] ?? $this->record->draft_user_prompt_template ?? '';
+                    // Grab current working draft from live component data or record fallback
+                    $systemPrompt = $this->data['draft_system_prompt'] ?? $this->record->draft_system_prompt ?? '';
+                    $userTemplate = $this->data['draft_user_prompt_template'] ?? $this->record->draft_user_prompt_template ?? '';
 
                     $preview = $promptManager->previewDraft(
                         $this->record->key,
@@ -45,28 +44,10 @@ class EditSystemPrompt extends EditRecord
                         $userTemplate
                     );
 
-                    $validationAlert = $preview['valid']
-                        ? '<div class="p-3 mb-3 text-xs text-green-700 bg-green-100 rounded-lg dark:bg-green-900/50 dark:text-green-300 font-semibold flex items-center gap-2">✓ All variables in the draft match registered definitions. Ready to publish.</div>'
-                        : '<div class="p-3 mb-3 text-xs text-red-700 bg-red-100 rounded-lg dark:bg-red-900/50 dark:text-red-300 font-semibold flex items-center gap-2">✕ Unregistered variables detected: ' . e(implode(', ', $preview['unregistered_variables'])) . '. Publishing will be blocked until corrected!</div>';
-
-                    return [
-                        Forms\Components\Placeholder::make('validation_status')
-                            ->content(new HtmlString($validationAlert)),
-
-                        Forms\Components\Textarea::make('preview_system')
-                            ->label('System Prompt (Persona & Instructions)')
-                            ->default($preview['system_prompt'])
-                            ->rows(8)
-                            ->disabled()
-                            ->extraAttributes(['style' => 'font-family: monospace; font-size: 0.8rem;']),
-
-                        Forms\Components\Textarea::make('preview_user')
-                            ->label('Interpolated User Prompt (Sample Variables Substituted)')
-                            ->default($preview['user_prompt'])
-                            ->rows(14)
-                            ->disabled()
-                            ->extraAttributes(['style' => 'font-family: monospace; font-size: 0.8rem;']),
-                    ];
+                    return view('filament.pages.system-prompt-preview-modal', [
+                        'record'  => $this->record,
+                        'preview' => $preview,
+                    ]);
                 }),
 
             // 2. Reset Draft to Factory Default
