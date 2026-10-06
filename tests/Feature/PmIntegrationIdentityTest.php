@@ -12,13 +12,13 @@ use App\Models\User;
 use App\Services\EstimateApprovalService;
 use App\Services\PM\Exceptions\UserJiraAccountNotConnectedException;
 use App\Services\PM\Providers\JiraProvider;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class PmIntegrationIdentityTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected Client $client;
     protected User $syncUser;
