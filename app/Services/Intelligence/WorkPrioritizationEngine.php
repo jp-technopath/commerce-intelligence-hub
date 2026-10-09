@@ -75,11 +75,12 @@ class WorkPrioritizationEngine
 
         // 1. Fetch user's assigned work items
         // Match either direct user_id or assignee_name / external_assignee_id
-        $items = PmWorkItem::with(['client', 'project'])
+        $items = PmWorkItem::with(['client', 'project', 'pmConnection'])
             ->where(function ($q) use ($user) {
                 $q->where('user_id', $user->id)
                   ->orWhere('assignee_name', $user->name);
             })
+            ->excludeBacklogAndOnHold()
             ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled'])
             ->get();
 
@@ -90,8 +91,12 @@ class WorkPrioritizationEngine
         $executableItems = [];
         $needsAttention = [];
 
-        // 2. Separate strictly: Blocked vs. Executable
+        // 2. Separate strictly: Blocked vs. Executable (strictly excluding backlog and on hold)
         foreach ($items as $item) {
+            if ($item->isBacklogOrOnHold()) {
+                continue;
+            }
+
             $isBlocked = (bool) $item->is_blocked 
                 || $item->normalized_delivery_status === 'blocked'
                 || $item->hasLabel('blocked');
@@ -108,6 +113,7 @@ class WorkPrioritizationEngine
                     'target_due_date'     => $item->target_due_date?->format('M j, Y'),
                     'action_label'        => 'Resolve Blocker',
                     'delivery_status'     => $item->normalized_delivery_status,
+                    'jira_url'            => $item->jira_url,
                 ];
                 continue;
             }
@@ -128,6 +134,7 @@ class WorkPrioritizationEngine
                 'delivery_status'     => $item->delivery_status_label,
                 'target_due_date'     => $item->target_due_date?->format('M j, Y'),
                 'is_overdue'          => $item->target_due_date && $item->target_due_date->isPast(),
+                'jira_url'            => $item->jira_url,
             ];
         }
 

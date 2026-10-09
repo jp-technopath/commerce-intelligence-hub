@@ -90,8 +90,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
                     ->where('normalized_delivery_status', '!=', 'completed')
-                    ->where('normalized_delivery_status', '!=', 'backlog')
-                    ->whereRaw('UPPER(external_status) NOT LIKE ?', ['%BACKLOG%'])
+                    ->excludeBacklogAndOnHold()
                     ->whereHas('project', function ($q) {
                         $q->where('external_project_key', '!=', 'SUP');
                     })

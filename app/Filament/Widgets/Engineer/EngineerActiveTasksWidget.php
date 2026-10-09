@@ -28,11 +28,12 @@ class EngineerActiveTasksWidget extends BaseWidget
         return $table
             ->query(
                 PmWorkItem::query()
-                    ->with(['client', 'project'])
+                    ->with(['client', 'project', 'pmConnection'])
                     ->where(function ($q) use ($user) {
                         $q->where('user_id', $user?->id)
                           ->orWhere('assignee_name', $user?->name);
                     })
+                    ->excludeBacklogAndOnHold()
                     ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled'])
                     ->orderByDesc('is_blocked')
                     ->orderBy('target_due_date', 'asc')
@@ -42,7 +43,10 @@ class EngineerActiveTasksWidget extends BaseWidget
                     ->label('Key')
                     ->weight('bold')
                     ->searchable()
-                    ->copyable(),
+                    ->copyable()
+                    ->url(fn (PmWorkItem $record): ?string => $record->jira_url)
+                    ->openUrlInNewTab()
+                    ->color('primary'),
 
                 Tables\Columns\TextColumn::make('client.name')
                     ->label('Customer')
@@ -103,22 +107,12 @@ class EngineerActiveTasksWidget extends BaseWidget
                     ->alignRight(),
             ])
             ->actions([
-                Action::make('start')
-                    ->label('Start')
-                    ->icon('heroicon-m-play')
+                Action::make('jira')
+                    ->label('Open in Jira')
+                    ->icon('heroicon-m-arrow-top-right-on-square')
                     ->color('primary')
-                    ->visible(fn (PmWorkItem $record): bool => $record->normalized_delivery_status !== 'in_progress' && ! $record->is_blocked)
-                    ->action(function (PmWorkItem $record) {
-                        $record->update([
-                            'normalized_delivery_status' => 'in_progress',
-                            'external_status'            => 'In Progress',
-                        ]);
-                        Notification::make()
-                            ->title('Status Updated')
-                            ->body("[{$record->external_item_key}] is now In Progress.")
-                            ->success()
-                            ->send();
-                    }),
+                    ->url(fn (PmWorkItem $record): ?string => $record->jira_url)
+                    ->openUrlInNewTab(),
 
                 Action::make('submit_qa')
                     ->label('Submit QA')
@@ -136,44 +130,7 @@ class EngineerActiveTasksWidget extends BaseWidget
                             ->success()
                             ->send();
                     }),
-
-                Action::make('log_hours')
-                    ->label('Log Time')
-                    ->icon('heroicon-m-clock')
-                    ->color('gray')
-                    ->form([
-                        TextInput::make('hours')
-                            ->label('Hours Spent')
-                            ->numeric()
-                            ->required()
-                            ->default(1.0)
-                            ->minValue(0.25)
-                            ->maxValue(24.0),
-                    ])
-                    ->action(function (PmWorkItem $record, array $data) {
-                        $hours = (float) $data['hours'];
-                        $seconds = (int) ($hours * 3600);
-
-                        \App\Models\PmWorklog::create([
-                            'client_id'           => $record->client_id,
-                            'user_id'             => Auth::id(),
-                            'pm_connection_id'    => $record->pm_connection_id,
-                            'pm_work_item_id'     => $record->id,
-                            'external_worklog_id' => 'local_' . uniqid(),
-                            'author_name'         => Auth::user()->name,
-                            'time_spent_seconds'  => $seconds,
-                            'worklog_started_at'  => now(),
-                            'last_synced_at'      => now(),
-                        ]);
-
-                        $record->increment('time_spent_seconds', $seconds);
-
-                        Notification::make()
-                            ->title('Time Logged')
-                            ->body("Logged {$hours}h to [{$record->external_item_key}].")
-                            ->success()
-                            ->send();
-                    }),
-            ]);
+            ])
+;
     }
 }

@@ -75,7 +75,10 @@ class ManagerActionCenterWidget extends BaseWidget
                     ->label('Finding Title')
                     ->weight('semibold')
                     ->limit(55)
-                    ->searchable(),
+                    ->searchable()
+                    ->url(fn (Finding $record): ?string => $record->jira_url)
+                    ->openUrlInNewTab()
+                    ->color(fn (Finding $record): ?string => $record->jira_url ? 'primary' : null),
 
                 Tables\Columns\TextColumn::make('severity')
                     ->label('Severity')
@@ -107,6 +110,14 @@ class ManagerActionCenterWidget extends BaseWidget
                     ->sortable(),
             ])
             ->actions([
+                Action::make('jira')
+                    ->label('Open Jira')
+                    ->icon('heroicon-m-arrow-top-right-on-square')
+                    ->color('primary')
+                    ->visible(fn (Finding $record): bool => ! empty($record->jira_url))
+                    ->url(fn (Finding $record): ?string => $record->jira_url)
+                    ->openUrlInNewTab(),
+
                 Action::make('acknowledge')
                     ->label('Acknowledge')
                     ->icon('heroicon-m-eye')

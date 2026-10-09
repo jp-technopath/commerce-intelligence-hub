@@ -322,4 +322,81 @@ class ForgeOperationalDashboardsTest extends TestCase
         $response = $this->actingAs($this->manager)->get('/admin/manager-dashboard');
         $response->assertSuccessful();
     }
+
+    public function test_backlog_and_on_hold_tasks_are_excluded_and_jira_links_generated(): void
+    {
+        $engine = app(WorkPrioritizationEngine::class);
+
+        // 1. In-progress task
+        $activeTask = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'task_active_1',
+            'external_item_key'          => 'ACME-200',
+            'summary'                    => 'Active in progress work',
+            'normalized_delivery_status' => 'in_progress',
+            'external_status'            => 'In Progress',
+            'user_id'                    => $this->engineer->id,
+            'priority'                   => 'High',
+            'target_due_date'            => now()->addDays(2),
+        ]);
+
+        // 2. Backlog task (normalized)
+        $backlogTask = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'task_backlog_1',
+            'external_item_key'          => 'ACME-201',
+            'summary'                    => 'Backlog future concept',
+            'normalized_delivery_status' => 'backlog',
+            'external_status'            => 'Backlog',
+            'user_id'                    => $this->engineer->id,
+            'priority'                   => 'Low',
+        ]);
+
+        // 3. On-hold task (external status)
+        $onHoldTask = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'task_onhold_1',
+            'external_item_key'          => 'ACME-202',
+            'summary'                    => 'On hold pending budget',
+            'normalized_delivery_status' => 'planned',
+            'external_status'            => 'ON HOLD',
+            'user_id'                    => $this->engineer->id,
+            'priority'                   => 'Medium',
+        ]);
+
+        // Check Jira URL accessor
+        $this->assertEquals('https://technopath.atlassian.net/browse/ACME-200', $activeTask->jira_url);
+
+        // Prioritization engine should strictly exclude backlog and on-hold
+        $plan = $engine->getPrioritizedPlan($this->engineer, true);
+        $recommendedKeys = array_column($plan['recommended_order'], 'key');
+        $attentionKeys = array_column($plan['needs_attention'], 'key');
+
+        $this->assertContains('ACME-200', $recommendedKeys);
+        $this->assertNotContains('ACME-201', $recommendedKeys);
+        $this->assertNotContains('ACME-202', $recommendedKeys);
+        $this->assertNotContains('ACME-201', $attentionKeys);
+        $this->assertNotContains('ACME-202', $attentionKeys);
+
+        // Check active query scope
+        $scopedItems = PmWorkItem::excludeBacklogAndOnHold()
+            ->where('user_id', $this->engineer->id)
+            ->pluck('external_item_key')
+            ->toArray();
+
+        $this->assertContains('ACME-200', $scopedItems);
+        $this->assertNotContains('ACME-201', $scopedItems);
+        $this->assertNotContains('ACME-202', $scopedItems);
+
+        // Test Livewire Active Tasks Widget table actions
+        \Livewire\Livewire::actingAs($this->engineer)
+            ->test(\App\Filament\Widgets\Engineer\EngineerActiveTasksWidget::class)
+            ->assertTableActionExists('jira')
+            ->assertTableActionDoesNotExist('start')
+            ->assertTableActionDoesNotExist('log_hours');
+    }
 }
+

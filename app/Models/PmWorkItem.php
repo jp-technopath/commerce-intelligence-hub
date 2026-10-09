@@ -78,6 +78,11 @@ class PmWorkItem extends Model
         return $this->belongsTo(PmConnection::class, 'pm_connection_id');
     }
 
+    public function pmConnection(): BelongsTo
+    {
+        return $this->connection();
+    }
+
     public function project(): BelongsTo
     {
         return $this->belongsTo(PmProject::class, 'pm_project_id');
@@ -163,4 +168,73 @@ class PmWorkItem extends Model
             default                 => ucfirst(str_replace('_', ' ', $this->normalized_delivery_status)),
         };
     }
+
+    /**
+     * Direct link to the issue in Jira.
+     */
+    public function getJiraUrlAttribute(): ?string
+    {
+        if (empty($this->external_item_key)) {
+            return null;
+        }
+
+        $conn = $this->relationLoaded('pmConnection')
+            ? $this->getRelation('pmConnection')
+            : ($this->pm_connection_id ? PmConnection::find($this->pm_connection_id) : null);
+
+        $workspace = $conn?->external_workspace_id;
+        if ($workspace) {
+            $base = str_starts_with($workspace, 'http') ? $workspace : "https://{$workspace}";
+            return rtrim($base, '/') . '/browse/' . $this->external_item_key;
+        }
+
+        $baseUrl = config('meeting_agent.jira.base_url') ?: env('JIRA_BASE_URL');
+        if ($baseUrl) {
+            return rtrim($baseUrl, '/') . '/browse/' . $this->external_item_key;
+        }
+
+        return 'https://technopath.atlassian.net/browse/' . $this->external_item_key;
+    }
+
+    /**
+     * Check if task is categorized as backlog or on hold.
+     */
+    public function isBacklogOrOnHold(): bool
+    {
+        $norm = strtolower($this->normalized_delivery_status ?? '');
+        if (in_array($norm, ['backlog', 'on_hold', 'hold'], true)) {
+            return true;
+        }
+
+        $ext = strtolower($this->external_status ?? '');
+        if (
+            str_contains($ext, 'backlog') ||
+            str_contains($ext, 'on hold') ||
+            str_contains($ext, 'parking lot') ||
+            str_contains($ext, 'archive')
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scope a query to exclude tasks in backlog or on hold.
+     */
+    public function scopeExcludeBacklogAndOnHold($query)
+    {
+        return $query
+            ->whereNotIn('normalized_delivery_status', ['backlog', 'on_hold', 'hold'])
+            ->where(function ($q) {
+                $q->whereNull('external_status')
+                  ->orWhere(function ($sub) {
+                      $sub->whereRaw('LOWER(external_status) NOT LIKE ?', ['%backlog%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%on hold%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%parking lot%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%archive%']);
+                  });
+            });
+    }
 }
+

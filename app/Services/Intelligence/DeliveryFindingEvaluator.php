@@ -35,6 +35,7 @@ class DeliveryFindingEvaluator
 
         // 1. Evaluate Blocked Tasks
         $blockedItems = PmWorkItem::where('client_id', $client->id)
+            ->excludeBacklogAndOnHold()
             ->where('normalized_delivery_status', '!=', 'completed')
             ->where(function ($q) {
                 $q->where('is_blocked', true)
@@ -78,6 +79,7 @@ class DeliveryFindingEvaluator
 
         // 2. Evaluate Overdue Tasks
         $overdueItems = PmWorkItem::where('client_id', $client->id)
+            ->excludeBacklogAndOnHold()
             ->where('normalized_delivery_status', '!=', 'completed')
             ->whereNotNull('target_due_date')
             ->where('target_due_date', '<', $now->toDateString())
@@ -117,6 +119,7 @@ class DeliveryFindingEvaluator
 
         // 3. Evaluate QA Rework Tasks
         $reworkItems = PmWorkItem::where('client_id', $client->id)
+            ->excludeBacklogAndOnHold()
             ->where('normalized_delivery_status', '!=', 'completed')
             ->where(function ($q) {
                 $q->where('normalized_delivery_status', 'rework')

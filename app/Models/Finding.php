@@ -141,4 +141,25 @@ class Finding extends Model
             'dismissed_reason' => $reason,
         ]);
     }
+
+    public function getJiraUrlAttribute(): ?string
+    {
+        $key = $this->evidence_json['item_key'] ?? $this->evidence_json['external_item_key'] ?? null;
+        if (! $key && is_array($this->metadata_json)) {
+            $key = $this->metadata_json['item_key'] ?? $this->metadata_json['key'] ?? null;
+        }
+
+        if ($key) {
+            $baseUrl = config('meeting_agent.jira.base_url') ?: 'https://technopath.atlassian.net';
+            return rtrim($baseUrl, '/') . '/browse/' . $key;
+        }
+
+        if (in_array($this->source_type, ['pm_work_item', PmWorkItem::class], true) && $this->source_id) {
+            $item = PmWorkItem::find($this->source_id);
+            return $item?->jira_url;
+        }
+
+        return null;
+    }
 }
+

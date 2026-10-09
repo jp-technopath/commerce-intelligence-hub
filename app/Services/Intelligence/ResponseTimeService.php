@@ -71,7 +71,12 @@ class ResponseTimeService
         $items = $query->get();
         $now = now();
 
-        $activeItems = $items->filter(fn ($i) => $i->normalized_delivery_status !== 'completed');
+        $activeItems = $items->filter(function ($i) {
+            if (in_array($i->normalized_delivery_status, ['completed', 'cancelled', 'backlog', 'on_hold', 'hold'], true)) {
+                return false;
+            }
+            return ! $i->isBacklogOrOnHold();
+        });
         $completedItems = $items->filter(fn ($i) => $i->normalized_delivery_status === 'completed' && $i->updated_at->greaterThanOrEqualTo($now->copy()->subDays(30)));
 
         // 1. Avg Dev Time (days spent in progress)
