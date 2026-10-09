@@ -89,7 +89,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
             ->query(
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
-                    ->where('normalized_delivery_status', '!=', 'completed')
+                    ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
                     ->excludeBacklogAndOnHold()
                     ->whereHas('project', function ($q) {
                         $q->where('external_project_key', '!=', 'SUP');
@@ -334,7 +334,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
                                     ->when($projectId, fn ($q) => $q->where('pm_project_id', $projectId))
                                     ->when(! $projectId && $clientId, fn ($q) => $q->where('client_id', $clientId))
                                     ->where('priority', 'Highest')
-                                    ->whereNotIn('normalized_delivery_status', ['completed', 'canceled'])
+                                    ->whereNotIn('normalized_delivery_status', ['completed', 'canceled', 'cancelled'])
                                     ->count();
 
                                 return "Active 'Highest Priority' tasks in this project workspace: {$count}/3 limit.";
@@ -364,7 +364,7 @@ class WorkInProgress extends Page implements HasForms, HasTable
                                 ->when($projectId, fn ($q) => $q->where('pm_project_id', $projectId))
                                 ->when(! $projectId && $clientId, fn ($q) => $q->where('client_id', $clientId))
                                 ->where('priority', 'Highest')
-                                ->whereNotIn('normalized_delivery_status', ['completed', 'canceled'])
+                                ->whereNotIn('normalized_delivery_status', ['completed', 'canceled', 'cancelled'])
                                 ->where('id', '!=', $record->id)
                                 ->count();
 

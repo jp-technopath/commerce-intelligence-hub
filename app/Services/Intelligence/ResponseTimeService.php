@@ -72,10 +72,10 @@ class ResponseTimeService
         $now = now();
 
         $activeItems = $items->filter(function ($i) {
-            if (in_array($i->normalized_delivery_status, ['completed', 'cancelled', 'backlog', 'on_hold', 'hold'], true)) {
+            if (in_array($i->normalized_delivery_status, ['completed', 'cancelled', 'canceled', 'backlog', 'on_hold', 'hold'], true)) {
                 return false;
             }
-            return ! $i->isBacklogOrOnHold();
+            return ! $i->isInactiveOrExcluded();
         });
         $completedItems = $items->filter(fn ($i) => $i->normalized_delivery_status === 'completed' && $i->updated_at->greaterThanOrEqualTo($now->copy()->subDays(30)));
 

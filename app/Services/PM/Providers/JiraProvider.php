@@ -794,9 +794,9 @@ class JiraProvider implements ProjectManagementProvider
         return $connection->client_id;
     }
 
-    public function mapJiraStatusToForge(string $jiraStatus, PmConnection $connection): string
+    public function mapJiraStatusToForge(string $jiraStatus, ?PmConnection $connection = null): string
     {
-        $customMappings = $connection->status_mappings_json ?? [];
+        $customMappings = $connection?->status_mappings_json ?? [];
 
         if (isset($customMappings[strtolower($jiraStatus)])) {
             return $customMappings[strtolower($jiraStatus)];
@@ -805,6 +805,7 @@ class JiraProvider implements ProjectManagementProvider
         $jiraStatusLower = strtolower(trim($jiraStatus));
 
         return match (true) {
+            str_contains($jiraStatusLower, 'cancel') || str_contains($jiraStatusLower, 'wont') || str_contains($jiraStatusLower, 'won\'t') || str_contains($jiraStatusLower, 'reject') || str_contains($jiraStatusLower, 'abort') => 'cancelled',
             str_contains($jiraStatusLower, 'backlog') => 'backlog',
             str_contains($jiraStatusLower, 'on hold') || str_contains($jiraStatusLower, 'hold') || str_contains($jiraStatusLower, 'paused') => 'on_hold',
             str_contains($jiraStatusLower, 'rework') || str_contains($jiraStatusLower, 'revision') || str_contains($jiraStatusLower, 're-work') => 'rework',

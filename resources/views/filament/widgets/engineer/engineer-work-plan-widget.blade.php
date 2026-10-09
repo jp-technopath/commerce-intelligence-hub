@@ -16,7 +16,14 @@
                 <div class="p-2 bg-primary-50 dark:bg-primary-950 text-primary-600 dark:text-primary-400 rounded-lg">
                     <x-heroicon-m-sparkles class="w-5 h-5" />
                 </div>
-                <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">AI Daily Prioritization & Focus</h2>
+                <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                    <span>AI Daily Prioritization & Focus</span>
+                    @if ($this->getTargetUser() && $this->getTargetUser()->id !== auth()->id())
+                        <span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-800">
+                            Viewing {{ $this->getTargetUser()->name }}
+                        </span>
+                    @endif
+                </h2>
             </div>
             <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                 <span>Calculated: {{ \Carbon\Carbon::parse($generatedAt)->format('g:i A') }}</span>

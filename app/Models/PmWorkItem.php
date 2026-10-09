@@ -220,21 +220,62 @@ class PmWorkItem extends Model
     }
 
     /**
-     * Scope a query to exclude tasks in backlog or on hold.
+     * Check if task is canceled, rejected, or aborted.
+     */
+    public function isCanceled(): bool
+    {
+        $norm = strtolower($this->normalized_delivery_status ?? '');
+        if (in_array($norm, ['cancelled', 'canceled', 'rejected', 'aborted'], true)) {
+            return true;
+        }
+
+        $ext = strtolower($this->external_status ?? '');
+        foreach (['cancel', 'reject', 'abort', "won't do", 'wont do', 'wontfix', "won't fix"] as $needle) {
+            if (str_contains($ext, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if task is inactive or excluded (backlog, on hold, or canceled).
+     */
+    public function isInactiveOrExcluded(): bool
+    {
+        return $this->isBacklogOrOnHold() || $this->isCanceled();
+    }
+
+    /**
+     * Scope a query to exclude tasks in backlog, on hold, or canceled.
      */
     public function scopeExcludeBacklogAndOnHold($query)
     {
         return $query
-            ->whereNotIn('normalized_delivery_status', ['backlog', 'on_hold', 'hold'])
+            ->whereNotIn('normalized_delivery_status', ['backlog', 'on_hold', 'hold', 'cancelled', 'canceled', 'rejected', 'aborted'])
             ->where(function ($q) {
                 $q->whereNull('external_status')
                   ->orWhere(function ($sub) {
                       $sub->whereRaw('LOWER(external_status) NOT LIKE ?', ['%backlog%'])
                           ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%on hold%'])
                           ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%parking lot%'])
-                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%archive%']);
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%archive%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%cancel%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%reject%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%abort%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%wont%'])
+                          ->whereRaw('LOWER(external_status) NOT LIKE ?', ["%won't%"]);
                   });
             });
+    }
+
+    /**
+     * Alias for scopeExcludeBacklogAndOnHold to exclude all inactive tasks.
+     */
+    public function scopeExcludeInactive($query)
+    {
+        return $this->scopeExcludeBacklogAndOnHold($query);
     }
 }
 

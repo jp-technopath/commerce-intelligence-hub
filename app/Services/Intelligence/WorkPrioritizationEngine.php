@@ -81,7 +81,7 @@ class WorkPrioritizationEngine
                   ->orWhere('assignee_name', $user->name);
             })
             ->excludeBacklogAndOnHold()
-            ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled'])
+            ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
             ->get();
 
         // Check sync freshness across user's connected connections
@@ -91,9 +91,9 @@ class WorkPrioritizationEngine
         $executableItems = [];
         $needsAttention = [];
 
-        // 2. Separate strictly: Blocked vs. Executable (strictly excluding backlog and on hold)
+        // 2. Separate strictly: Blocked vs. Executable (strictly excluding backlog, on hold, and canceled)
         foreach ($items as $item) {
-            if ($item->isBacklogOrOnHold()) {
+            if ($item->isInactiveOrExcluded()) {
                 continue;
             }
 

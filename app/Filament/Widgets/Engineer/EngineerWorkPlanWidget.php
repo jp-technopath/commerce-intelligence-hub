@@ -17,12 +17,21 @@ class EngineerWorkPlanWidget extends Widget
 
     protected static ?int $sort = 1;
 
-    public string $activeTab = 'plan'; // 'plan', 'attention', 'meetings'
+    public ?int $userId = null;
+
+    protected $listeners = ['engineer-user-changed' => '$refresh'];
+
+    public function getTargetUser(): ?\App\Models\User
+    {
+        $id = $this->userId ?? session('engineer_dashboard_user_id') ?? Auth::id();
+
+        return \App\Models\User::find($id) ?? Auth::user();
+    }
 
     public function getPlanData(): array
     {
-        /** @var \App\Models\User $user */
-        $user = Auth::user();
+        /** @var \App\Models\User|null $user */
+        $user = $this->getTargetUser();
         if (! $user) {
             return [];
         }
@@ -35,8 +44,8 @@ class EngineerWorkPlanWidget extends Widget
 
     public function refreshWorkPlan(): void
     {
-        /** @var \App\Models\User $user */
-        $user = Auth::user();
+        /** @var \App\Models\User|null $user */
+        $user = $this->getTargetUser();
         if (! $user) {
             return;
         }

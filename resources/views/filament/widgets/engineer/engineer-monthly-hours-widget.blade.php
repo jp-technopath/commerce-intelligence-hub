@@ -1,4 +1,5 @@
 @php
+    $targetUser = $this->getTargetUser();
     $data = $this->getHoursData();
     $totalHours = $data['total_hours'] ?? 0.0;
     $periodLabel = $data['period_label'] ?? now()->format('M 1 - M j, Y');
@@ -16,7 +17,9 @@
                 <div class="p-2 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-lg">
                     <x-heroicon-m-clock class="w-5 h-5" />
                 </div>
-                <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">My Hours This Month</h2>
+                <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">
+                    {{ $targetUser && $targetUser->id !== auth()->id() ? "{$targetUser->name}'s Hours This Month" : 'My Hours This Month' }}
+                </h2>
             </div>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Reporting Period: <strong>{{ $periodLabel }}</strong>

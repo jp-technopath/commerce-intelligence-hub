@@ -58,10 +58,10 @@ class ProjectDeliveryHealthService
 
         $now = now();
         $activeItems = $workItems->filter(function ($item) {
-            if (in_array($item->normalized_delivery_status, ['completed', 'cancelled', 'backlog', 'on_hold', 'hold'], true)) {
+            if (in_array($item->normalized_delivery_status, ['completed', 'cancelled', 'canceled', 'backlog', 'on_hold', 'hold'], true)) {
                 return false;
             }
-            return ! $item->isBacklogOrOnHold();
+            return ! $item->isInactiveOrExcluded();
         });
 
         // If all items are completed and none active

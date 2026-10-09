@@ -14,10 +14,21 @@ class EngineerMonthlyHoursWidget extends Widget
 
     protected static ?int $sort = 2;
 
+    public ?int $userId = null;
+
+    protected $listeners = ['engineer-user-changed' => '$refresh'];
+
+    public function getTargetUser(): ?\App\Models\User
+    {
+        $id = $this->userId ?? session('engineer_dashboard_user_id') ?? Auth::id();
+
+        return \App\Models\User::find($id) ?? Auth::user();
+    }
+
     public function getHoursData(): array
     {
-        /** @var \App\Models\User $user */
-        $user = Auth::user();
+        /** @var \App\Models\User|null $user */
+        $user = $this->getTargetUser();
         if (! $user) {
             return [];
         }

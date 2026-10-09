@@ -18,14 +18,24 @@ class EngineerActiveTasksWidget extends BaseWidget
 
     protected int|string|array $columnSpan = 'full';
 
-    protected static ?string $heading = 'My Assigned Tasks (All Active)';
+    public ?int $userId = null;
+
+    protected $listeners = ['engineer-user-changed' => '$refresh'];
+
+    public function getTargetUser(): ?\App\Models\User
+    {
+        $id = $this->userId ?? session('engineer_dashboard_user_id') ?? Auth::id();
+
+        return \App\Models\User::find($id) ?? Auth::user();
+    }
 
     public function table(Table $table): Table
     {
-        /** @var \App\Models\User $user */
-        $user = Auth::user();
+        /** @var \App\Models\User|null $user */
+        $user = $this->getTargetUser();
 
         return $table
+            ->heading($user && $user->id !== Auth::id() ? "{$user->name}'s Assigned Tasks (All Active)" : 'My Assigned Tasks (All Active)')
             ->query(
                 PmWorkItem::query()
                     ->with(['client', 'project', 'pmConnection'])
@@ -34,7 +44,7 @@ class EngineerActiveTasksWidget extends BaseWidget
                           ->orWhere('assignee_name', $user?->name);
                     })
                     ->excludeBacklogAndOnHold()
-                    ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled'])
+                    ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
                     ->orderByDesc('is_blocked')
                     ->orderBy('target_due_date', 'asc')
             )

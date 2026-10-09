@@ -398,5 +398,103 @@ class ForgeOperationalDashboardsTest extends TestCase
             ->assertTableActionDoesNotExist('start')
             ->assertTableActionDoesNotExist('log_hours');
     }
+
+    public function test_canceled_tasks_are_strictly_excluded_everywhere(): void
+    {
+        $engine = app(WorkPrioritizationEngine::class);
+
+        // 1. Canceled task (normalized status)
+        $canceledTask1 = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'task_cancel_1',
+            'external_item_key'          => 'ACME-301',
+            'summary'                    => 'Cancelled concept task',
+            'normalized_delivery_status' => 'cancelled',
+            'external_status'            => 'Cancelled',
+            'user_id'                    => $this->engineer->id,
+            'priority'                   => 'High',
+        ]);
+
+        // 2. Canceled task (external status contains "won't do")
+        $canceledTask2 = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'task_cancel_2',
+            'external_item_key'          => 'ACME-302',
+            'summary'                    => 'Rejected feature',
+            'normalized_delivery_status' => 'planned',
+            'external_status'            => "Won't Do",
+            'user_id'                    => $this->engineer->id,
+            'priority'                   => 'High',
+        ]);
+
+        $this->assertTrue($canceledTask1->isCanceled());
+        $this->assertTrue($canceledTask2->isCanceled());
+        $this->assertTrue($canceledTask1->isInactiveOrExcluded());
+        $this->assertTrue($canceledTask2->isInactiveOrExcluded());
+
+        // Scope should exclude them
+        $scopedKeys = PmWorkItem::excludeBacklogAndOnHold()
+            ->where('user_id', $this->engineer->id)
+            ->pluck('external_item_key')
+            ->toArray();
+
+        $this->assertNotContains('ACME-301', $scopedKeys);
+        $this->assertNotContains('ACME-302', $scopedKeys);
+
+        // Prioritization engine should not include them
+        $plan = $engine->getPrioritizedPlan($this->engineer, true);
+        $allPlanKeys = array_merge(
+            array_column($plan['recommended_order'], 'key'),
+            array_column($plan['needs_attention'], 'key')
+        );
+
+        $this->assertNotContains('ACME-301', $allPlanKeys);
+        $this->assertNotContains('ACME-302', $allPlanKeys);
+
+        // JiraProvider mapping test
+        $jiraProvider = app(\App\Services\PM\Providers\JiraProvider::class);
+        $this->assertEquals('cancelled', $jiraProvider->mapJiraStatusToForge('Cancelled'));
+        $this->assertEquals('cancelled', $jiraProvider->mapJiraStatusToForge('Canceled'));
+        $this->assertEquals('cancelled', $jiraProvider->mapJiraStatusToForge("Won't Do"));
+        $this->assertEquals('cancelled', $jiraProvider->mapJiraStatusToForge('Rejected'));
+    }
+
+    public function test_engineer_dashboard_user_switcher_functionality(): void
+    {
+        $otherEngineer = User::create([
+            'name'     => 'Charlie Dev',
+            'email'    => 'charlie@technopath.ai',
+            'password' => Hash::make('secret123'),
+        ]);
+
+        $otherTask = PmWorkItem::create([
+            'client_id'                  => $this->client->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'charlie_task_1',
+            'external_item_key'          => 'ACME-401',
+            'summary'                    => 'Charlie assigned work',
+            'normalized_delivery_status' => 'in_progress',
+            'user_id'                    => $otherEngineer->id,
+            'priority'                   => 'High',
+        ]);
+
+        // 1. Mount EngineerDashboard as Alice
+        \Livewire\Livewire::actingAs($this->engineer)
+            ->test(\App\Filament\Pages\EngineerDashboard::class)
+            ->assertSet('selected_user_id', $this->engineer->id)
+            ->set('selected_user_id', $otherEngineer->id)
+            ->assertDispatched('engineer-user-changed')
+            ->call('resetToMe')
+            ->assertSet('selected_user_id', $this->engineer->id)
+            ->assertDispatched('engineer-user-changed');
+
+        // 2. Active tasks widget switches target user
+        \Livewire\Livewire::actingAs($this->engineer)
+            ->test(\App\Filament\Widgets\Engineer\EngineerActiveTasksWidget::class, ['userId' => $otherEngineer->id])
+            ->assertSee('ACME-401')
+            ->assertSee("Charlie Dev's Assigned Tasks");
+    }
 }
 
