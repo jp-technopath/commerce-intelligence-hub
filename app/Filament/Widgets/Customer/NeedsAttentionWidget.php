@@ -427,8 +427,17 @@ class NeedsAttentionWidget extends BaseWidget
             }
         }
 
-        // 3. Sync blocked tasks and customer review tasks
+        // 3. Sync blocked tasks and customer review tasks (excluding completed/resolved tickets)
         $attentionWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)
+            ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+            ->where(function ($statClause) {
+                $statClause->whereNull('external_status')
+                    ->orWhere(function ($sub) {
+                        $sub->whereRaw('LOWER(external_status) NOT LIKE ?', ['%resolve%'])
+                            ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%closed%'])
+                            ->whereRaw('LOWER(external_status) NOT LIKE ?', ['%cancel%']);
+                    });
+            })
             ->where(function ($q) {
                 $q->where('is_blocked', true)
                   ->orWhere('normalized_delivery_status', 'customer_review');
@@ -437,9 +446,10 @@ class NeedsAttentionWidget extends BaseWidget
 
         $activeWorkItemIds = $attentionWorkItems->pluck('id')->map(fn ($id) => (string) $id)->toArray();
 
-        // Resolve attention items for work items that are no longer blocked or in customer review
+        // Resolve attention items for work items that are no longer blocked, no longer in customer review, or resolved
         CustomerAttentionItem::where('client_id', $clientId)
             ->where('source_type', 'pm_work_item')
+            ->where('is_resolved', false)
             ->whereNotIn('source_id', $activeWorkItemIds)
             ->update([
                 'is_resolved' => true,

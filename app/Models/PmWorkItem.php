@@ -241,11 +241,42 @@ class PmWorkItem extends Model
     }
 
     /**
-     * Check if task is inactive or excluded (backlog, on hold, or canceled).
+     * Check if work item is a Jira Service Desk ticket (SUP).
+     */
+    public function isServiceDeskTicket(): bool
+    {
+        return str_starts_with($this->external_item_key ?? '', 'SUP-')
+            || $this->project?->external_project_key === 'SUP';
+    }
+
+    /**
+     * Check if work item has a resolved or completed status.
+     */
+    public function isResolved(): bool
+    {
+        $norm = strtolower($this->normalized_delivery_status ?? '');
+        if (in_array($norm, ['completed', 'resolved', 'closed'], true)) {
+            return true;
+        }
+
+        $ext = strtolower($this->external_status ?? '');
+        return str_contains($ext, 'resolve') || str_contains($ext, 'closed') || str_contains($ext, 'done');
+    }
+
+    /**
+     * Check if task is inactive or excluded (backlog, on hold, canceled, or resolved service desk ticket).
      */
     public function isInactiveOrExcluded(): bool
     {
-        return $this->isBacklogOrOnHold() || $this->isCanceled();
+        if ($this->isBacklogOrOnHold() || $this->isCanceled()) {
+            return true;
+        }
+
+        if ($this->isServiceDeskTicket() && $this->isResolved()) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -272,16 +303,45 @@ class PmWorkItem extends Model
     }
 
     /**
-     * Alias for scopeExcludeBacklogAndOnHold to exclude all inactive tasks.
+     * Scope query to strictly exclude resolved or closed Service Desk tickets.
+     */
+    public function scopeExcludeResolvedServiceDesk(Builder $query): Builder
+    {
+        return $query->where(function ($q) {
+            $q->where(function ($nonSup) {
+                $nonSup->where('pm_work_items.external_item_key', 'NOT LIKE', 'SUP-%')
+                       ->whereDoesntHave('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
+            })
+            ->orWhere(function ($sup) {
+                $sup->where(function ($isSup) {
+                    $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
+                          ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
+                })
+                ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                ->where(function ($statClause) {
+                    $statClause->whereNull('pm_work_items.external_status')
+                        ->orWhere(function ($sub) {
+                            $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
+                                ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
+                                ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
+                        });
+                });
+            });
+        });
+    }
+
+    /**
+     * Scope to exclude all inactive tasks including backlog, on hold, canceled, and resolved service desk tickets.
      */
     public function scopeExcludeInactive($query)
     {
-        return $this->scopeExcludeBacklogAndOnHold($query);
+        return $this->scopeExcludeBacklogAndOnHold($query)->excludeResolvedServiceDesk();
     }
 
     /**
      * Scope query to only PM work items belonging to customers in the customer list
-     * with an assigned Jira project code, restricted to spaces matching that Jira project code.
+     * with an assigned Jira project code, restricted to spaces matching that Jira project code
+     * or active Service Desk tickets (excluding resolved tickets).
      */
     public function scopeForCustomerSpacesWithJiraCode(Builder $query, ?int $clientId = null): Builder
     {
@@ -296,6 +356,21 @@ class PmWorkItem extends Model
                     $keyClause->where('pm_work_items.external_item_key', 'LIKE', $client->jira_project_key . '-%')
                               ->orWhereHas('project', function ($pq) use ($client) {
                                   $pq->where('external_project_key', $client->jira_project_key);
+                              })
+                              ->orWhere(function ($supClause) {
+                                  $supClause->where(function ($isSup) {
+                                      $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
+                                            ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
+                                  })
+                                  ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                                  ->where(function ($statClause) {
+                                      $statClause->whereNull('pm_work_items.external_status')
+                                          ->orWhere(function ($sub) {
+                                              $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
+                                                  ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
+                                                  ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
+                                          });
+                                  });
                               });
                 });
         }
@@ -317,6 +392,21 @@ class PmWorkItem extends Model
                                $keyClause->where('pm_work_items.external_item_key', 'LIKE', $client->jira_project_key . '-%')
                                          ->orWhereHas('project', function ($pq) use ($client) {
                                              $pq->where('external_project_key', $client->jira_project_key);
+                                         })
+                                         ->orWhere(function ($supClause) {
+                                             $supClause->where(function ($isSup) {
+                                                 $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
+                                                       ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
+                                             })
+                                             ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                                             ->where(function ($statClause) {
+                                                 $statClause->whereNull('pm_work_items.external_status')
+                                                     ->orWhere(function ($sub) {
+                                                         $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
+                                                             ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
+                                                             ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
+                                                     });
+                                             });
                                          });
                            });
                 });

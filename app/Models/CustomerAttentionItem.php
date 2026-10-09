@@ -33,8 +33,24 @@ class CustomerAttentionItem extends Model
         return $this->belongsTo(Client::class);
     }
 
+    public function workItem(): BelongsTo
+    {
+        return $this->belongsTo(PmWorkItem::class, 'source_id');
+    }
+
     public function scopeUnresolved($query)
     {
-        return $query->where('is_resolved', false);
+        return $query->where('is_resolved', false)
+            ->where(function ($q) {
+                $q->where('source_type', '!=', 'pm_work_item')
+                  ->orWhereDoesntHave('workItem', function ($wq) {
+                      $wq->whereIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                         ->orWhere(function ($statClause) {
+                             $statClause->whereRaw('LOWER(external_status) LIKE ?', ['%resolve%'])
+                                 ->orWhereRaw('LOWER(external_status) LIKE ?', ['%closed%'])
+                                 ->orWhereRaw('LOWER(external_status) LIKE ?', ['%cancel%']);
+                         });
+                  });
+            });
     }
 }

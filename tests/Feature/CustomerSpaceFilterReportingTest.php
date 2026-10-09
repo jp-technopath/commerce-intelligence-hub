@@ -94,19 +94,44 @@ class CustomerSpaceFilterReportingTest extends TestCase
             'user_id'                    => $this->user->id,
         ]);
 
-        // 3. Service Desk / non-customer space attached to Cambro
+        // 3. Active Service Desk ticket attached to Cambro
         $item3 = PmWorkItem::create([
             'client_id'                  => $this->validClientA->id,
             'pm_connection_id'           => $this->connection->id,
             'external_item_id'           => 'sup_1',
             'external_item_key'          => 'SUP-888',
-            'summary'                    => 'Service desk ticket not matching Jira key',
+            'summary'                    => 'Active Cambro service desk ticket',
+            'external_status'            => 'Waiting for support',
             'normalized_delivery_status' => 'in_progress',
             'user_id'                    => $this->user->id,
         ]);
 
-        // 4. Random space (RPD) attached to a client
-        $item4 = PmWorkItem::create([
+        // 4. Resolved Service Desk ticket attached to Cambro
+        $itemResolved = PmWorkItem::create([
+            'client_id'                  => $this->validClientA->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'sup_res_1',
+            'external_item_key'          => 'SUP-889',
+            'summary'                    => 'Resolved Cambro service desk ticket',
+            'external_status'            => 'Resolved',
+            'normalized_delivery_status' => 'completed',
+            'user_id'                    => $this->user->id,
+        ]);
+
+        // 5. Auto resolve Service Desk ticket attached to Cambro
+        $itemAutoResolve = PmWorkItem::create([
+            'client_id'                  => $this->validClientA->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'sup_auto_1',
+            'external_item_key'          => 'SUP-890',
+            'summary'                    => 'Auto resolve Cambro ticket',
+            'external_status'            => 'Auto resolve',
+            'normalized_delivery_status' => 'completed',
+            'user_id'                    => $this->user->id,
+        ]);
+
+        // 6. Random space (RPD) attached to a client
+        $item6 = PmWorkItem::create([
             'client_id'                  => $this->validClientB->id,
             'pm_connection_id'           => $this->connection->id,
             'external_item_id'           => 'rpd_1',
@@ -116,8 +141,8 @@ class CustomerSpaceFilterReportingTest extends TestCase
             'user_id'                    => $this->user->id,
         ]);
 
-        // 5. Item under client with null jira_project_key
-        $item5 = PmWorkItem::create([
+        // 7. Item under client with null jira_project_key
+        $item7 = PmWorkItem::create([
             'client_id'                  => $this->clientWithoutJiraKey->id,
             'pm_connection_id'           => $this->connection->id,
             'external_item_id'           => 'test_1',
@@ -127,18 +152,25 @@ class CustomerSpaceFilterReportingTest extends TestCase
             'user_id'                    => $this->user->id,
         ]);
 
-        // Global scope check: only item1 and item2 should match
+        // Global scope check: item1, item2, and active item3 should match
+        // itemResolved, itemAutoResolve, item6 (RPD), item7 (TEST) must be excluded
         $allScopedItems = PmWorkItem::forCustomerSpacesWithJiraCode()->pluck('id')->all();
         $this->assertContains($item1->id, $allScopedItems);
         $this->assertContains($item2->id, $allScopedItems);
-        $this->assertNotContains($item3->id, $allScopedItems);
-        $this->assertNotContains($item4->id, $allScopedItems);
-        $this->assertNotContains($item5->id, $allScopedItems);
-        $this->assertCount(2, $allScopedItems);
+        $this->assertContains($item3->id, $allScopedItems);
+        $this->assertNotContains($itemResolved->id, $allScopedItems);
+        $this->assertNotContains($itemAutoResolve->id, $allScopedItems);
+        $this->assertNotContains($item6->id, $allScopedItems);
+        $this->assertNotContains($item7->id, $allScopedItems);
+        $this->assertCount(3, $allScopedItems);
 
-        // Client-specific scope check for Cambro: only item1
+        // Client-specific scope check for Cambro: item1 and item3 (active SUP)
         $cambroScoped = PmWorkItem::forCustomerSpacesWithJiraCode($this->validClientA->id)->pluck('id')->all();
-        $this->assertEquals([$item1->id], $cambroScoped);
+        $this->assertContains($item1->id, $cambroScoped);
+        $this->assertContains($item3->id, $cambroScoped);
+        $this->assertNotContains($itemResolved->id, $cambroScoped);
+        $this->assertNotContains($itemAutoResolve->id, $cambroScoped);
+        $this->assertCount(2, $cambroScoped);
 
         // Client-specific scope check for client without Jira key: empty
         $emptyScoped = PmWorkItem::forCustomerSpacesWithJiraCode($this->clientWithoutJiraKey->id)->pluck('id')->all();
@@ -158,13 +190,25 @@ class CustomerSpaceFilterReportingTest extends TestCase
             'user_id'                    => $this->user->id,
         ]);
 
+        // Resolved SUP task assigned to same user
+        PmWorkItem::create([
+            'client_id'                  => $this->validClientA->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'sup_res_1',
+            'external_item_key'          => 'SUP-321',
+            'summary'                    => 'Resolved Service Desk Request',
+            'external_status'            => 'Resolved',
+            'normalized_delivery_status' => 'completed',
+            'user_id'                    => $this->user->id,
+        ]);
+
         // Non-customer space item assigned to same user
         PmWorkItem::create([
             'client_id'                  => $this->validClientA->id,
             'pm_connection_id'           => $this->connection->id,
-            'external_item_id'           => 'sup_invalid_1',
-            'external_item_key'          => 'SUP-321',
-            'summary'                    => 'Internal Service Request',
+            'external_item_id'           => 'rpd_invalid_1',
+            'external_item_key'          => 'RPD-99',
+            'summary'                    => 'Internal Task',
             'normalized_delivery_status' => 'in_progress',
             'user_id'                    => $this->user->id,
         ]);
@@ -175,6 +219,7 @@ class CustomerSpaceFilterReportingTest extends TestCase
         $keysInPlan = collect($plan['recommended_order'])->pluck('key')->all();
         $this->assertContains('CMBR2-55', $keysInPlan);
         $this->assertNotContains('SUP-321', $keysInPlan);
+        $this->assertNotContains('RPD-99', $keysInPlan);
     }
 
     public function test_time_tracking_service_limits_to_customer_spaces_with_jira_code(): void
@@ -191,12 +236,12 @@ class CustomerSpaceFilterReportingTest extends TestCase
         ]);
 
         // Non-customer space work item
-        $supItem = PmWorkItem::create([
+        $rpdItem = PmWorkItem::create([
             'client_id'                  => $this->validClientA->id,
             'pm_connection_id'           => $this->connection->id,
-            'external_item_id'           => 'sup_time_1',
-            'external_item_key'          => 'SUP-77',
-            'summary'                    => 'Service desk work',
+            'external_item_id'           => 'rpd_time_1',
+            'external_item_key'          => 'RPD-77',
+            'summary'                    => 'Non customer space work',
             'normalized_delivery_status' => 'in_progress',
             'user_id'                    => $this->user->id,
         ]);
@@ -212,13 +257,13 @@ class CustomerSpaceFilterReportingTest extends TestCase
             'worklog_started_at'   => now(),
         ]);
 
-        // Log 5 hours on SUP (should be excluded)
+        // Log 5 hours on RPD (should be excluded)
         PmWorklog::create([
             'client_id'            => $this->validClientA->id,
             'user_id'              => $this->user->id,
             'pm_connection_id'     => $this->connection->id,
-            'pm_work_item_id'      => $supItem->id,
-            'external_worklog_id'  => 'wl_sup_1',
+            'pm_work_item_id'      => $rpdItem->id,
+            'external_worklog_id'  => 'wl_rpd_1',
             'time_spent_seconds'   => 18000, // 5 hours
             'worklog_started_at'   => now(),
         ]);
@@ -261,14 +306,15 @@ class CustomerSpaceFilterReportingTest extends TestCase
             'priority'                   => 'High',
         ]);
 
-        // Non-customer space item
+        // Resolved SUP ticket
         PmWorkItem::create([
             'client_id'                  => $this->validClientA->id,
             'pm_connection_id'           => $this->connection->id,
-            'external_item_id'           => 'sup_eng_1',
+            'external_item_id'           => 'sup_eng_res',
             'external_item_key'          => 'SUP-999',
-            'summary'                    => 'Internal ticket that should not appear',
-            'normalized_delivery_status' => 'in_progress',
+            'summary'                    => 'Resolved support ticket that should not appear',
+            'external_status'            => 'Resolved',
+            'normalized_delivery_status' => 'completed',
             'user_id'                    => $this->user->id,
             'priority'                   => 'High',
         ]);
@@ -277,5 +323,52 @@ class CustomerSpaceFilterReportingTest extends TestCase
         $response->assertSuccessful();
         $response->assertSee('CMBR2-99');
         $response->assertDontSee('SUP-999');
+    }
+
+    public function test_customer_attention_items_scope_unresolved_excludes_resolved_tickets(): void
+    {
+        $resolvedTicket = PmWorkItem::create([
+            'client_id'                  => $this->validClientA->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'sup_att_res',
+            'external_item_key'          => 'SUP-9396',
+            'summary'                    => 'Tax Holiday',
+            'external_status'            => 'Resolved',
+            'normalized_delivery_status' => 'completed',
+            'user_id'                    => $this->user->id,
+        ]);
+
+        $activeTicket = PmWorkItem::create([
+            'client_id'                  => $this->validClientA->id,
+            'pm_connection_id'           => $this->connection->id,
+            'external_item_id'           => 'sup_att_act',
+            'external_item_key'          => 'SUP-9555',
+            'summary'                    => 'Active Ticket',
+            'external_status'            => 'Waiting for customer',
+            'normalized_delivery_status' => 'customer_review',
+            'user_id'                    => $this->user->id,
+        ]);
+
+        $resolvedAtt = \App\Models\CustomerAttentionItem::create([
+            'client_id'   => $this->validClientA->id,
+            'source_type' => 'pm_work_item',
+            'source_id'   => (string) $resolvedTicket->id,
+            'category'    => 'waiting_on_customer',
+            'title'       => 'SUP-9396: Tax Holiday',
+            'is_resolved' => false,
+        ]);
+
+        $activeAtt = \App\Models\CustomerAttentionItem::create([
+            'client_id'   => $this->validClientA->id,
+            'source_type' => 'pm_work_item',
+            'source_id'   => (string) $activeTicket->id,
+            'category'    => 'waiting_on_customer',
+            'title'       => 'SUP-9555: Active Ticket',
+            'is_resolved' => false,
+        ]);
+
+        $unresolvedItems = \App\Models\CustomerAttentionItem::unresolved()->pluck('id')->all();
+        $this->assertContains($activeAtt->id, $unresolvedItems);
+        $this->assertNotContains($resolvedAtt->id, $unresolvedItems);
     }
 }

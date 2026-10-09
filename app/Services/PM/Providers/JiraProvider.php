@@ -253,6 +253,9 @@ class JiraProvider implements ProjectManagementProvider
 
         if ($project->custom_filter_jql) {
             $jql = $project->custom_filter_jql;
+        } elseif ($project->external_project_key === 'SUP') {
+            // For Service Desk, strictly exclude resolved, closed, and auto-resolved tickets
+            $jql = "project = '{$project->external_project_key}' AND status != 'Resolved' AND status != 'Closed' AND status != 'Auto resolve' AND statusCategory != 'Done' ORDER BY updated DESC";
         } elseif ($days !== null && $days > 0) {
             // Fetch all non-Done items regardless of age, and completed items updated within $days
             $jql = "project = '{$project->external_project_key}' AND (statusCategory != 'Done' OR updated >= -{$days}d) ORDER BY updated DESC";
@@ -809,7 +812,7 @@ class JiraProvider implements ProjectManagementProvider
             str_contains($jiraStatusLower, 'backlog') => 'backlog',
             str_contains($jiraStatusLower, 'on hold') || str_contains($jiraStatusLower, 'hold') || str_contains($jiraStatusLower, 'paused') => 'on_hold',
             str_contains($jiraStatusLower, 'rework') || str_contains($jiraStatusLower, 'revision') || str_contains($jiraStatusLower, 're-work') => 'rework',
-            str_contains($jiraStatusLower, 'done') || str_contains($jiraStatusLower, 'closed') || str_contains($jiraStatusLower, 'resolved') => 'completed',
+            str_contains($jiraStatusLower, 'done') || str_contains($jiraStatusLower, 'closed') || str_contains($jiraStatusLower, 'resolve') => 'completed',
             str_contains($jiraStatusLower, 'deployment') || str_contains($jiraStatusLower, 'ready for deployment') => 'ready_for_deployment',
             str_contains($jiraStatusLower, 'uat') || str_contains($jiraStatusLower, 'customer') => 'customer_review',
             str_contains($jiraStatusLower, 'review') || str_contains($jiraStatusLower, 'qa') || str_contains($jiraStatusLower, 'testing') => 'review_qa',
