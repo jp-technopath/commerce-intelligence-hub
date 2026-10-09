@@ -82,7 +82,7 @@ class WorkPrioritizationEngine
                   ->orWhere('assignee_name', $user->name);
             })
             ->excludeBacklogAndOnHold()
-            ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+            ->excludeCompletedAndDone()
             ->get();
 
         // Check sync freshness across user's connected connections
@@ -92,9 +92,9 @@ class WorkPrioritizationEngine
         $executableItems = [];
         $needsAttention = [];
 
-        // 2. Separate strictly: Blocked vs. Executable (strictly excluding backlog, on hold, and canceled)
+        // 2. Separate strictly: Blocked vs. Executable (strictly excluding backlog, on hold, completed, and canceled)
         foreach ($items as $item) {
-            if ($item->isInactiveOrExcluded()) {
+            if ($item->isInactiveOrExcluded() || $item->isResolved()) {
                 continue;
             }
 
@@ -113,6 +113,23 @@ class WorkPrioritizationEngine
                     'priority'            => $item->priority,
                     'target_due_date'     => $item->target_due_date?->format('M j, Y'),
                     'action_label'        => 'Resolve Blocker',
+                    'delivery_status'     => $item->normalized_delivery_status,
+                    'jira_url'            => $item->jira_url,
+                ];
+                continue;
+            }
+
+            // Waiting on customer response or client input
+            if ($item->normalized_delivery_status === 'customer_review' || str_contains(strtolower($item->external_status ?? ''), 'waiting')) {
+                $needsAttention[] = [
+                    'item_id'             => $item->id,
+                    'key'                 => $item->external_item_key,
+                    'title'               => $item->summary,
+                    'client_name'         => $item->client?->name ?? 'Internal',
+                    'reason'              => 'Waiting on customer input in Jira',
+                    'priority'            => $item->priority,
+                    'target_due_date'     => $item->target_due_date?->format('M j, Y'),
+                    'action_label'        => 'Follow Up',
                     'delivery_status'     => $item->normalized_delivery_status,
                     'jira_url'            => $item->jira_url,
                 ];
@@ -157,25 +174,6 @@ class WorkPrioritizationEngine
                     'meeting_start_at' => $meeting->meeting_start_at?->toDayDateTimeString() ?? 'Upcoming',
                     'prep_stage'       => $meeting->prep_stage,
                     'action_label'     => $meeting->prep_stage === 'needed' ? 'Prepare Brief' : 'Review Draft',
-                ];
-            }
-        }
-
-        // 4. Missing Time Log Warnings (Tasks completed with 0 logged time)
-        $timeData = $this->timeTracking->getUserMonthlyHours($user);
-        if (! empty($timeData['missing_time_items'])) {
-            foreach (array_slice($timeData['missing_time_items'], 0, 3) as $mItem) {
-                $needsAttention[] = [
-                    'item_id'         => $mItem['id'],
-                    'key'             => $mItem['external_item_key'],
-                    'title'           => $mItem['summary'],
-                    'client_name'     => 'Time Tracking',
-                    'reason'          => 'Work completed or in QA, but 0 hours logged',
-                    'priority'        => 'Medium',
-                    'target_due_date' => null,
-                    'action_label'    => 'Log Hours',
-                    'delivery_status' => $mItem['normalized_delivery_status'],
-                    'jira_url'        => ! empty($mItem['external_item_key']) ? 'https://technopath.atlassian.net/browse/' . $mItem['external_item_key'] : null,
                 ];
             }
         }

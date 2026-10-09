@@ -128,7 +128,7 @@
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
-                    @foreach ($workPlanItems as $item)
+                    @forelse ($workPlanItems as $item)
                         <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                             {{-- Order Number Badge --}}
                             <td class="py-3 px-3 align-middle">
@@ -158,14 +158,16 @@
                                         <div class="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100 leading-snug">
                                             {{ $item['title'] }}
                                         </div>
-                                        <a 
-                                            href="{{ $item['jira_url'] }}" 
-                                            target="_blank" 
-                                            rel="noopener noreferrer" 
-                                            class="text-xs text-slate-400 hover:text-blue-600 font-medium mt-0.5 inline-block transition"
-                                        >
-                                            {{ $item['key'] }}
-                                        </a>
+                                        @if (!empty($item['key']))
+                                            <a 
+                                                href="{{ $item['jira_url'] }}" 
+                                                target="_blank" 
+                                                rel="noopener noreferrer" 
+                                                class="text-xs text-slate-400 hover:text-blue-600 font-medium mt-0.5 inline-block transition"
+                                            >
+                                                {{ $item['key'] }}
+                                            </a>
+                                        @endif
                                     </div>
                                 </div>
                             </td>
@@ -204,7 +206,23 @@
                                 </a>
                             </td>
                         </tr>
-                    @endforeach
+                    @empty
+                        <tr>
+                            <td colspan="7" class="py-10 text-center">
+                                <div class="flex flex-col items-center justify-center text-slate-400">
+                                    <div class="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-2">
+                                        <x-heroicon-m-check class="w-5 h-5" />
+                                    </div>
+                                    <div class="font-bold text-sm text-slate-800 dark:text-slate-200">
+                                        All caught up!
+                                    </div>
+                                    <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                        No active tasks currently require your attention in the work plan.
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    @endforelse
                 </tbody>
             </table>
         </div>
@@ -220,8 +238,8 @@
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             2. Needs My Attention
                         </h2>
-                        <span class="bg-rose-100 text-rose-700 font-semibold text-xs px-2.5 py-0.5 rounded-full">
-                            {{ count($needsAttentionItems) }} items
+                        <span class="{{ count($needsAttentionItems) > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' }} font-semibold text-xs px-2.5 py-0.5 rounded-full">
+                            {{ count($needsAttentionItems) }} {{ count($needsAttentionItems) === 1 ? 'item' : 'items' }}
                         </span>
                     </div>
                     <a href="#" class="text-blue-600 hover:underline text-xs font-semibold">
@@ -230,7 +248,7 @@
                 </div>
 
                 <div class="divide-y divide-slate-50 dark:divide-slate-800/60">
-                    @foreach ($needsAttentionItems as $item)
+                    @forelse ($needsAttentionItems as $item)
                         <div class="py-3 flex items-center justify-between gap-3 group">
                             <div class="flex items-center gap-3">
                                 <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 
@@ -280,7 +298,19 @@
                                 @endif
                             </div>
                         </div>
-                    @endforeach
+                    @empty
+                        <div class="py-10 flex flex-col items-center justify-center text-center">
+                            <div class="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-2">
+                                <x-heroicon-m-shield-check class="w-5 h-5" />
+                            </div>
+                            <div class="font-bold text-sm text-slate-800 dark:text-slate-200">
+                                No Blockers or Action Items
+                            </div>
+                            <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                None of your tasks are currently blocked or waiting on intervention.
+                            </div>
+                        </div>
+                    @endforelse
                 </div>
             </div>
         </div>
@@ -330,7 +360,7 @@
                         <div class="col-span-3 text-right">%</div>
                     </div>
                     <div class="divide-y divide-slate-50 dark:divide-slate-800/60">
-                        @foreach ($hoursData['customers'] as $c)
+                        @forelse ($hoursData['customers'] as $c)
                             <div class="grid grid-cols-12 items-center py-2 text-xs">
                                 <div class="col-span-5 flex items-center gap-2">
                                     <span class="w-3 h-3 rounded-xs shrink-0" style="background-color: {{ $c['color'] }}"></span>
@@ -356,7 +386,11 @@
                                     </div>
                                 </div>
                             </div>
-                        @endforeach
+                        @empty
+                            <div class="py-4 text-center text-xs text-slate-400">
+                                No customer spaces tracked yet this month.
+                            </div>
+                        @endforelse
                     </div>
                 </div>
             </div>
@@ -387,7 +421,7 @@
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             4. Upcoming Meetings
                         </h2>
-                        <span class="bg-rose-100 text-rose-700 font-semibold text-xs px-2.5 py-0.5 rounded-full">
+                        <span class="{{ count($upcomingMeetings) > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' }} font-semibold text-xs px-2.5 py-0.5 rounded-full">
                             {{ count($upcomingMeetings) }} upcoming
                         </span>
                     </div>
@@ -397,7 +431,7 @@
                 </div>
 
                 <div class="space-y-4">
-                    @foreach ($upcomingMeetings as $meeting)
+                    @forelse ($upcomingMeetings as $meeting)
                         <div class="flex items-start justify-between gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 transition border border-transparent hover:border-slate-100">
                             <div class="flex items-start gap-3">
                                 <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border 
@@ -424,7 +458,19 @@
                                 {{ $meeting['action_label'] }}
                             </button>
                         </div>
-                    @endforeach
+                    @empty
+                        <div class="py-10 flex flex-col items-center justify-center text-center">
+                            <div class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mb-2">
+                                <x-heroicon-m-calendar class="w-5 h-5" />
+                            </div>
+                            <div class="font-bold text-sm text-slate-800 dark:text-slate-200">
+                                No Upcoming Meetings
+                            </div>
+                            <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                You have no upcoming meetings scheduled today or tomorrow.
+                            </div>
+                        </div>
+                    @endforelse
                 </div>
             </div>
         </div>
@@ -457,7 +503,7 @@
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
-                            @foreach ($projectHealthItems as $p)
+                            @forelse ($projectHealthItems as $p)
                                 <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                                     <td class="py-3 px-3 font-semibold text-sm text-slate-900 dark:text-slate-100">
                                         {{ $p['name'] }}
@@ -477,7 +523,13 @@
                                         </div>
                                     </td>
                                 </tr>
-                            @endforeach
+                            @empty
+                                <tr>
+                                    <td colspan="4" class="py-8 text-center text-xs text-slate-400">
+                                        No active client projects found.
+                                    </td>
+                                </tr>
+                            @endforelse
                         </tbody>
                     </table>
                 </div>

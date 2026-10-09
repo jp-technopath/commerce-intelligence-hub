@@ -130,7 +130,7 @@ class EngineerDashboard extends Page implements HasForms
     public function getWorkPlanItems(?User $targetUser): array
     {
         if (! $targetUser) {
-            return $this->getDefaultWorkPlanItems();
+            return [];
         }
 
         try {
@@ -139,7 +139,7 @@ class EngineerDashboard extends Page implements HasForms
             $recommended = $plan['recommended_order'] ?? [];
 
             if (empty($recommended)) {
-                return $this->getDefaultWorkPlanItems();
+                return [];
             }
 
             $orderStyles = [
@@ -173,117 +173,32 @@ class EngineerDashboard extends Page implements HasForms
                 }
 
                 $estTime = ($item['estimated_hours'] ?? 0) > 0 ? "{$item['estimated_hours']}h" : '2h';
-                if ($pos === 3 || $pos === 4) {
-                    $estTime = '1h';
-                }
 
                 $mapped[] = [
                     'order'          => $pos,
                     'order_style'    => $orderStyles[$pos] ?? $orderStyles[5],
                     'icon_type'      => $iconType,
                     'title'          => $item['title'] ?? 'Operational task',
-                    'key'            => $item['key'] ?? 'DEV-' . ($pos * 10),
+                    'key'            => $item['key'] ?? null,
                     'project'        => $item['client_name'] ?? 'Internal',
                     'priority'       => ucfirst(strtolower($priority)),
                     'priority_class' => $priorityClass,
                     'est_time'       => $estTime,
                     'why_matters'    => $item['reasoning'] ?? 'Keep project aligned for upcoming milestone.',
-                    'jira_url'       => $item['jira_url'] ?: 'https://technopath.atlassian.net/browse/' . ($item['key'] ?? ''),
+                    'jira_url'       => $item['jira_url'] ?: (! empty($item['key']) ? 'https://technopath.atlassian.net/browse/' . $item['key'] : null),
                 ];
-            }
-
-            // If user has fewer than 5 tasks, pad with remaining default items for full dashboard aesthetics
-            if (count($mapped) < 5) {
-                $defaults = $this->getDefaultWorkPlanItems();
-                for ($i = count($mapped); $i < 5; $i++) {
-                    $fallback = $defaults[$i];
-                    $fallback['order'] = $i + 1;
-                    $fallback['order_style'] = $orderStyles[$i + 1];
-                    $mapped[] = $fallback;
-                }
             }
 
             return $mapped;
         } catch (\Throwable $e) {
-            return $this->getDefaultWorkPlanItems();
+            return [];
         }
-    }
-
-    protected function getDefaultWorkPlanItems(): array
-    {
-        return [
-            [
-                'order'          => 1,
-                'order_style'    => ['bg' => 'bg-rose-50 text-rose-500 border-rose-100', 'num' => 1],
-                'icon_type'      => 'branch',
-                'title'          => 'Fix checkout error on mobile',
-                'key'            => 'CAM-342',
-                'project'        => 'Cambro',
-                'priority'       => 'High',
-                'priority_class' => 'bg-rose-50 text-rose-600 border-rose-100',
-                'est_time'       => '2h',
-                'why_matters'    => 'Customer-facing issue. Blocking production release.',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/CAM-342',
-            ],
-            [
-                'order'          => 2,
-                'order_style'    => ['bg' => 'bg-amber-50 text-amber-600 border-amber-100', 'num' => 2],
-                'icon_type'      => 'doc',
-                'title'          => 'Complete API documentation',
-                'key'            => 'R40-118',
-                'project'        => 'Room40',
-                'priority'       => 'High',
-                'priority_class' => 'bg-rose-50 text-rose-600 border-rose-100',
-                'est_time'       => '2h',
-                'why_matters'    => 'Needed for tomorrow\'s customer meeting.',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/R40-118',
-            ],
-            [
-                'order'          => 3,
-                'order_style'    => ['bg' => 'bg-amber-50 text-amber-600 border-amber-100', 'num' => 3],
-                'icon_type'      => 'pr',
-                'title'          => 'Review PR #482',
-                'key'            => 'GOL-77',
-                'project'        => 'GoldKamp',
-                'priority'       => 'Medium',
-                'priority_class' => 'bg-amber-50 text-amber-700 border-amber-100',
-                'est_time'       => '1h',
-                'why_matters'    => 'Waiting on your review. Blocking QA.',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/GOL-77',
-            ],
-            [
-                'order'          => 4,
-                'order_style'    => ['bg' => 'bg-blue-50 text-blue-600 border-blue-100', 'num' => 4],
-                'icon_type'      => 'task',
-                'title'          => 'Update task status and notes',
-                'key'            => 'CAM-301',
-                'project'        => 'Cambro',
-                'priority'       => 'Medium',
-                'priority_class' => 'bg-amber-50 text-amber-700 border-amber-100',
-                'est_time'       => '1h',
-                'why_matters'    => 'Keep project aligned for upcoming milestone.',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/CAM-301',
-            ],
-            [
-                'order'          => 5,
-                'order_style'    => ['bg' => 'bg-emerald-50 text-emerald-600 border-emerald-100', 'num' => 5],
-                'icon_type'      => 'search',
-                'title'          => 'Investigate analytics discrepancy',
-                'key'            => 'R40-210',
-                'project'        => 'Room40',
-                'priority'       => 'Low',
-                'priority_class' => 'bg-emerald-50 text-emerald-700 border-emerald-100',
-                'est_time'       => '2h',
-                'why_matters'    => 'Non-urgent. Good to address if time allows.',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/R40-210',
-            ],
-        ];
     }
 
     public function getNeedsAttentionItems(?User $targetUser): array
     {
         if (! $targetUser) {
-            return $this->getDefaultNeedsAttentionItems();
+            return [];
         }
 
         try {
@@ -292,28 +207,35 @@ class EngineerDashboard extends Page implements HasForms
             $attention = $plan['needs_attention'] ?? [];
 
             if (empty($attention)) {
-                return $this->getDefaultNeedsAttentionItems();
+                return [];
             }
 
             $items = [];
             foreach (array_slice($attention, 0, 5) as $raw) {
+                // Ensure resolved or completed items are never displayed
+                if (! empty($raw['delivery_status']) && in_array(strtolower($raw['delivery_status']), ['completed', 'resolved', 'closed', 'cancelled'], true)) {
+                    continue;
+                }
+
                 $priority = $raw['priority'] ?: 'Medium';
                 $isHigh = in_array(strtolower($priority), ['highest', 'critical', 'high'], true);
                 
+                $reasonLower = strtolower($raw['reason'] ?? '');
                 $icon = 'clock';
-                $typeTitle = 'Blocked for 3 days';
-                if (str_contains(strtolower($raw['reason'] ?? ''), 'meeting')) {
+                $typeTitle = 'Blocked';
+
+                if (str_contains($reasonLower, 'meeting')) {
                     $icon = 'meeting';
                     $typeTitle = 'Meeting preparation';
-                } elseif (str_contains(strtolower($raw['reason'] ?? ''), 'response') || str_contains(strtolower($raw['reason'] ?? ''), 'question')) {
+                } elseif (str_contains($reasonLower, 'response') || str_contains($reasonLower, 'question') || str_contains($reasonLower, 'customer')) {
                     $icon = 'chat';
                     $typeTitle = 'Response needed';
-                } elseif (str_contains(strtolower($raw['reason'] ?? ''), 'qa') || str_contains(strtolower($raw['reason'] ?? ''), 'rework')) {
-                    $icon = 'alert';
-                    $typeTitle = 'QA failure';
-                } elseif (str_contains(strtolower($raw['reason'] ?? ''), 'time') || str_contains(strtolower($raw['reason'] ?? ''), 'hours')) {
+                } elseif (str_contains($reasonLower, 'time') || str_contains($reasonLower, 'hours') || str_contains($reasonLower, 'log')) {
                     $icon = 'timer';
                     $typeTitle = 'Time entry missing';
+                } elseif (str_contains($reasonLower, 'qa') || str_contains($reasonLower, 'rework') || str_contains($reasonLower, 'fail')) {
+                    $icon = 'alert';
+                    $typeTitle = 'QA failure';
                 }
 
                 $items[] = [
@@ -327,110 +249,23 @@ class EngineerDashboard extends Page implements HasForms
                 ];
             }
 
-            if (count($items) < 5) {
-                $defaults = $this->getDefaultNeedsAttentionItems();
-                for ($i = count($items); $i < 5; $i++) {
-                    $items[] = $defaults[$i];
-                }
-            }
-
             return $items;
         } catch (\Throwable $e) {
-            return $this->getDefaultNeedsAttentionItems();
+            return [];
         }
-    }
-
-    protected function getDefaultNeedsAttentionItems(): array
-    {
-        return [
-            [
-                'icon'           => 'clock',
-                'title'          => 'Blocked for 3 days',
-                'description'    => 'Payment webhook not receiving data',
-                'key'            => 'CAM-289',
-                'priority'       => 'High',
-                'priority_class' => 'bg-rose-50 text-rose-600 border-rose-100',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/CAM-289',
-            ],
-            [
-                'icon'           => 'chat',
-                'title'          => 'Response needed',
-                'description'    => 'Question from customer in Jira',
-                'key'            => 'R40-156',
-                'priority'       => 'Medium',
-                'priority_class' => 'bg-amber-50 text-amber-700 border-amber-100',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/R40-156',
-            ],
-            [
-                'icon'           => 'meeting',
-                'title'          => 'Meeting preparation',
-                'description'    => 'Room40 technical meeting tomorrow. Prepare status update and demo.',
-                'key'            => null,
-                'priority'       => 'High',
-                'priority_class' => 'bg-rose-50 text-rose-600 border-rose-100',
-                'jira_url'       => null,
-            ],
-            [
-                'icon'           => 'timer',
-                'title'          => 'Time entry missing',
-                'description'    => 'Task completed with no time logged',
-                'key'            => 'GOL-71',
-                'priority'       => 'Medium',
-                'priority_class' => 'bg-amber-50 text-amber-700 border-amber-100',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/GOL-71',
-            ],
-            [
-                'icon'           => 'alert',
-                'title'          => 'QA failure',
-                'description'    => 'Build failed in QA (2nd time)',
-                'key'            => 'CAM-337',
-                'priority'       => 'Medium',
-                'priority_class' => 'bg-amber-50 text-amber-700 border-amber-100',
-                'jira_url'       => 'https://technopath.atlassian.net/browse/CAM-337',
-            ],
-        ];
     }
 
     public function getMyHoursData(?User $targetUser): array
     {
         $defaultAllocation = 160;
-        $defaultHours = 72;
-        $defaultProgress = 45;
-
-        $defaultCustomers = [
-            [
-                'name'         => 'Cambro',
-                'color'        => '#3B82F6', // Blue
-                'hours'        => '32h',
-                'allocation'   => '60h',
-                'pct'          => 53,
-                'bar_color'    => 'bg-blue-500',
-            ],
-            [
-                'name'         => 'Room40',
-                'color'        => '#8B5CF6', // Purple
-                'hours'        => '24h',
-                'allocation'   => '60h',
-                'pct'          => 40,
-                'bar_color'    => 'bg-purple-600',
-            ],
-            [
-                'name'         => 'GoldKamp',
-                'color'        => '#F59E0B', // Amber
-                'hours'        => '16h',
-                'allocation'   => '40h',
-                'pct'          => 40,
-                'bar_color'    => 'bg-amber-500',
-            ],
-        ];
 
         if (! $targetUser) {
             return [
-                'total_hours'        => $defaultHours,
+                'total_hours'        => 0,
                 'allocated_hours'    => $defaultAllocation,
-                'progress_pct'       => $defaultProgress,
-                'customers'          => $defaultCustomers,
-                'missing_time_count' => 3,
+                'progress_pct'       => 0,
+                'customers'          => [],
+                'missing_time_count' => 0,
             ];
         }
 
@@ -440,16 +275,6 @@ class EngineerDashboard extends Page implements HasForms
             $totalHours = (float) ($hoursInfo['total_hours'] ?? 0);
             $allocation = (int) ($hoursInfo['working_capacity_hours'] ?? $defaultAllocation);
 
-            if ($totalHours <= 0) {
-                return [
-                    'total_hours'        => $defaultHours,
-                    'allocated_hours'    => $defaultAllocation,
-                    'progress_pct'       => $defaultProgress,
-                    'customers'          => $defaultCustomers,
-                    'missing_time_count' => max(3, $hoursInfo['missing_time_count'] ?? 0),
-                ];
-            }
-
             $colors = ['#3B82F6', '#8B5CF6', '#F59E0B', '#10B981', '#EC4899'];
             $barColors = ['bg-blue-500', 'bg-purple-600', 'bg-amber-500', 'bg-emerald-500', 'bg-pink-500'];
             $customers = [];
@@ -457,7 +282,7 @@ class EngineerDashboard extends Page implements HasForms
             foreach ($hoursInfo['by_customer'] ?? [] as $idx => $cData) {
                 $cHours = (float) $cData['hours'];
                 $cAlloc = (int) ($cData['allocated_hours'] ?? 60);
-                $cPct = $cAlloc > 0 ? min(100, (int) round(($cHours / $cAlloc) * 100)) : 50;
+                $cPct = $cAlloc > 0 ? min(100, (int) round(($cHours / $cAlloc) * 100)) : 0;
 
                 $customers[] = [
                     'name'         => $cData['client_name'],
@@ -469,49 +294,60 @@ class EngineerDashboard extends Page implements HasForms
                 ];
             }
 
-            $progressPct = $allocation > 0 ? min(100, (int) round(($totalHours / $allocation) * 100)) : 45;
+            // If user has 0 hours logged, show real customer spaces from Forge with 0h
+            if (empty($customers)) {
+                $clientIds = PmWorkItem::forCustomerSpacesWithJiraCode()
+                    ->where('user_id', $targetUser->id)
+                    ->whereNotNull('client_id')
+                    ->distinct()
+                    ->pluck('client_id')
+                    ->all();
+
+                $assignedClients = Client::withJiraProjectKey()
+                    ->whereIn('id', $clientIds)
+                    ->take(3)
+                    ->get();
+
+                if ($assignedClients->isEmpty()) {
+                    $assignedClients = Client::withJiraProjectKey()->take(3)->get();
+                }
+
+                foreach ($assignedClients as $idx => $client) {
+                    $customers[] = [
+                        'name'         => $client->name,
+                        'color'        => $colors[$idx % count($colors)],
+                        'hours'        => '0h',
+                        'allocation'   => '40h',
+                        'pct'          => 0,
+                        'bar_color'    => $barColors[$idx % count($barColors)],
+                    ];
+                }
+            }
+
+            $progressPct = $allocation > 0 ? min(100, (int) round(($totalHours / $allocation) * 100)) : 0;
 
             return [
                 'total_hours'        => round($totalHours, 1),
                 'allocated_hours'    => $allocation,
                 'progress_pct'       => $progressPct,
-                'customers'          => ! empty($customers) ? $customers : $defaultCustomers,
-                'missing_time_count' => max(3, $hoursInfo['missing_time_count'] ?? 0),
+                'customers'          => $customers,
+                'missing_time_count' => (int) ($hoursInfo['missing_time_count'] ?? 0),
             ];
         } catch (\Throwable $e) {
             return [
-                'total_hours'        => $defaultHours,
+                'total_hours'        => 0,
                 'allocated_hours'    => $defaultAllocation,
-                'progress_pct'       => $defaultProgress,
-                'customers'          => $defaultCustomers,
-                'missing_time_count' => 3,
+                'progress_pct'       => 0,
+                'customers'          => [],
+                'missing_time_count' => 0,
             ];
         }
     }
 
     public function getUpcomingMeetingsData(?User $targetUser): array
     {
-        $defaultMeetings = [
-            [
-                'id'           => 1,
-                'title'        => 'Room40 Technical Sync',
-                'time_label'   => 'Tomorrow, 10:00 – 11:00 AM',
-                'description'  => 'Prepare project update, demo, and discuss API timeline.',
-                'action_label' => 'View preparation brief',
-                'icon_color'   => 'blue',
-            ],
-            [
-                'id'           => 2,
-                'title'        => 'Cambro Sprint Review',
-                'time_label'   => 'Fri, Feb 14, 2:00 – 3:00 PM',
-                'description'  => 'Review completed work and discuss next sprint.',
-                'action_label' => 'Add to preparation list',
-                'icon_color'   => 'amber',
-            ],
-        ];
-
         if (! $targetUser) {
-            return $defaultMeetings;
+            return [];
         }
 
         try {
@@ -519,7 +355,7 @@ class EngineerDashboard extends Page implements HasForms
             $meetings = $meetingService->getUserUpcomingMeetings($targetUser, 5);
 
             if ($meetings->isEmpty()) {
-                return $defaultMeetings;
+                return [];
             }
 
             $mapped = [];
@@ -542,41 +378,14 @@ class EngineerDashboard extends Page implements HasForms
 
             return $mapped;
         } catch (\Throwable $e) {
-            return $defaultMeetings;
+            return [];
         }
     }
 
     public function getProjectHealthItems(?User $targetUser): array
     {
-        $defaultHealth = [
-            [
-                'name'         => 'Cambro',
-                'health'       => 'Healthy',
-                'health_class' => 'bg-emerald-50 text-emerald-700 border-emerald-100',
-                'upcoming'     => 'Feb 20',
-                'is_urgent'    => false,
-                'tasks_count'  => '3 active',
-            ],
-            [
-                'name'         => 'Room40',
-                'health'       => 'Watch',
-                'health_class' => 'bg-amber-50 text-amber-700 border-amber-100',
-                'upcoming'     => 'Feb 12',
-                'is_urgent'    => true,
-                'tasks_count'  => '5 active',
-            ],
-            [
-                'name'         => 'GoldKamp',
-                'health'       => 'At Risk',
-                'health_class' => 'bg-rose-50 text-rose-700 border-rose-100',
-                'upcoming'     => 'Feb 28',
-                'is_urgent'    => false,
-                'tasks_count'  => '2 active',
-            ],
-        ];
-
         if (! $targetUser) {
-            return $defaultHealth;
+            return [];
         }
 
         try {
@@ -587,17 +396,18 @@ class EngineerDashboard extends Page implements HasForms
                 ->pluck('client_id')
                 ->all();
 
-            if (empty($clientIds)) {
-                return $defaultHealth;
+            $clientsQuery = Client::withJiraProjectKey();
+            if (! empty($clientIds)) {
+                $clients = $clientsQuery->whereIn('id', $clientIds)->take(4)->get();
+            } else {
+                $clients = $clientsQuery->take(4)->get();
+            }
+
+            if ($clients->isEmpty()) {
+                return [];
             }
 
             $healthService = app(ProjectDeliveryHealthService::class);
-            $clients = Client::withJiraProjectKey()->whereIn('id', $clientIds)->take(3)->get();
-
-            if ($clients->isEmpty()) {
-                return $defaultHealth;
-            }
-
             $items = [];
             foreach ($clients as $client) {
                 $eval = $healthService->evaluateClientHealth($client);
@@ -608,9 +418,11 @@ class EngineerDashboard extends Page implements HasForms
                     default => 'bg-rose-50 text-rose-700 border-rose-100',
                 };
 
-                $taskCount = PmWorkItem::excludeBacklogAndOnHold()
-                    ->where('user_id', $targetUser->id)
+                $taskCount = PmWorkItem::forCustomerSpacesWithJiraCode()
+                    ->excludeInactive()
+                    ->excludeCompletedAndDone()
                     ->where('client_id', $client->id)
+                    ->when($targetUser, fn ($q) => $q->where('user_id', $targetUser->id))
                     ->count();
 
                 $items[] = [
@@ -623,20 +435,32 @@ class EngineerDashboard extends Page implements HasForms
                 ];
             }
 
-            return ! empty($items) ? $items : $defaultHealth;
+            return $items;
         } catch (\Throwable $e) {
-            return $defaultHealth;
+            return [];
         }
     }
 
     public function getAiInsightText(?User $targetUser, array $workPlan, array $meetings): string
     {
         $topTask = $workPlan[0] ?? null;
-        $clientName = $topTask['project'] ?? 'Cambro';
         $topMeeting = $meetings[0] ?? null;
-        $meetingTitle = $topMeeting['title'] ?? 'Room40 meeting';
 
-        return "Your focus today should be on the {$clientName} production issue and preparing for the {$meetingTitle}. Completing these will reduce delivery risk on both projects.";
+        if ($topTask && $topMeeting) {
+            $client = $topTask['project'] ?? 'assigned client';
+            return "Your focus today should be on \"{$topTask['title']}\" ({$client}) and preparing for {$topMeeting['title']}. Completing these will keep sprint delivery on schedule.";
+        }
+
+        if ($topTask) {
+            $client = $topTask['project'] ?? 'assigned client';
+            return "Your primary focus today is on \"{$topTask['title']}\" ({$client}). Resolving this will maintain sprint momentum.";
+        }
+
+        if ($topMeeting) {
+            return "You have an upcoming meeting: {$topMeeting['title']}. Make sure your milestone updates and questions are prepared.";
+        }
+
+        return "You're all caught up on scheduled tasks and meetings today! Feel free to review the backlog or coordinate with your team.";
     }
 
     public function getHeaderWidgets(): array

@@ -255,12 +255,15 @@ class PmWorkItem extends Model
     public function isResolved(): bool
     {
         $norm = strtolower($this->normalized_delivery_status ?? '');
-        if (in_array($norm, ['completed', 'resolved', 'closed'], true)) {
+        if (in_array($norm, ['completed', 'resolved', 'closed', 'cancelled', 'canceled'], true)) {
             return true;
         }
 
         $ext = strtolower($this->external_status ?? '');
-        return str_contains($ext, 'resolve') || str_contains($ext, 'closed') || str_contains($ext, 'done');
+        return str_contains($ext, 'resolve') 
+            || str_contains($ext, 'closed') 
+            || str_contains($ext, 'done')
+            || str_contains($ext, 'cancel');
     }
 
     /**
@@ -328,6 +331,26 @@ class PmWorkItem extends Model
                 });
             });
         });
+    }
+
+    /**
+     * Scope query to strictly exclude completed, resolved, or closed work items.
+     */
+    public function scopeExcludeCompletedAndDone(Builder $query): Builder
+    {
+        return $query
+            ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'resolved', 'closed', 'cancelled', 'canceled', 'rejected', 'aborted'])
+            ->where(function ($q) {
+                $q->whereNull('pm_work_items.external_status')
+                  ->orWhere(function ($sub) {
+                      $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%done%'])
+                          ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
+                          ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
+                          ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%'])
+                          ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%reject%'])
+                          ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%abort%']);
+                  });
+            });
     }
 
     /**

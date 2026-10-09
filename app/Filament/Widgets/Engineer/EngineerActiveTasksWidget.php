@@ -58,7 +58,7 @@ class EngineerActiveTasksWidget extends BaseWidget
                         });
                     }, fn ($q) => $q->whereRaw('1 = 0'))
                     ->excludeBacklogAndOnHold()
-                    ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                    ->excludeCompletedAndDone()
                     ->orderByDesc('is_blocked')
                     ->orderBy('target_due_date', 'asc')
             )
