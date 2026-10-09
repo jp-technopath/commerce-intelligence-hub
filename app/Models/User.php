@@ -165,8 +165,8 @@ class User extends Authenticatable implements FilamentUser
             }
         }
 
-        // Global fallback: If no role assignments exist across the system yet, default all users to super admin
-        if (\App\Models\UserRoleAssignment::count() === 0 && ! $this->isClientOnly()) {
+        // Global fallback: If no role assignments exist across the system yet, default unassigned users to super admin
+        if (\App\Models\UserRoleAssignment::count() === 0 && ! $this->isClientOnly() && ! $this->roles()->exists()) {
             return true;
         }
 

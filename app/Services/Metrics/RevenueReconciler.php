@@ -35,7 +35,8 @@ class RevenueReconciler
 
         // 2. GA4 purchase events
         $ga4Events = AnalyticsPurchaseEvent::where('client_id', $client->id)
-            ->whereBetween('event_date', [$from->toDateString(), $to->toDateString()])
+            ->whereDate('event_date', '>=', $from->toDateString())
+            ->whereDate('event_date', '<=', $to->toDateString())
             ->get();
 
         $ga4TxCount     = $ga4Events->count();

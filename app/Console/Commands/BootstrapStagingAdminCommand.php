@@ -14,7 +14,7 @@ class BootstrapStagingAdminCommand extends Command
 
     public function handle(): int
     {
-        if (! app()->environment('staging')) {
+        if (! app()->environment('staging') && config('app.env') !== 'staging') {
             $this->error('The staging administrator can only be bootstrapped in the staging environment.');
 
             return self::FAILURE;
