@@ -49,7 +49,7 @@ class ManagerActionCenterWidget extends BaseWidget
                         $q->whereNull('snoozed_until')
                           ->orWhere('snoozed_until', '<=', now());
                     })
-                    ->when(! empty($clientIds) && $clientIds !== ['*'], fn ($q) => $q->whereIn('client_id', $clientIds))
+                    ->when(! empty(array_diff($clientIds, ['*'])), fn ($q) => $q->whereIn('client_id', array_diff($clientIds, ['*'])))
                     ->orderByRaw("CASE WHEN severity = 'critical' THEN 1 WHEN severity = 'high' THEN 2 WHEN severity = 'medium' THEN 3 ELSE 4 END")
                     ->latest('detected_at')
             )

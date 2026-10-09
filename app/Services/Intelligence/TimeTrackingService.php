@@ -102,8 +102,9 @@ class TimeTrackingService
         $endOfMonth = $date->copy()->endOfMonth();
 
         $clientsQuery = Client::query();
-        if (! empty($clientIds) && $clientIds !== ['*']) {
-            $clientsQuery->whereIn('id', $clientIds);
+        $filteredIds = array_diff($clientIds, ['*']);
+        if (! empty($filteredIds)) {
+            $clientsQuery->whereIn('id', $filteredIds);
         }
         $clients = $clientsQuery->get(['id', 'name', 'monthly_allocated_hours', 'status']);
         $effectiveClientIds = $clients->pluck('id')->toArray();
@@ -166,9 +167,12 @@ class TimeTrackingService
             $byCustomer[] = [
                 'client_id'         => $client->id,
                 'client_name'       => $client->name,
+                'hours'             => $actualHours,
                 'actual_hours'      => $actualHours,
                 'allocated_hours'   => $allocatedHours,
+                'utilization_pct'   => $allocationPct,
                 'allocation_pct'    => $allocationPct,
+                'status'            => $allocationStatus,
                 'allocation_status' => $allocationStatus,
                 'contributors'      => $contributors,
             ];

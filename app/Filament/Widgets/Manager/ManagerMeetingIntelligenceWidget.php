@@ -31,8 +31,9 @@ class ManagerMeetingIntelligenceWidget extends Widget
             ->where('meeting_start_at', '<=', now()->addDays(7))
             ->orderBy('meeting_start_at', 'asc');
 
-        if (! empty($clientIds) && $clientIds !== ['*']) {
-            $query->whereIn('client_id', $clientIds);
+        $filteredIds = array_diff($clientIds, ['*']);
+        if (! empty($filteredIds)) {
+            $query->whereIn('client_id', $filteredIds);
         }
 
         $meetings = $query->get()->map(function ($m) use ($service) {

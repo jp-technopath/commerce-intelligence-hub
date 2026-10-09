@@ -79,7 +79,7 @@
                             {{ $c['client_name'] }}
                         </td>
                         <td class="py-3 px-4 font-medium">
-                            <span class="font-bold text-gray-900 dark:text-gray-100">{{ $c['hours'] }}h</span>
+                            <span class="font-bold text-gray-900 dark:text-gray-100">{{ $c['hours'] ?? $c['actual_hours'] ?? 0 }}h</span>
                             @if ($c['allocated_hours'])
                                 <span class="text-gray-500"> / {{ $c['allocated_hours'] }}h</span>
                             @else
@@ -87,17 +87,22 @@
                             @endif
                         </td>
                         <td class="py-3 px-4 w-44">
-                            @if ($c['utilization_pct'] !== null)
+                            @php
+                                $utilPct = $c['utilization_pct'] ?? $c['allocation_pct'] ?? null;
+                                $status = $c['status'] ?? $c['allocation_status'] ?? 'unbudgeted';
+                                $actHours = $c['hours'] ?? $c['actual_hours'] ?? 0;
+                            @endphp
+                            @if ($utilPct !== null)
                                 <div class="flex items-center gap-2">
                                     <div class="flex-1 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
                                         <div
                                             class="h-full rounded-full transition-all duration-300
-                                                {{ $c['utilization_pct'] >= 100 ? 'bg-rose-500' : ($c['utilization_pct'] >= 85 ? 'bg-amber-500' : 'bg-emerald-500') }}"
-                                            style="width: {{ min(100, $c['utilization_pct']) }}%"
+                                                {{ $utilPct >= 100 ? 'bg-rose-500' : ($utilPct >= 85 ? 'bg-amber-500' : 'bg-emerald-500') }}"
+                                            style="width: {{ min(100, $utilPct) }}%"
                                         ></div>
                                     </div>
                                     <span class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 w-10 text-right">
-                                        {{ $c['utilization_pct'] }}%
+                                        {{ $utilPct }}%
                                     </span>
                                 </div>
                             @else
@@ -105,17 +110,17 @@
                             @endif
                         </td>
                         <td class="py-3 px-4">
-                            @if ($c['status'] === 'on_budget')
+                            @if ($status === 'on_budget')
                                 <span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
                                     On Budget
                                 </span>
-                            @elseif ($c['status'] === 'approaching')
+                            @elseif ($status === 'approaching')
                                 <span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                                    Approaching Cap ({{ $c['utilization_pct'] }}%)
+                                    Approaching Cap ({{ $utilPct }}%)
                                 </span>
-                            @elseif ($c['status'] === 'over_allocation')
+                            @elseif ($status === 'over_allocation')
                                 <span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300">
-                                    Over Budget (+{{ round($c['hours'] - $c['allocated_hours'], 1) }}h)
+                                    Over Budget (+{{ round($actHours - $c['allocated_hours'], 1) }}h)
                                 </span>
                             @else
                                 <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">

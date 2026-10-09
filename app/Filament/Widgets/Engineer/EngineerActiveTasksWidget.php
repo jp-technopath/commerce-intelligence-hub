@@ -34,7 +34,7 @@ class EngineerActiveTasksWidget extends BaseWidget
                           ->orWhere('assignee_name', $user?->name);
                     })
                     ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled'])
-                    ->orderByRaw("CASE WHEN is_blocked = 1 THEN 1 ELSE 0 END DESC")
+                    ->orderByDesc('is_blocked')
                     ->orderBy('target_due_date', 'asc')
             )
             ->columns([

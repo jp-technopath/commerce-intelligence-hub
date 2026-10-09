@@ -310,6 +310,15 @@ class ForgeOperationalDashboardsTest extends TestCase
 
     public function test_manager_dashboard_page_renders_for_authorized_users(): void
     {
+        \App\Models\ClientMeeting::create([
+            'client_id'          => $this->client->id,
+            'title'              => 'Executive Bi-weekly',
+            'meeting_start_at'   => now()->addDays(2),
+            'meeting_end_at'     => now()->addDays(2)->addHour(),
+            'internal_owner_id'  => $this->manager->id,
+            'status'             => \App\Enums\MeetingStatus::Detected,
+        ]);
+
         $response = $this->actingAs($this->manager)->get('/admin/manager-dashboard');
         $response->assertSuccessful();
     }

@@ -70,6 +70,11 @@ class ClientMeeting extends Model
         return $this->belongsTo(User::class, 'internal_owner_id');
     }
 
+    public function internalOwner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'internal_owner_id');
+    }
+
     public function scannedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'scanned_by_user_id');

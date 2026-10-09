@@ -51,11 +51,24 @@ class ResponseTimeService
     }
 
     /**
+     * Alias for manager dashboard widget.
+     */
+    public function getPortfolioWorkflowMetrics(array $clientIds = []): array
+    {
+        return $this->getWorkflowHealthMetrics($clientIds);
+    }
+
+    /**
      * Get portfolio-wide or client-scoped workflow and response health metrics (6 KPIs).
      */
-    public function getWorkflowHealthMetrics(array $clientIds): array
+    public function getWorkflowHealthMetrics(array $clientIds = []): array
     {
-        $items = PmWorkItem::whereIn('client_id', $clientIds)->get();
+        $filteredIds = array_diff($clientIds, ['*']);
+        $query = PmWorkItem::query();
+        if (! empty($filteredIds)) {
+            $query->whereIn('client_id', $filteredIds);
+        }
+        $items = $query->get();
         $now = now();
 
         $activeItems = $items->filter(fn ($i) => $i->normalized_delivery_status !== 'completed');

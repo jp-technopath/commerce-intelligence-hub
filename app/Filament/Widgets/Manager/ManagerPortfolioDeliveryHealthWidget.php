@@ -24,8 +24,9 @@ class ManagerPortfolioDeliveryHealthWidget extends Widget
         $clientIds = $user ? $user->getAssignedClientIds() : [];
 
         $clientsQuery = Client::query();
-        if (! empty($clientIds) && $clientIds !== ['*']) {
-            $clientsQuery->whereIn('id', $clientIds);
+        $filteredIds = array_diff($clientIds, ['*']);
+        if (! empty($filteredIds)) {
+            $clientsQuery->whereIn('id', $filteredIds);
         }
         $clients = $clientsQuery->where('status', 'active')->orderBy('name')->get();
 
