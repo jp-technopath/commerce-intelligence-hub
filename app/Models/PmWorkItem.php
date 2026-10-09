@@ -27,6 +27,8 @@ class PmWorkItem extends Model
         'estimated_seconds',
         'time_spent_seconds',
         'assignee_name',
+        'user_id',
+        'external_assignee_id',
         'target_due_date',
         'is_blocked',
         'blocked_reason',
@@ -43,9 +45,32 @@ class PmWorkItem extends Model
         'last_synced_at'      => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (PmWorkItem $item) {
+            if ($item->user_id) {
+                app(\App\Services\Intelligence\WorkPrioritizationEngine::class)->invalidateUserPlan($item->user_id);
+            }
+            if ($item->isDirty('user_id') && $item->getOriginal('user_id')) {
+                app(\App\Services\Intelligence\WorkPrioritizationEngine::class)->invalidateUserPlan($item->getOriginal('user_id'));
+            }
+        });
+
+        static::deleted(function (PmWorkItem $item) {
+            if ($item->user_id) {
+                app(\App\Services\Intelligence\WorkPrioritizationEngine::class)->invalidateUserPlan($item->user_id);
+            }
+        });
+    }
+
     public function client(): BelongsTo
     {
         return $this->belongsTo(Client::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function connection(): BelongsTo

@@ -19,6 +19,7 @@ class Client extends Model
         'jira_project_key',
         'timezone',
         'currency',
+        'monthly_allocated_hours',
         'status',
         'notes',
         'business_context',
@@ -27,8 +28,9 @@ class Client extends Model
     ];
 
     protected $casts = [
-        'status'           => ClientStatus::class,
-        'monitoring_config' => 'array',
+        'status'                  => ClientStatus::class,
+        'monthly_allocated_hours' => 'integer',
+        'monitoring_config'        => 'array',
     ];
 
     // ── Monitoring config helpers ────────────────────────────────────────

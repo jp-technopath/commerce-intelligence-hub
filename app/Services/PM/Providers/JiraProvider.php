@@ -404,6 +404,10 @@ class JiraProvider implements ProjectManagementProvider
             $total = $json['total'] ?? count($worklogs);
 
             foreach ($worklogs as $wl) {
+                $authorAccountId = $wl['author']['accountId'] ?? null;
+                $authorEmail     = $wl['author']['emailAddress'] ?? null;
+                $userId          = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $authorAccountId, $authorEmail);
+
                 $worklogModel = PmWorklog::updateOrCreate(
                     [
                         'external_worklog_id' => (string) $wl['id'],
@@ -411,7 +415,9 @@ class JiraProvider implements ProjectManagementProvider
                     [
                         'pm_connection_id'    => $connection->id,
                         'client_id'           => $workItem->client_id,
+                        'user_id'             => $userId,
                         'pm_work_item_id'     => $workItem->id,
+                        'external_author_id'  => $authorAccountId,
                         'author_name'         => $wl['author']['displayName'] ?? 'Unknown',
                         'time_spent_seconds'  => (int) ($wl['timeSpentSeconds'] ?? 0),
                         'worklog_started_at'  => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
@@ -694,6 +700,10 @@ class JiraProvider implements ProjectManagementProvider
 
         $targetClientId = $this->resolveClientIdFromIssue($issue, $connection, $project);
 
+        $assigneeAccountId = $fields['assignee']['accountId'] ?? null;
+        $assigneeEmail     = $fields['assignee']['emailAddress'] ?? null;
+        $assigneeUserId    = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $assigneeAccountId, $assigneeEmail);
+
         return PmWorkItem::updateOrCreate(
             [
                 'external_item_id' => (string) $issue['id'],
@@ -712,6 +722,8 @@ class JiraProvider implements ProjectManagementProvider
                 'estimated_seconds'          => $originalEstimateSeconds,
                 'time_spent_seconds'         => $timeSpentSeconds,
                 'assignee_name'              => $fields['assignee']['displayName'] ?? null,
+                'user_id'                    => $assigneeUserId,
+                'external_assignee_id'       => $assigneeAccountId,
                 'target_due_date'            => isset($fields['duedate']) ? Carbon::parse($fields['duedate']) : null,
                 'labels_json'                => $fields['labels'] ?? [],
                 'external_updated_at'        => isset($fields['updated']) ? Carbon::parse($fields['updated']) : null,

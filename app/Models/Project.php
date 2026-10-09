@@ -22,12 +22,14 @@ class Project extends Model
         'jira_project_key',
         'repository_url',
         'budget_amount',
+        'monthly_allocated_hours',
         'owner_id',
     ];
 
     protected $casts = [
-        'status' => ProjectStatus::class,
-        'budget_amount' => 'decimal:2',
+        'status'                  => ProjectStatus::class,
+        'budget_amount'           => 'decimal:2',
+        'monthly_allocated_hours' => 'integer',
     ];
 
     public function client(): BelongsTo

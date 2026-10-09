@@ -12,9 +12,11 @@ class PmWorklog extends Model
 
     protected $fillable = [
         'client_id',
+        'user_id',
         'pm_connection_id',
         'pm_work_item_id',
         'external_worklog_id',
+        'external_author_id',
         'author_name',
         'time_spent_seconds',
         'worklog_started_at',
@@ -30,9 +32,29 @@ class PmWorklog extends Model
         'last_synced_at'      => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function (PmWorklog $wl) {
+            if ($wl->user_id) {
+                app(\App\Services\Intelligence\WorkPrioritizationEngine::class)->invalidateUserPlan($wl->user_id);
+            }
+        });
+
+        static::deleted(function (PmWorklog $wl) {
+            if ($wl->user_id) {
+                app(\App\Services\Intelligence\WorkPrioritizationEngine::class)->invalidateUserPlan($wl->user_id);
+            }
+        });
+    }
+
     public function client(): BelongsTo
     {
         return $this->belongsTo(Client::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function connection(): BelongsTo

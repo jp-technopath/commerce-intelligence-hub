@@ -50,6 +50,8 @@ class AdminPanelProvider extends PanelProvider
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
                 \App\Filament\Pages\AgencyDashboard::class,
+                \App\Filament\Pages\EngineerDashboard::class,
+                \App\Filament\Pages\ManagerDashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([

@@ -15,6 +15,7 @@ class ConnectedAccount extends Model
     protected $fillable = [
         'user_id',
         'provider',
+        'external_account_id',
         'authorized_email',
         'credentials_json',
         'settings_json',
