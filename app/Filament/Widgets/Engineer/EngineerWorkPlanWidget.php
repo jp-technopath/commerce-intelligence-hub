@@ -19,11 +19,24 @@ class EngineerWorkPlanWidget extends Widget
 
     public ?int $userId = null;
 
-    protected $listeners = ['engineer-user-changed' => '$refresh'];
+    public string $activeTab = 'plan';
+
+    protected $listeners = [
+        'engineer-user-changed' => 'handleEngineerUserChanged',
+    ];
+
+    public function handleEngineerUserChanged(?int $userId = null): void
+    {
+        $this->userId = $userId;
+    }
 
     public function getTargetUser(): ?\App\Models\User
     {
         $id = $this->userId ?? session('engineer_dashboard_user_id') ?? Auth::id();
+
+        if (! $id) {
+            return Auth::user();
+        }
 
         return \App\Models\User::find($id) ?? Auth::user();
     }

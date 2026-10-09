@@ -19,7 +19,8 @@ class AgencyDashboard extends BaseDashboard
         /** @var \App\Models\User|null $user */
         $user = auth()->user();
         if ($user && $user->isClientOnly()) {
-            redirect()->to(CustomerDashboard::getUrl());
+            $this->redirect(CustomerDashboard::getUrl());
+            return;
         }
     }
 

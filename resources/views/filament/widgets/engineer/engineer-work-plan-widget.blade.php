@@ -55,7 +55,7 @@
         <button
             type="button"
             wire:click="$set('activeTab', 'plan')"
-            class="pb-3 border-b-2 flex items-center gap-2 transition {{ $activeTab === 'plan' ? 'border-primary-600 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400' }}"
+            class="pb-3 border-b-2 flex items-center gap-2 transition {{ ($activeTab ?? 'plan') === 'plan' ? 'border-primary-600 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400' }}"
         >
             <span>Executable Plan</span>
             <span class="px-2 py-0.5 text-xs rounded-full bg-primary-100 dark:bg-primary-950 text-primary-700 dark:text-primary-300">
@@ -66,7 +66,7 @@
         <button
             type="button"
             wire:click="$set('activeTab', 'attention')"
-            class="pb-3 border-b-2 flex items-center gap-2 transition {{ $activeTab === 'attention' ? 'border-rose-600 text-rose-600 dark:text-rose-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400' }}"
+            class="pb-3 border-b-2 flex items-center gap-2 transition {{ ($activeTab ?? 'plan') === 'attention' ? 'border-rose-600 text-rose-600 dark:text-rose-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400' }}"
         >
             <span>Needs My Attention</span>
             @if (count($needsAttention) > 0)
@@ -79,7 +79,7 @@
         <button
             type="button"
             wire:click="$set('activeTab', 'meetings')"
-            class="pb-3 border-b-2 flex items-center gap-2 transition {{ $activeTab === 'meetings' ? 'border-amber-600 text-amber-600 dark:text-amber-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400' }}"
+            class="pb-3 border-b-2 flex items-center gap-2 transition {{ ($activeTab ?? 'plan') === 'meetings' ? 'border-amber-600 text-amber-600 dark:text-amber-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400' }}"
         >
             <span>Meeting Readiness</span>
             @if (count($meetingPrep) > 0)
@@ -91,7 +91,7 @@
     </div>
 
     {{-- TAB 1: Executable Recommended Plan --}}
-    @if ($activeTab === 'plan')
+    @if (($activeTab ?? 'plan') === 'plan')
         @if (empty($recommended))
             <div class="text-center py-10 bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
                 <x-heroicon-o-check-circle class="w-12 h-12 text-emerald-500 mx-auto mb-2" />
@@ -123,7 +123,7 @@
                                     {{ $item['client_name'] }}
                                 </span>
                                 <span class="px-2 py-0.5 text-[11px] rounded font-medium
-                                    {{ strtolower($item['priority']) === 'critical' || strtolower($item['priority']) === 'highest' ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300' : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' }}">
+                                    {{ strtolower($item['priority'] ?? '') === 'critical' || strtolower($item['priority'] ?? '') === 'highest' ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300' : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' }}">
                                     {{ $item['priority'] }}
                                 </span>
                                 @if ($item['is_overdue'])
@@ -183,7 +183,7 @@
     @endif
 
     {{-- TAB 2: Needs My Attention (Strictly Blocked / Missing Time Logs) --}}
-    @if ($activeTab === 'attention')
+    @if (($activeTab ?? 'plan') === 'attention')
         @if (empty($needsAttention))
             <div class="text-center py-10 bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
                 <x-heroicon-o-shield-check class="w-12 h-12 text-emerald-500 mx-auto mb-2" />
@@ -267,7 +267,7 @@
     @endif
 
     {{-- TAB 3: Meeting Readiness --}}
-    @if ($activeTab === 'meetings')
+    @if (($activeTab ?? 'plan') === 'meetings')
         @if (empty($meetingPrep))
             <div class="text-center py-10 bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
                 <x-heroicon-o-calendar-days class="w-12 h-12 text-blue-500 mx-auto mb-2" />

@@ -20,11 +20,22 @@ class EngineerActiveTasksWidget extends BaseWidget
 
     public ?int $userId = null;
 
-    protected $listeners = ['engineer-user-changed' => '$refresh'];
+    protected $listeners = [
+        'engineer-user-changed' => 'handleEngineerUserChanged',
+    ];
+
+    public function handleEngineerUserChanged(?int $userId = null): void
+    {
+        $this->userId = $userId;
+    }
 
     public function getTargetUser(): ?\App\Models\User
     {
         $id = $this->userId ?? session('engineer_dashboard_user_id') ?? Auth::id();
+
+        if (! $id) {
+            return Auth::user();
+        }
 
         return \App\Models\User::find($id) ?? Auth::user();
     }
@@ -39,10 +50,12 @@ class EngineerActiveTasksWidget extends BaseWidget
             ->query(
                 PmWorkItem::query()
                     ->with(['client', 'project', 'pmConnection'])
-                    ->where(function ($q) use ($user) {
-                        $q->where('user_id', $user?->id)
-                          ->orWhere('assignee_name', $user?->name);
-                    })
+                    ->when($user, function ($q) use ($user) {
+                        $q->where(function ($sub) use ($user) {
+                            $sub->where('user_id', $user->id)
+                                ->orWhere('assignee_name', $user->name);
+                        });
+                    }, fn ($q) => $q->whereRaw('1 = 0'))
                     ->excludeBacklogAndOnHold()
                     ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
                     ->orderByDesc('is_blocked')
@@ -73,7 +86,7 @@ class EngineerActiveTasksWidget extends BaseWidget
                 Tables\Columns\TextColumn::make('priority')
                     ->label('Priority')
                     ->badge()
-                    ->color(fn (string $state): string => match (strtolower($state)) {
+                    ->color(fn (?string $state): string => match (strtolower((string) $state)) {
                         'critical', 'highest' => 'danger',
                         'high'                => 'warning',
                         'medium'              => 'info',
@@ -83,7 +96,7 @@ class EngineerActiveTasksWidget extends BaseWidget
                 Tables\Columns\TextColumn::make('normalized_delivery_status')
                     ->label('Status')
                     ->badge()
-                    ->color(fn (string $state): string => match ($state) {
+                    ->color(fn (?string $state): string => match ((string) $state) {
                         'in_progress'     => 'primary',
                         'review_qa'       => 'warning',
                         'customer_review' => 'info',

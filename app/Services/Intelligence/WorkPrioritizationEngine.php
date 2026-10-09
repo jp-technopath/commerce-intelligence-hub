@@ -153,7 +153,7 @@ class WorkPrioritizationEngine
                     'meeting_id'       => $meeting->id,
                     'title'            => $meeting->title,
                     'client_name'      => $meeting->client?->name ?? 'Customer Meeting',
-                    'meeting_start_at' => $meeting->meeting_start_at->toDayDateTimeString(),
+                    'meeting_start_at' => $meeting->meeting_start_at?->toDayDateTimeString() ?? 'Upcoming',
                     'prep_stage'       => $meeting->prep_stage,
                     'action_label'     => $meeting->prep_stage === 'needed' ? 'Prepare Brief' : 'Review Draft',
                 ];
@@ -174,6 +174,7 @@ class WorkPrioritizationEngine
                     'target_due_date' => null,
                     'action_label'    => 'Log Hours',
                     'delivery_status' => $mItem['normalized_delivery_status'],
+                    'jira_url'        => ! empty($mItem['external_item_key']) ? 'https://technopath.atlassian.net/browse/' . $mItem['external_item_key'] : null,
                 ];
             }
         }

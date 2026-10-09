@@ -33,7 +33,8 @@ class EngineerDashboard extends Page implements HasForms
         /** @var \App\Models\User|null $user */
         $user = Auth::user();
         if ($user && $user->isClientOnly()) {
-            redirect()->to(CustomerDashboard::getUrl());
+            $this->redirect(CustomerDashboard::getUrl());
+            return;
         }
 
         $sessionUserId = session('engineer_dashboard_user_id');
@@ -75,17 +76,12 @@ class EngineerDashboard extends Page implements HasForms
     public function getUserOptions(): array
     {
         $currentAuthId = Auth::id();
-        $assignedUserIds = PmWorkItem::whereNotNull('user_id')->distinct()->pluck('user_id');
+        $assignedUserIds = PmWorkItem::whereNotNull('user_id')->distinct()->pluck('user_id')->all();
 
         return User::query()
-            ->where(function ($q) use ($assignedUserIds) {
-                $q->whereIn('id', $assignedUserIds)
-                  ->orWhere('is_admin', true)
-                  ->orWhereDoesntHave('roles', fn ($r) => $r->where('name', 'Client'));
-            })
             ->orderBy('name')
             ->get()
-            ->filter(fn (User $u) => ! $u->isClientOnly() || $assignedUserIds->contains($u->id))
+            ->filter(fn (User $u) => ! $u->isClientOnly() || in_array($u->id, $assignedUserIds, true))
             ->mapWithKeys(function (User $u) use ($currentAuthId) {
                 $suffix = ($u->id === $currentAuthId) ? ' (You)' : '';
                 return [$u->id => "{$u->name}{$suffix}"];
@@ -96,6 +92,10 @@ class EngineerDashboard extends Page implements HasForms
     public function getSelectedUser(): ?User
     {
         $id = $this->selected_user_id ?? session('engineer_dashboard_user_id') ?? Auth::id();
+
+        if (! $id) {
+            return Auth::user();
+        }
 
         return User::find($id) ?? Auth::user();
     }

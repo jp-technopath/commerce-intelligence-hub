@@ -25,7 +25,8 @@ class ManagerDashboard extends Page
         /** @var \App\Models\User|null $user */
         $user = Auth::user();
         if ($user && $user->isClientOnly()) {
-            redirect()->to(CustomerDashboard::getUrl());
+            $this->redirect(CustomerDashboard::getUrl());
+            return;
         }
     }
 
