@@ -43,6 +43,7 @@ class ManagerActionCenterWidget extends BaseWidget
             ->query(
                 Finding::query()
                     ->with(['client', 'responsibleUser'])
+                    ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
                     ->whereIn('finding_category', $operationalCategories)
                     ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
                     ->where(function ($q) {

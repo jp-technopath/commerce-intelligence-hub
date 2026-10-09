@@ -76,6 +76,7 @@ class WorkPrioritizationEngine
         // 1. Fetch user's assigned work items
         // Match either direct user_id or assignee_name / external_assignee_id
         $items = PmWorkItem::with(['client', 'project', 'pmConnection'])
+            ->forCustomerSpacesWithJiraCode()
             ->where(function ($q) use ($user) {
                 $q->where('user_id', $user->id)
                   ->orWhere('assignee_name', $user->name);

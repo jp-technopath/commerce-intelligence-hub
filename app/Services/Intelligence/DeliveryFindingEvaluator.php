@@ -19,7 +19,7 @@ class DeliveryFindingEvaluator
     public function evaluateAll(): int
     {
         $total = 0;
-        foreach (Client::where('status', 'active')->get() as $client) {
+        foreach (Client::withJiraProjectKey()->where('status', 'active')->get() as $client) {
             $total += $this->evaluateClientFindings($client);
         }
         return $total;
@@ -30,11 +30,16 @@ class DeliveryFindingEvaluator
      */
     public function evaluateClientFindings(Client $client): int
     {
+        if (empty($client->jira_project_key)) {
+            return 0;
+        }
+
         $count = 0;
         $now = now();
 
         // 1. Evaluate Blocked Tasks
         $blockedItems = PmWorkItem::where('client_id', $client->id)
+            ->forCustomerSpacesWithJiraCode($client->id)
             ->excludeBacklogAndOnHold()
             ->where('normalized_delivery_status', '!=', 'completed')
             ->where(function ($q) {

@@ -23,7 +23,7 @@ class ManagerPortfolioDeliveryHealthWidget extends Widget
         $user = Auth::user();
         $clientIds = $user ? $user->getAssignedClientIds() : [];
 
-        $clientsQuery = Client::query();
+        $clientsQuery = Client::withJiraProjectKey();
         $filteredIds = array_diff($clientIds, ['*']);
         if (! empty($filteredIds)) {
             $clientsQuery->whereIn('id', $filteredIds);
@@ -77,7 +77,7 @@ class ManagerPortfolioDeliveryHealthWidget extends Widget
         $user = Auth::user();
         $clientIds = $user ? $user->getAssignedClientIds() : [];
 
-        $clientsQuery = Client::query();
+        $clientsQuery = Client::withJiraProjectKey();
         if (! empty($clientIds) && $clientIds !== ['*']) {
             $clientsQuery->whereIn('id', $clientIds);
         }

@@ -64,7 +64,7 @@ class ResponseTimeService
     public function getWorkflowHealthMetrics(array $clientIds = []): array
     {
         $filteredIds = array_diff($clientIds, ['*']);
-        $query = PmWorkItem::query();
+        $query = PmWorkItem::query()->forCustomerSpacesWithJiraCode();
         if (! empty($filteredIds)) {
             $query->whereIn('client_id', $filteredIds);
         }

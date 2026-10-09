@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -276,6 +277,51 @@ class PmWorkItem extends Model
     public function scopeExcludeInactive($query)
     {
         return $this->scopeExcludeBacklogAndOnHold($query);
+    }
+
+    /**
+     * Scope query to only PM work items belonging to customers in the customer list
+     * with an assigned Jira project code, restricted to spaces matching that Jira project code.
+     */
+    public function scopeForCustomerSpacesWithJiraCode(Builder $query, ?int $clientId = null): Builder
+    {
+        if ($clientId !== null) {
+            $client = Client::find($clientId);
+            if (! $client || empty($client->jira_project_key)) {
+                return $query->whereRaw('1 = 0');
+            }
+
+            return $query->where('pm_work_items.client_id', $client->id)
+                ->where(function ($keyClause) use ($client) {
+                    $keyClause->where('pm_work_items.external_item_key', 'LIKE', $client->jira_project_key . '-%')
+                              ->orWhereHas('project', function ($pq) use ($client) {
+                                  $pq->where('external_project_key', $client->jira_project_key);
+                              });
+                });
+        }
+
+        $validClients = Client::query()
+            ->whereNotNull('jira_project_key')
+            ->where('jira_project_key', '!=', '')
+            ->get(['id', 'jira_project_key']);
+
+        if ($validClients->isEmpty()) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->where(function ($sub) use ($validClients) {
+            foreach ($validClients as $client) {
+                $sub->orWhere(function ($clause) use ($client) {
+                    $clause->where('pm_work_items.client_id', $client->id)
+                           ->where(function ($keyClause) use ($client) {
+                               $keyClause->where('pm_work_items.external_item_key', 'LIKE', $client->jira_project_key . '-%')
+                                         ->orWhereHas('project', function ($pq) use ($client) {
+                                             $pq->where('external_project_key', $client->jira_project_key);
+                                         });
+                           });
+                });
+            }
+        });
     }
 }
 

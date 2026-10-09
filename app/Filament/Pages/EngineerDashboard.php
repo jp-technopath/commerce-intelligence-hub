@@ -103,7 +103,7 @@ class EngineerDashboard extends Page implements HasForms
     public function getUserOptions(): array
     {
         $currentAuthId = Auth::id();
-        $assignedUserIds = PmWorkItem::whereNotNull('user_id')->distinct()->pluck('user_id')->all();
+        $assignedUserIds = PmWorkItem::forCustomerSpacesWithJiraCode()->whereNotNull('user_id')->distinct()->pluck('user_id')->all();
 
         return User::query()
             ->orderBy('name')
@@ -580,7 +580,8 @@ class EngineerDashboard extends Page implements HasForms
         }
 
         try {
-            $clientIds = PmWorkItem::where('user_id', $targetUser->id)
+            $clientIds = PmWorkItem::forCustomerSpacesWithJiraCode()
+                ->where('user_id', $targetUser->id)
                 ->whereNotNull('client_id')
                 ->distinct()
                 ->pluck('client_id')
@@ -591,7 +592,7 @@ class EngineerDashboard extends Page implements HasForms
             }
 
             $healthService = app(ProjectDeliveryHealthService::class);
-            $clients = Client::whereIn('id', $clientIds)->take(3)->get();
+            $clients = Client::withJiraProjectKey()->whereIn('id', $clientIds)->take(3)->get();
 
             if ($clients->isEmpty()) {
                 return $defaultHealth;

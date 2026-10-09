@@ -89,6 +89,7 @@ class MeetingIntelligenceService
         $cutoff = $now->copy()->addDays($days);
 
         $meetings = ClientMeeting::with(['client', 'prep', 'followUp'])
+            ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
             ->whereBetween('meeting_start_at', [$now, $cutoff])
             ->where(function ($q) use ($user) {
                 $q->where('internal_owner_id', $user->id)
@@ -113,6 +114,7 @@ class MeetingIntelligenceService
         $to = $now->copy()->addDays($daysAhead);
 
         $meetings = ClientMeeting::with(['client', 'owner', 'prep', 'followUp'])
+            ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
             ->whereIn('client_id', $clientIds)
             ->whereBetween('meeting_start_at', [$from, $to])
             ->orderBy('meeting_start_at', 'asc')
@@ -157,6 +159,7 @@ class MeetingIntelligenceService
     {
         $now = now();
         $meetings = ClientMeeting::with(['client', 'prep', 'followUp'])
+            ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
             ->whereIn('client_id', $clientIds)
             ->whereBetween('meeting_start_at', [$now->copy()->subDays(2), $now->copy()->addDays(2)])
             ->get();

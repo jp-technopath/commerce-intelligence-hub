@@ -27,14 +27,11 @@ class WorkInProgressWidget extends BaseWidget
             ->query(
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
+                    ->forCustomerSpacesWithJiraCode($clientId)
                     ->where(function ($q) {
                         $q->where('normalized_delivery_status', 'in_progress')
                           ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
                     })
-                    ->whereHas('project', function ($q) {
-                        $q->where('external_project_key', '!=', 'SUP');
-                    })
-                    ->where('external_item_key', 'NOT LIKE', 'SUP-%')
                     ->orderBy('updated_at', 'desc')
             )
             ->columns([

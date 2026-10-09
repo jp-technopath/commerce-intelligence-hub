@@ -16,7 +16,25 @@ class ProjectDeliveryHealthService
      */
     public function evaluateClientHealth(Client $client): array
     {
-        $workItems = PmWorkItem::where('client_id', $client->id)->get();
+        if (empty($client->jira_project_key)) {
+            return [
+                'status'      => 'Unknown',
+                'badge_color' => 'gray',
+                'summary'     => 'No Jira Project Code',
+                'reasons'     => ['Client has no configured Jira project code.'],
+                'metrics'     => [
+                    'total_active_tasks'  => 0,
+                    'blocked_tasks_count' => 0,
+                    'overdue_tasks_count' => 0,
+                    'critical_open_count' => 0,
+                    'rework_tasks_count'  => 0,
+                ],
+            ];
+        }
+
+        $workItems = PmWorkItem::where('client_id', $client->id)
+            ->forCustomerSpacesWithJiraCode($client->id)
+            ->get();
 
         return $this->evaluateWorkItemsHealth($workItems, $client->name);
     }
@@ -26,10 +44,11 @@ class ProjectDeliveryHealthService
      */
     public function evaluateProjectHealth(Project $project): array
     {
-        $workItems = PmWorkItem::where(function ($q) use ($project) {
-            $q->where('pm_project_id', $project->id)
-              ->orWhere('client_id', $project->client_id);
-        })->get();
+        $workItems = PmWorkItem::forCustomerSpacesWithJiraCode($project->client_id)
+            ->where(function ($q) use ($project) {
+                $q->where('pm_project_id', $project->id)
+                  ->orWhere('client_id', $project->client_id);
+            })->get();
 
         return $this->evaluateWorkItemsHealth($workItems, $project->name);
     }

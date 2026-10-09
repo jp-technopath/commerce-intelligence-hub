@@ -49,6 +49,7 @@ class EngineerActiveTasksWidget extends BaseWidget
             ->heading($user && $user->id !== Auth::id() ? "{$user->name}'s Assigned Tasks (All Active)" : 'My Assigned Tasks (All Active)')
             ->query(
                 PmWorkItem::query()
+                    ->forCustomerSpacesWithJiraCode()
                     ->with(['client', 'project', 'pmConnection'])
                     ->when($user, function ($q) use ($user) {
                         $q->where(function ($sub) use ($user) {

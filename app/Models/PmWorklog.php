@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -70,5 +71,15 @@ class PmWorklog extends Model
     public function getTimeSpentHoursAttribute(): float
     {
         return round($this->time_spent_seconds / 3600, 1);
+    }
+
+    /**
+     * Scope query to only worklogs belonging to customer spaces with Jira project code.
+     */
+    public function scopeForCustomerSpacesWithJiraCode(Builder $query, ?int $clientId = null): Builder
+    {
+        return $query->whereHas('workItem', function ($q) use ($clientId) {
+            $q->forCustomerSpacesWithJiraCode($clientId);
+        });
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -38,5 +39,29 @@ class PmProject extends Model
     public function workItems(): HasMany
     {
         return $this->hasMany(PmWorkItem::class);
+    }
+
+    /**
+     * Scope query to only PM projects/spaces belonging to customers in the customer list with an assigned Jira project code.
+     */
+    public function scopeForCustomerSpacesWithJiraCode(Builder $query): Builder
+    {
+        $validClients = Client::query()
+            ->whereNotNull('jira_project_key')
+            ->where('jira_project_key', '!=', '')
+            ->get(['id', 'jira_project_key']);
+
+        if ($validClients->isEmpty()) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->where(function ($sub) use ($validClients) {
+            foreach ($validClients as $client) {
+                $sub->orWhere(function ($clause) use ($client) {
+                    $clause->where('pm_projects.client_id', $client->id)
+                           ->where('pm_projects.external_project_key', $client->jira_project_key);
+                });
+            }
+        });
     }
 }

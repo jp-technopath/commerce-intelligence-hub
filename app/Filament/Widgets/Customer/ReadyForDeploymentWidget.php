@@ -22,6 +22,7 @@ class ReadyForDeploymentWidget extends BaseWidget
         $clientId = $user?->client_id ?? session('current_client_id') ?? 1;
 
         return PmWorkItem::where('client_id', $clientId)
+            ->forCustomerSpacesWithJiraCode($clientId)
             ->where('normalized_delivery_status', 'ready_for_deployment')
             ->exists();
     }
@@ -36,6 +37,7 @@ class ReadyForDeploymentWidget extends BaseWidget
             ->query(
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
+                    ->forCustomerSpacesWithJiraCode($clientId)
                     ->where('normalized_delivery_status', 'ready_for_deployment')
                     ->orderBy('updated_at', 'desc')
             )

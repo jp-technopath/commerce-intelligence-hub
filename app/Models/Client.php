@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\ClientStatus;
 use App\Models\Integration;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -200,6 +201,22 @@ class Client extends Model
     public function activeFindingConfiguration(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
         return $this->hasOne(ClientFindingConfiguration::class)->where('status', ClientFindingConfiguration::STATUS_ACTIVE);
+    }
+
+    /**
+     * Scope query to only clients that have an assigned Jira project code.
+     */
+    public function scopeWithJiraProjectKey(Builder $query): Builder
+    {
+        return $query->whereNotNull('jira_project_key')->where('jira_project_key', '!=', '');
+    }
+
+    /**
+     * Check if this client has a valid Jira project code.
+     */
+    public function hasJiraProjectKey(): bool
+    {
+        return ! empty($this->jira_project_key);
     }
 }
 

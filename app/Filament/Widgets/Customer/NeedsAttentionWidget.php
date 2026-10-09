@@ -390,7 +390,9 @@ class NeedsAttentionWidget extends BaseWidget
 
         // 2b. Check estimate approval needed ONLY for work items with approval-needed or approval_needed label
         $approvalService = app(\App\Services\EstimateApprovalService::class);
-        $clientWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)->get();
+        $clientWorkItems = \App\Models\PmWorkItem::where('client_id', $clientId)
+            ->forCustomerSpacesWithJiraCode($clientId)
+            ->get();
         foreach ($clientWorkItems as $wi) {
             $approvalService->checkInitialEstimateApprovalNeeded($wi);
             $approvalService->checkEstimateReapprovalNeeded($wi, $wi->estimated_seconds);

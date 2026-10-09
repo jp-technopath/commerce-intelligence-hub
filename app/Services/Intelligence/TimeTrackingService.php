@@ -21,8 +21,9 @@ class TimeTrackingService
         $startOfMonth = $date->copy()->startOfMonth();
         $endOfMonth = $date->copy()->endOfMonth();
 
-        // Query worklogs for this user within the month
+        // Query worklogs for this user within the month belonging to valid customer spaces
         $worklogs = PmWorklog::with(['client', 'workItem.project'])
+            ->forCustomerSpacesWithJiraCode()
             ->where('user_id', $user->id)
             ->whereBetween('worklog_started_at', [$startOfMonth, $endOfMonth])
             ->get();
@@ -66,7 +67,8 @@ class TimeTrackingService
         usort($byCustomer, fn ($a, $b) => $b['hours'] <=> $a['hours']);
 
         // Missing time entries: completed or in-review tasks assigned to user with 0 logged seconds
-        $missingTimeItems = PmWorkItem::where('user_id', $user->id)
+        $missingTimeItems = PmWorkItem::forCustomerSpacesWithJiraCode()
+            ->where('user_id', $user->id)
             ->whereIn('normalized_delivery_status', ['completed', 'review_qa', 'customer_review'])
             ->where('time_spent_seconds', '<=', 0)
             ->where('updated_at', '>=', $startOfMonth)
@@ -101,7 +103,7 @@ class TimeTrackingService
         $startOfMonth = $date->copy()->startOfMonth();
         $endOfMonth = $date->copy()->endOfMonth();
 
-        $clientsQuery = Client::query();
+        $clientsQuery = Client::withJiraProjectKey();
         $filteredIds = array_diff($clientIds, ['*']);
         if (! empty($filteredIds)) {
             $clientsQuery->whereIn('id', $filteredIds);
@@ -110,6 +112,7 @@ class TimeTrackingService
         $effectiveClientIds = $clients->pluck('id')->toArray();
 
         $worklogsQuery = PmWorklog::with(['user', 'client'])
+            ->forCustomerSpacesWithJiraCode()
             ->whereBetween('worklog_started_at', [$startOfMonth, $endOfMonth]);
         if (! empty($effectiveClientIds)) {
             $worklogsQuery->whereIn('client_id', $effectiveClientIds);

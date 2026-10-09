@@ -26,6 +26,7 @@ class ApprovedTasksWidget extends BaseWidget
         $clientId = $user?->client_id ?? session('current_client_id') ?? 1;
 
         return PmWorkItem::where('client_id', $clientId)
+            ->forCustomerSpacesWithJiraCode($clientId)
             ->whereNotIn('normalized_delivery_status', ['completed', 'backlog'])
             ->whereRaw('UPPER(external_status) NOT LIKE ?', ['%BACKLOG%'])
             ->whereHas('estimateVersions.approvalEvents', function ($q) {
@@ -48,6 +49,7 @@ class ApprovedTasksWidget extends BaseWidget
             ->query(
                 PmWorkItem::query()
                     ->where('client_id', $clientId)
+                    ->forCustomerSpacesWithJiraCode($clientId)
                     ->whereNotIn('normalized_delivery_status', ['completed', 'backlog'])
                     ->whereRaw('UPPER(external_status) NOT LIKE ?', ['%BACKLOG%'])
                     ->whereHas('estimateVersions.approvalEvents', function ($q) {

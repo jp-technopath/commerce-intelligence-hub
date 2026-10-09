@@ -36,6 +36,7 @@ class ForgeOperationalDashboardsTest extends TestCase
         $this->client = Client::create([
             'name'                     => 'Acme Retail',
             'code'                     => 'ACME',
+            'jira_project_key'         => 'ACME',
             'status'                   => 'active',
             'monthly_allocated_hours'  => 100,
         ]);

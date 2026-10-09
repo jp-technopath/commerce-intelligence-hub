@@ -27,6 +27,7 @@ class ManagerMeetingIntelligenceWidget extends Widget
         $service = app(MeetingIntelligenceService::class);
 
         $query = ClientMeeting::with(['client', 'internalOwner', 'prep', 'followUp'])
+            ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
             ->where('meeting_start_at', '>=', now()->subDays(1))
             ->where('meeting_start_at', '<=', now()->addDays(7))
             ->orderBy('meeting_start_at', 'asc');
