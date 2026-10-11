@@ -409,7 +409,8 @@ class JiraProvider implements ProjectManagementProvider
             foreach ($worklogs as $wl) {
                 $authorAccountId = $wl['author']['accountId'] ?? null;
                 $authorEmail     = $wl['author']['emailAddress'] ?? null;
-                $userId          = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $authorAccountId, $authorEmail);
+                $authorName      = $wl['author']['displayName'] ?? null;
+                $userId          = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $authorAccountId, $authorEmail, $authorName) ?? $workItem->user_id;
 
                 $worklogModel = PmWorklog::updateOrCreate(
                     [
@@ -705,7 +706,8 @@ class JiraProvider implements ProjectManagementProvider
 
         $assigneeAccountId = $fields['assignee']['accountId'] ?? null;
         $assigneeEmail     = $fields['assignee']['emailAddress'] ?? null;
-        $assigneeUserId    = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $assigneeAccountId, $assigneeEmail);
+        $assigneeName      = $fields['assignee']['displayName'] ?? null;
+        $assigneeUserId    = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $assigneeAccountId, $assigneeEmail, $assigneeName);
 
         return PmWorkItem::updateOrCreate(
             [

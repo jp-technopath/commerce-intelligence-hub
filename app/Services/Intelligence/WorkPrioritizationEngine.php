@@ -73,13 +73,31 @@ class WorkPrioritizationEngine
     {
         $now = now();
 
+        $effectiveUser = \App\Services\PM\IdentityResolverService::resolveEffectiveUser($user);
+        $targetUserIds = array_unique([$user->id, $effectiveUser->id]);
+
+        $names = array_filter([$user->name, $effectiveUser->name]);
+        if (in_array(2, $targetUserIds)) {
+            $names = array_merge($names, ['Jean Paul Hanna', 'Jean Paul']);
+        } elseif (in_array(3, $targetUserIds)) {
+            $names = array_merge($names, ['Donia Khaled', 'Donia Attwa']);
+        } elseif (in_array(4, $targetUserIds)) {
+            $names = array_merge($names, ['Nour eldin ayman', 'Nour Ayman']);
+        } elseif (in_array(5, $targetUserIds)) {
+            $names = array_merge($names, ['Nick Barretta']);
+        }
+        $names = array_unique($names);
+
         // 1. Fetch user's assigned work items
         // Match either direct user_id or assignee_name / external_assignee_id
         $items = PmWorkItem::with(['client', 'project', 'pmConnection'])
             ->forCustomerSpacesWithJiraCode()
-            ->where(function ($q) use ($user) {
-                $q->where('user_id', $user->id)
-                  ->orWhere('assignee_name', $user->name);
+            ->where(function ($q) use ($targetUserIds, $names) {
+                $q->whereIn('user_id', $targetUserIds);
+                foreach ($names as $name) {
+                    $q->orWhere('assignee_name', $name)
+                      ->orWhere('assignee_name', 'like', "%{$name}%");
+                }
             })
             ->excludeBacklogAndOnHold()
             ->excludeCompletedAndDone()

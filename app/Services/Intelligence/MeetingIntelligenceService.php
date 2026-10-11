@@ -87,13 +87,29 @@ class MeetingIntelligenceService
     {
         $now = now();
         $cutoff = $now->copy()->addDays($days);
+        $effectiveUser = \App\Services\PM\IdentityResolverService::resolveEffectiveUser($user);
+
+        $userEmails = [$user->email, $effectiveUser->email];
+        if (in_array($effectiveUser->id, [2, 6])) {
+            $userEmails = array_unique(array_merge($userEmails, ['jp@technopath.co', 'jeanpaulhanna@gmail.com']));
+        } elseif ($effectiveUser->id === 3) {
+            $userEmails = array_unique(array_merge($userEmails, ['donia@technopath.co', 'doniaakhaled@gmail.com']));
+        } elseif (in_array($effectiveUser->id, [4, 7])) {
+            $userEmails = array_unique(array_merge($userEmails, ['nour@technopath.co', 'nour@technopath.ai', 'nour.ayman91@gmail.com']));
+        }
 
         $meetings = ClientMeeting::with(['client', 'prep', 'followUp'])
             ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
             ->whereBetween('meeting_start_at', [$now, $cutoff])
-            ->where(function ($q) use ($user) {
+            ->where(function ($q) use ($user, $effectiveUser, $userEmails) {
                 $q->where('internal_owner_id', $user->id)
-                  ->orWhereJsonContains('internal_attendees', $user->email);
+                  ->orWhere('internal_owner_id', $effectiveUser->id);
+
+                foreach ($userEmails as $email) {
+                    if (! empty($email)) {
+                        $q->orWhere('internal_attendees', 'like', '%' . $email . '%');
+                    }
+                }
             })
             ->orderBy('meeting_start_at', 'asc')
             ->get();

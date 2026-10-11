@@ -21,10 +21,13 @@ class TimeTrackingService
         $startOfMonth = $date->copy()->startOfMonth();
         $endOfMonth = $date->copy()->endOfMonth();
 
+        $effectiveUser = \App\Services\PM\IdentityResolverService::resolveEffectiveUser($user);
+        $targetUserIds = array_unique([$user->id, $effectiveUser->id]);
+
         // Query worklogs for this user within the month belonging to valid customer spaces
         $worklogs = PmWorklog::with(['client', 'workItem.project'])
             ->forCustomerSpacesWithJiraCode()
-            ->where('user_id', $user->id)
+            ->whereIn('user_id', $targetUserIds)
             ->whereBetween('worklog_started_at', [$startOfMonth, $endOfMonth])
             ->get();
 
@@ -68,7 +71,7 @@ class TimeTrackingService
 
         // Missing time entries: completed or in-review tasks assigned to user with 0 logged seconds
         $missingTimeItems = PmWorkItem::forCustomerSpacesWithJiraCode()
-            ->where('user_id', $user->id)
+            ->whereIn('user_id', $targetUserIds)
             ->whereIn('normalized_delivery_status', ['completed', 'review_qa', 'customer_review'])
             ->where('time_spent_seconds', '<=', 0)
             ->where('updated_at', '>=', $startOfMonth)

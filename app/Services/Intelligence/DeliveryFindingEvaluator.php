@@ -9,6 +9,7 @@ use App\Models\Client;
 use App\Models\Finding;
 use App\Models\PmWorkItem;
 use App\Models\PmWorklog;
+use App\Models\Project;
 use Carbon\Carbon;
 
 class DeliveryFindingEvaluator
@@ -60,7 +61,7 @@ class DeliveryFindingEvaluator
                 [
                     'client_id'                  => $client->id,
                     'responsible_user_id'        => $item->user_id,
-                    'project_id'                 => $item->pm_project_id,
+                    'project_id'                 => Project::where('id', $item->pm_project_id)->exists() ? $item->pm_project_id : null,
                     'finding_type'               => 'task_blocked',
                     'source_type'                => 'pm_work_item',
                     'source_id'                  => (string) $item->id,
@@ -72,9 +73,10 @@ class DeliveryFindingEvaluator
                     'visibility_classification'  => 'internal',
                     'is_customer_visible'        => false,
                     'evidence_json'              => [
-                        'item_key'     => $item->external_item_key,
-                        'days_blocked' => $daysBlocked,
-                        'reason'       => $item->blocked_reason,
+                        'item_key'      => $item->external_item_key,
+                        'days_blocked'  => $daysBlocked,
+                        'reason'        => $item->blocked_reason,
+                        'pm_project_id' => $item->pm_project_id,
                     ],
                     'detected_at'                => now(),
                 ]
@@ -100,7 +102,7 @@ class DeliveryFindingEvaluator
                 [
                     'client_id'                  => $client->id,
                     'responsible_user_id'        => $item->user_id,
-                    'project_id'                 => $item->pm_project_id,
+                    'project_id'                 => Project::where('id', $item->pm_project_id)->exists() ? $item->pm_project_id : null,
                     'finding_type'               => 'task_overdue',
                     'source_type'                => 'pm_work_item',
                     'source_id'                  => (string) $item->id,
@@ -112,9 +114,10 @@ class DeliveryFindingEvaluator
                     'visibility_classification'  => 'internal',
                     'is_customer_visible'        => false,
                     'evidence_json'              => [
-                        'item_key' => $item->external_item_key,
-                        'due_date' => $item->target_due_date->toDateString(),
-                        'priority' => $item->priority,
+                        'item_key'      => $item->external_item_key,
+                        'due_date'      => $item->target_due_date->toDateString(),
+                        'priority'      => $item->priority,
+                        'pm_project_id' => $item->pm_project_id,
                     ],
                     'detected_at'                => now(),
                 ]
@@ -141,7 +144,7 @@ class DeliveryFindingEvaluator
                 [
                     'client_id'                  => $client->id,
                     'responsible_user_id'        => $item->user_id,
-                    'project_id'                 => $item->pm_project_id,
+                    'project_id'                 => Project::where('id', $item->pm_project_id)->exists() ? $item->pm_project_id : null,
                     'finding_type'               => 'qa_rework',
                     'source_type'                => 'pm_work_item',
                     'source_id'                  => (string) $item->id,
@@ -152,7 +155,10 @@ class DeliveryFindingEvaluator
                     'status'                     => FindingStatus::New,
                     'visibility_classification'  => 'internal',
                     'is_customer_visible'        => false,
-                    'evidence_json'              => ['item_key' => $item->external_item_key],
+                    'evidence_json'              => [
+                        'item_key'      => $item->external_item_key,
+                        'pm_project_id' => $item->pm_project_id,
+                    ],
                     'detected_at'                => now(),
                 ]
             );

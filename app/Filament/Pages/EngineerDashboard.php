@@ -9,6 +9,7 @@ use App\Services\Intelligence\MeetingIntelligenceService;
 use App\Services\Intelligence\ProjectDeliveryHealthService;
 use App\Services\Intelligence\TimeTrackingService;
 use App\Services\Intelligence\WorkPrioritizationEngine;
+use App\Services\PM\IdentityResolverService;
 use Carbon\Carbon;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -111,20 +112,56 @@ class EngineerDashboard extends Page implements HasForms
             ->filter(fn (User $u) => ! $u->isClientOnly() || in_array($u->id, $assignedUserIds, true))
             ->mapWithKeys(function (User $u) use ($currentAuthId) {
                 $suffix = ($u->id === $currentAuthId) ? ' (You)' : '';
-                return [$u->id => "{$u->name}{$suffix}"];
+                $taskCount = PmWorkItem::where('user_id', $u->id)->where('normalized_delivery_status', '!=', 'completed')->count();
+                $countStr = $taskCount > 0 ? " ({$taskCount} tasks)" : "";
+                return [$u->id => "{$u->name}{$countStr}{$suffix}"];
             })
             ->toArray();
     }
 
     public function getSelectedUser(): ?User
     {
-        $id = $this->selected_user_id ?? session('engineer_dashboard_user_id') ?? Auth::id();
+        $id = $this->selected_user_id ?? session('engineer_dashboard_user_id');
 
-        if (! $id) {
-            return Auth::user();
+        if ($id) {
+            $user = User::find($id);
+            if ($user) {
+                return IdentityResolverService::resolveEffectiveUser($user);
+            }
         }
 
-        return User::find($id) ?? Auth::user();
+        $authUser = Auth::user();
+        if ($authUser) {
+            // If logged in user is Google alias or PO alias, resolve to primary engineer
+            $effective = IdentityResolverService::resolveEffectiveUser($authUser);
+            if ($effective->id !== $authUser->id) {
+                return $effective;
+            }
+
+            // If Admin or user with 0 active tasks, default to Jean Paul (User 2) or first engineer with active tasks
+            $hasTasks = PmWorkItem::where('user_id', $authUser->id)
+                ->where('normalized_delivery_status', '!=', 'completed')
+                ->exists();
+
+            if (! $hasTasks) {
+                $defaultUser = User::where('email', 'jp@technopath.co')->first() ?? User::find(2);
+                if ($defaultUser) {
+                    return $defaultUser;
+                }
+
+                $firstWithTasksId = PmWorkItem::whereNotNull('user_id')
+                    ->where('normalized_delivery_status', '!=', 'completed')
+                    ->value('user_id');
+
+                if ($firstWithTasksId) {
+                    return User::find($firstWithTasksId) ?? $authUser;
+                }
+            }
+
+            return $authUser;
+        }
+
+        return null;
     }
 
     public function getWorkPlanItems(?User $targetUser): array

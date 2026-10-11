@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\ConnectedAccountStatus;
 use App\Models\ConnectedAccount;
+use App\Models\PmWorkItem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
@@ -145,6 +146,40 @@ class JiraOAuthController extends Controller
                 ->with('error', 'Retrieve Jira cloud site identifier failed.');
         }
 
+        // Fetch User Identity from Jira / Atlassian profile APIs
+        $accountId = null;
+        $displayName = null;
+        $jiraEmail = null;
+
+        try {
+            $jiraUserResponse = Http::withToken($accessToken)
+                ->get("https://api.atlassian.com/ex/jira/{$cloudId}/rest/api/3/myself");
+
+            if ($jiraUserResponse->successful()) {
+                $jiraUser = $jiraUserResponse->json();
+                $accountId = $jiraUser['accountId'] ?? null;
+                $displayName = $jiraUser['displayName'] ?? null;
+                $jiraEmail = $jiraUser['emailAddress'] ?? null;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Jira OAuth failed to fetch /rest/api/3/myself: ' . $e->getMessage());
+        }
+
+        // Fallback to Atlassian /me endpoint if Jira myself didn't yield an accountId
+        if (! $accountId) {
+            try {
+                $meResponse = Http::withToken($accessToken)->get('https://api.atlassian.com/me');
+                if ($meResponse->successful()) {
+                    $atlassianUser = $meResponse->json();
+                    $accountId = $atlassianUser['account_id'] ?? null;
+                    $displayName = $displayName ?: ($atlassianUser['name'] ?? null);
+                    $jiraEmail = $jiraEmail ?: ($atlassianUser['email'] ?? null);
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Jira OAuth failed to fetch /me: ' . $e->getMessage());
+            }
+        }
+
         // Save or update the user's Jira ConnectedAccount
         ConnectedAccount::updateOrCreate(
             [
@@ -152,13 +187,17 @@ class JiraOAuthController extends Controller
                 'provider' => 'jira',
             ],
             [
-                'authorized_email' => $siteUrl,
-                'credentials_json' => [
-                    'access_token'  => $accessToken,
-                    'refresh_token' => $refreshToken,
-                    'cloud_id'      => $cloudId,
-                    'site_url'      => $siteUrl,
-                    'site_name'     => $siteName,
+                'external_account_id' => $accountId,
+                'authorized_email'    => $jiraEmail ?: $siteUrl,
+                'credentials_json'    => [
+                    'access_token'      => $accessToken,
+                    'refresh_token'     => $refreshToken,
+                    'cloud_id'          => $cloudId,
+                    'site_url'          => $siteUrl,
+                    'site_name'         => $siteName,
+                    'jira_account_id'   => $accountId,
+                    'jira_display_name' => $displayName,
+                    'jira_email'        => $jiraEmail,
                 ],
                 'granted_scopes'   => $primarySite['scopes'] ?? ['read:jira-work', 'read:jira-user'],
                 'status'           => ConnectedAccountStatus::Active,
@@ -167,8 +206,31 @@ class JiraOAuthController extends Controller
             ]
         );
 
+        // Instant binding: Link all existing work items matching this Jira account to the user
+        $linkedCount = 0;
+        if ($accountId || $displayName) {
+            $linkedCount = PmWorkItem::query()
+                ->where(function ($q) use ($accountId, $displayName) {
+                    if ($accountId) {
+                        $q->where('external_assignee_id', $accountId);
+                    }
+                    if ($displayName) {
+                        $q->orWhere('assignee_name', $displayName);
+                    }
+                })
+                ->update(['user_id' => Auth::id()]);
+        }
+
+        $successMsg = "Jira connected successfully to: {$siteName}";
+        if ($displayName) {
+            $successMsg .= " as {$displayName}";
+        }
+        if ($linkedCount > 0) {
+            $successMsg .= " ({$linkedCount} tasks linked to your account)";
+        }
+
         return redirect('/admin/my-profile')
-            ->with('success', "Jira connected successfully to: {$siteName}");
+            ->with('success', $successMsg);
     }
 
     /**

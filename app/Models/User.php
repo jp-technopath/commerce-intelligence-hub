@@ -99,10 +99,21 @@ class User extends Authenticatable implements FilamentUser
 
     public function jiraAccount(): ?ConnectedAccount
     {
-        return $this->connectedAccounts()
+        $account = $this->connectedAccounts()
             ->active()
             ->provider('jira')
             ->first();
+
+        if ($account) {
+            return $account;
+        }
+
+        $effective = \App\Services\PM\IdentityResolverService::resolveEffectiveUser($this);
+        if ($effective->id !== $this->id) {
+            return $effective->jiraAccount();
+        }
+
+        return null;
     }
 
     public function hasJira(): bool
