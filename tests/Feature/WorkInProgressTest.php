@@ -378,4 +378,66 @@ class WorkInProgressTest extends TestCase
             ->call('setQuickFilter', 'pipeline')
             ->assertSee('No active pipeline tasks');
     }
+
+    public function test_incoming_quick_filter_query_param_automatically_selects_filter(): void
+    {
+        [$client, $user, $tasks] = $this->createClientAndTasks();
+        session(['current_client_id' => $client->id]);
+
+        // When navigating to Work in Pipeline with ?quick_filter=pipeline
+        Livewire::actingAs($user)
+            ->withQueryParams(['quick_filter' => 'pipeline'])
+            ->test(WorkInProgress::class)
+            ->assertSet('quick_filter', 'pipeline')
+            ->assertSee($tasks['taskReady']->summary)
+            ->assertSee($tasks['taskInProgress']->summary)
+            ->assertDontSee($tasks['taskReadyDeploy']->summary)
+            ->assertDontSee($tasks['taskBacklog']->summary)
+            ->assertDontSee($tasks['taskDone']->summary);
+
+        // When navigating to Work in Pipeline with ?quick_filter=in_progress
+        Livewire::actingAs($user)
+            ->withQueryParams(['quick_filter' => 'in_progress'])
+            ->test(WorkInProgress::class)
+            ->assertSet('quick_filter', 'in_progress')
+            ->assertSee($tasks['taskInProgress']->summary)
+            ->assertDontSee($tasks['taskReady']->summary)
+            ->assertDontSee($tasks['taskReadyDeploy']->summary)
+            ->assertDontSee($tasks['taskBacklog']->summary)
+            ->assertDontSee($tasks['taskDone']->summary);
+    }
+
+    public function test_incoming_scope_query_param_maps_to_proper_quick_filter(): void
+    {
+        [$client, $user, $tasks] = $this->createClientAndTasks();
+        session(['current_client_id' => $client->id]);
+
+        // Backward compatibility for ?scope=all_pipeline
+        Livewire::actingAs($user)
+            ->withQueryParams(['scope' => 'all_pipeline'])
+            ->test(WorkInProgress::class)
+            ->assertSet('quick_filter', 'pipeline')
+            ->assertSee($tasks['taskReady']->summary)
+            ->assertSee($tasks['taskInProgress']->summary);
+
+        // Backward compatibility for ?scope=in_progress
+        Livewire::actingAs($user)
+            ->withQueryParams(['scope' => 'in_progress'])
+            ->test(WorkInProgress::class)
+            ->assertSet('quick_filter', 'in_progress')
+            ->assertSee($tasks['taskInProgress']->summary)
+            ->assertDontSee($tasks['taskReady']->summary);
+    }
+
+    public function test_customer_kpi_widget_links_to_proper_quick_filters(): void
+    {
+        [$client, $user] = $this->createClientAndTasks();
+        session(['current_client_id' => $client->id]);
+
+        Livewire::actingAs($user)
+            ->test(\App\Filament\Widgets\Customer\CustomerKpiWidget::class)
+            ->assertSee('/admin/work-in-pipeline?quick_filter=pipeline')
+            ->assertSee('/admin/work-in-pipeline?quick_filter=in_progress');
+    }
 }
+

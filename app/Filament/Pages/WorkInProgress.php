@@ -55,6 +55,23 @@ class WorkInProgress extends Page implements HasForms, HasTable
         $this->form->fill([
             'selected_client_id' => $this->selected_client_id,
         ]);
+
+        $incomingQuickFilter = request()->query('quick_filter');
+        $incomingScope = request()->query('scope');
+
+        if ($incomingQuickFilter && in_array($incomingQuickFilter, ['all', 'pipeline', 'ready', 'in_progress', 'ready_for_deployment', 'backlog', 'done'], true)) {
+            $this->quick_filter = $incomingQuickFilter;
+        } elseif ($incomingScope) {
+            $this->quick_filter = match ($incomingScope) {
+                'in_progress'                 => 'in_progress',
+                'all_pipeline'                => 'pipeline',
+                'planned_ready', 'ready'      => 'ready',
+                'ready_for_deployment'        => 'ready_for_deployment',
+                'backlog', 'on_hold'          => 'backlog',
+                'done', 'completed'           => 'done',
+                default                       => 'all',
+            };
+        }
     }
 
     public function form(Form $form): Form
@@ -103,7 +120,10 @@ class WorkInProgress extends Page implements HasForms, HasTable
             });
 
         match ($this->quick_filter) {
-            'pipeline' => $query->whereIn('normalized_delivery_status', ['ready', 'in_progress']),
+            'pipeline' => $query->where(function ($q) {
+                $q->whereIn('normalized_delivery_status', ['ready', 'in_progress'])
+                  ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
+            }),
             'ready' => $query->where('normalized_delivery_status', 'ready'),
             'in_progress' => $query->where(function ($q) {
                 $q->where('normalized_delivery_status', 'in_progress')
