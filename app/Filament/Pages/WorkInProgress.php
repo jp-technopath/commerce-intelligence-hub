@@ -259,14 +259,111 @@ class WorkInProgress extends Page implements HasForms, HasTable
                                 $jiraProvider = app(JiraProvider::class);
                                 $issue = $jiraProvider->getWorkItem($record->connection, $record->external_item_key);
                                 $descAdf = $issue['fields']['description'] ?? null;
-                                $parsedDesc = JiraProvider::parseAdfToMarkdown($descAdf);
+                                $rawAttachments = $issue['fields']['attachment'] ?? [];
+                                $normalizedAttachments = [];
+                                if (is_array($rawAttachments)) {
+                                    foreach ($rawAttachments as $att) {
+                                        $normalizedAttachments[] = [
+                                            'id'            => (string) ($att['id'] ?? ''),
+                                            'filename'      => $att['filename'] ?? 'attachment',
+                                            'size'          => (int) ($att['size'] ?? 0),
+                                            'mime_type'     => $att['mimeType'] ?? ($att['mime_type'] ?? 'application/octet-stream'),
+                                            'url'           => $att['content'] ?? ($att['url'] ?? null),
+                                            'thumbnail_url' => $att['thumbnail'] ?? ($att['thumbnail_url'] ?? null),
+                                            'author_name'   => $att['author']['displayName'] ?? ($att['author_name'] ?? null),
+                                            'created_at'    => $att['created'] ?? ($att['created_at'] ?? null),
+                                        ];
+                                    }
+                                }
+                                $activeAttachments = ! empty($normalizedAttachments) ? $normalizedAttachments : ($record->attachments_json ?? []);
+                                $parsedDesc = JiraProvider::parseAdfToMarkdown($descAdf, $activeAttachments, $record->external_item_key);
+                                
+                                $updateData = [];
                                 if ($parsedDesc) {
                                     $descriptionText = $parsedDesc;
-                                    $record->update(['description' => $parsedDesc]);
+                                    $updateData['description'] = $parsedDesc;
+                                }
+                                if (! empty($normalizedAttachments)) {
+                                    $updateData['attachments_json'] = $normalizedAttachments;
+                                    $record->attachments_json = $normalizedAttachments;
+                                }
+                                if (! empty($updateData)) {
+                                    $record->update($updateData);
                                 }
                             } catch (\Throwable $e) {
                                 // Fallback silently
                             }
+                        }
+
+                        $attachments = $record->attachments_json ?? [];
+                        $attCount = count($attachments);
+
+                        if ($attCount === 0) {
+                            $attachmentsHtml = "
+                                <div class='p-4 bg-gray-50/60 dark:bg-gray-800/30 rounded-xl border border-gray-200/60 dark:border-gray-800 text-xs text-gray-400 italic flex items-center gap-2'>
+                                    <svg class='w-4 h-4 text-gray-400 shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13'></path></svg>
+                                    No attachments uploaded for this task in Jira.
+                                </div>
+                            ";
+                        } else {
+                            $cards = [];
+                            foreach ($attachments as $att) {
+                                $attId = htmlspecialchars($att['id'] ?? '', ENT_QUOTES);
+                                $filename = htmlspecialchars($att['filename'] ?? 'attachment', ENT_QUOTES);
+                                $mime = $att['mime_type'] ?? '';
+                                $sizeBytes = (int) ($att['size'] ?? 0);
+                                $sizeFormatted = $sizeBytes >= 1048576 
+                                    ? round($sizeBytes / 1048576, 1) . ' MB' 
+                                    : round(max(1, $sizeBytes / 1024)) . ' KB';
+                                
+                                $isImage = str_starts_with($mime, 'image/') || (bool) preg_match('/\.(png|jpe?g|gif|webp|svg)$/i', $filename);
+                                $itemKey = htmlspecialchars($record->external_item_key ?? '', ENT_QUOTES);
+                                $viewUrl = "/pm/attachments/{$itemKey}/{$attId}";
+                                $thumbUrl = "/pm/attachments/{$itemKey}/{$attId}?thumbnail=1";
+                                $downloadUrl = "/pm/attachments/{$itemKey}/{$attId}?download=1";
+
+                                if ($isImage) {
+                                    $previewHtml = "
+                                        <a href='{$viewUrl}' target='_blank' class='block aspect-video w-full rounded-lg bg-gray-100 dark:bg-gray-800 overflow-hidden mb-2.5 relative group border border-gray-200/80 dark:border-gray-700/80'>
+                                            <img src='{$thumbUrl}' alt='{$filename}' class='w-full h-full object-cover group-hover:scale-105 transition-transform duration-200' loading='lazy' />
+                                            <div class='absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center'>
+                                                <span class='opacity-0 group-hover:opacity-100 px-2 py-1 text-[10px] font-bold bg-black/75 text-white rounded shadow-sm transition-opacity'>View Full</span>
+                                            </div>
+                                        </a>
+                                    ";
+                                } else {
+                                    $ext = strtoupper(pathinfo($filename, PATHINFO_EXTENSION) ?: 'FILE');
+                                    $previewHtml = "
+                                        <a href='{$viewUrl}' target='_blank' class='flex flex-col items-center justify-center aspect-video w-full rounded-lg bg-gray-100/80 dark:bg-gray-800/80 mb-2.5 relative group border border-gray-200/80 dark:border-gray-700/80 text-gray-400 hover:text-primary-600 transition-colors'>
+                                            <svg class='w-8 h-8 mb-1' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'></path></svg>
+                                            <span class='px-1.5 py-0.5 text-[9px] font-black rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 tracking-wider'>{$ext}</span>
+                                        </a>
+                                    ";
+                                }
+
+                                $cards[] = "
+                                    <div class='p-3 bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-xl shadow-xs flex flex-col justify-between hover:border-primary-400/60 transition-colors'>
+                                        <div>
+                                            {$previewHtml}
+                                            <div class='font-bold text-xs text-gray-900 dark:text-gray-100 truncate' title='{$filename}'>
+                                                {$filename}
+                                            </div>
+                                            <div class='text-[10px] text-gray-400 mt-0.5'>
+                                                {$sizeFormatted}
+                                            </div>
+                                        </div>
+                                        <div class='flex items-center gap-2 mt-3 pt-2 border-t border-gray-100 dark:border-gray-800/80 text-xs'>
+                                            <a href='{$viewUrl}' target='_blank' class='flex-1 py-1 px-2 text-center text-[11px] font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors'>
+                                                Preview
+                                            </a>
+                                            <a href='{$downloadUrl}' class='flex-1 py-1 px-2 text-center text-[11px] font-semibold text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-950/60 hover:bg-primary-100 dark:hover:bg-primary-900/60 rounded-md transition-colors'>
+                                                Download
+                                            </a>
+                                        </div>
+                                    </div>
+                                ";
+                            }
+                            $attachmentsHtml = "<div class='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5'>" . implode('', $cards) . "</div>";
                         }
 
                         $statusColors = match ($record->normalized_delivery_status) {
@@ -336,9 +433,17 @@ class WorkInProgress extends Page implements HasForms, HasTable
                                         <svg class='w-4 h-4 text-primary-600 dark:text-primary-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'></path></svg>
                                         Business Scope & Technical Requirements
                                     </h4>
-                                    <div class='prose dark:prose-invert max-w-none text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-900 border border-gray-200/90 dark:border-gray-800 rounded-2xl p-6 shadow-sm space-y-4 leading-relaxed [&_h3]:text-xs [&_h3]:font-black [&_h3]:tracking-wider [&_h3]:uppercase [&_h3]:text-primary-700 [&_h3]:dark:text-primary-300 [&_h3]:bg-primary-50/80 [&_h3]:dark:bg-primary-950/60 [&_h3]:px-3 [&_h3]:py-1.5 [&_h3]:rounded-lg [&_h3]:border [&_h3]:border-primary-200/60 [&_h3]:dark:border-primary-800/50 [&_h3]:mt-6 [&_h3]:mb-3 [&_h3]:inline-block [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-2 [&_li]:leading-relaxed [&_a]:text-primary-600 [&_a]:underline [&_strong]:font-bold [&_strong]:text-gray-900 [&_strong]:dark:text-gray-100'>
+                                    <div class='prose dark:prose-invert max-w-none text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-900 border border-gray-200/90 dark:border-gray-800 rounded-2xl p-6 shadow-sm space-y-4 leading-relaxed [&_h3]:text-xs [&_h3]:font-black [&_h3]:tracking-wider [&_h3]:uppercase [&_h3]:text-primary-700 [&_h3]:dark:text-primary-300 [&_h3]:bg-primary-50/80 [&_h3]:dark:bg-primary-950/60 [&_h3]:px-3 [&_h3]:py-1.5 [&_h3]:rounded-lg [&_h3]:border [&_h3]:border-primary-200/60 [&_h3]:dark:border-primary-800/50 [&_h3]:mt-6 [&_h3]:mb-3 [&_h3]:inline-block [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-2 [&_li]:leading-relaxed [&_a]:text-primary-600 [&_a]:underline [&_img]:rounded-xl [&_img]:max-w-full [&_img]:h-auto [&_img]:my-4 [&_img]:border [&_img]:border-gray-200/80 [&_img]:dark:border-gray-700 [&_img]:shadow-sm [&_strong]:font-bold [&_strong]:text-gray-900 [&_strong]:dark:text-gray-100'>
                                         " . (! empty($descriptionText) ? \Illuminate\Support\Str::markdown($descriptionText) : '<p class="text-gray-500 italic">No detailed description available in Jira for this task.</p>') . "
                                     </div>
+                                </div>
+
+                                <div>
+                                    <h4 class='text-xs font-black tracking-widest text-gray-400 uppercase mb-3 flex items-center gap-2'>
+                                        <svg class='w-4 h-4 text-primary-600 dark:text-primary-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13'></path></svg>
+                                        Attachments & Media ({$attCount})
+                                    </h4>
+                                    {$attachmentsHtml}
                                 </div>
                             </div>
                         ");

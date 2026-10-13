@@ -72,5 +72,9 @@ Route::middleware(['web', 'auth'])->group(function () {
         $config->activate();
         return back();
     })->name('clients.findings-config.activate');
+
+    // Jira Task Attachment & Inline Media Streaming Proxy
+    Route::get('/pm/attachments/{workItemKey}/{attachmentId}', [\App\Http\Controllers\PmAttachmentController::class, 'show'])
+        ->name('pm.attachments.show');
 });
 

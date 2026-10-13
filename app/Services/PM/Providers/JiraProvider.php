@@ -271,7 +271,7 @@ class JiraProvider implements ProjectManagementProvider
             $body = [
                 'jql'        => $jql,
                 'maxResults' => 100,
-                'fields'     => ['summary', 'description', 'status', 'issuetype', 'priority', 'timetracking', 'assignee', 'duedate', 'updated', 'labels', 'customfield_10002', 'customfield_10028', 'reporter'],
+                'fields'     => ['summary', 'description', 'status', 'issuetype', 'priority', 'timetracking', 'assignee', 'duedate', 'updated', 'labels', 'customfield_10002', 'customfield_10028', 'reporter', 'attachment'],
             ];
 
             if ($nextPageToken) {
@@ -455,6 +455,29 @@ class JiraProvider implements ProjectManagementProvider
         return $response->json();
     }
 
+    public function getAttachmentContent(PmConnection $connection, string $attachmentId, bool $thumbnail = false, ?User $actor = null): ?array
+    {
+        $account = $this->resolveCredentials($actor, $connection);
+        $path = $thumbnail
+            ? "/rest/api/3/attachment/thumbnail/{$attachmentId}"
+            : "/rest/api/3/attachment/content/{$attachmentId}";
+
+        [$http, $url] = $this->buildRequestAndUrl($account, $connection, $path);
+
+        $response = $http->withOptions(['allow_redirects' => true])->get($url);
+
+        if (! $response->successful()) {
+            Log::error("JiraProvider getAttachmentContent failed [Status {$response->status()}]: {$url}");
+            return null;
+        }
+
+        return [
+            'body'         => $response->body(),
+            'content_type' => $response->header('Content-Type') ?: 'application/octet-stream',
+            'status'       => $response->status(),
+        ];
+    }
+
     public function addComment(PmWorkItem $workItem, string $comment, ?User $actor = null): bool
     {
         $connection = $workItem->connection;
@@ -623,7 +646,7 @@ class JiraProvider implements ProjectManagementProvider
     // Helper Methods
     // ─────────────────────────────────────────────────────────────────────
 
-    public static function parseAdfToMarkdown(mixed $node): ?string
+    public static function parseAdfToMarkdown(mixed $node, array $attachments = [], ?string $itemKey = null, ?array &$usedAttachmentIds = null): ?string
     {
         if (empty($node)) {
             return null;
@@ -637,7 +660,12 @@ class JiraProvider implements ProjectManagementProvider
             return null;
         }
 
+        if ($usedAttachmentIds === null) {
+            $usedAttachmentIds = [];
+        }
+
         $type = $node['type'] ?? '';
+        $attrs = $node['attrs'] ?? [];
 
         if ($type === 'text') {
             $text = $node['text'] ?? '';
@@ -650,6 +678,8 @@ class JiraProvider implements ProjectManagementProvider
                     $text = "*{$text}*";
                 } elseif ($mType === 'code') {
                     $text = "`{$text}`";
+                } elseif ($mType === 'strike') {
+                    $text = "~~{$text}~~";
                 } elseif ($mType === 'link' && ! empty($mark['attrs']['href'])) {
                     $text = "[{$text}](" . $mark['attrs']['href'] . ")";
                 }
@@ -657,10 +687,86 @@ class JiraProvider implements ProjectManagementProvider
             return $text;
         }
 
+        if ($type === 'media') {
+            $alt = $attrs['alt'] ?? '';
+            $mediaId = (string) ($attrs['id'] ?? '');
+            $directUrl = $attrs['url'] ?? null;
+
+            $matchedAttachment = null;
+
+            // 1. Match by filename (alt)
+            if ($alt !== '') {
+                foreach ($attachments as $att) {
+                    $fn = $att['filename'] ?? '';
+                    if (strcasecmp($fn, $alt) === 0) {
+                        $matchedAttachment = $att;
+                        break;
+                    }
+                }
+            }
+
+            // 2. Match by attachment ID or media ID
+            if (! $matchedAttachment && $mediaId !== '') {
+                foreach ($attachments as $att) {
+                    $attId = (string) ($att['id'] ?? '');
+                    if ($attId === $mediaId) {
+                        $matchedAttachment = $att;
+                        break;
+                    }
+                }
+            }
+
+            // 3. Fallback: If only 1 image attachment exists or sequential matching
+            if (! $matchedAttachment) {
+                $imageAttachments = array_values(array_filter($attachments, fn ($a) => str_starts_with($a['mime_type'] ?? ($a['mimeType'] ?? ''), 'image/') || preg_match('/\.(png|jpe?g|gif|webp|svg)$/i', $a['filename'] ?? '')));
+                if (count($imageAttachments) === 1) {
+                    $matchedAttachment = $imageAttachments[0];
+                } elseif (count($imageAttachments) > 1) {
+                    foreach ($imageAttachments as $imgAtt) {
+                        $imgId = (string) ($imgAtt['id'] ?? '');
+                        if (! in_array($imgId, $usedAttachmentIds, true)) {
+                            $matchedAttachment = $imgAtt;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $imgAlt = $alt ?: ($matchedAttachment['filename'] ?? 'Attachment Image');
+            $imgUrl = '';
+
+            if ($matchedAttachment && ! empty($matchedAttachment['id']) && $itemKey) {
+                $usedAttachmentIds[] = (string) $matchedAttachment['id'];
+                $imgUrl = "/pm/attachments/{$itemKey}/{$matchedAttachment['id']}";
+            } elseif ($directUrl) {
+                $imgUrl = $directUrl;
+            } elseif ($itemKey && $mediaId !== '') {
+                $imgUrl = "/pm/attachments/{$itemKey}/{$mediaId}";
+            } elseif ($matchedAttachment && ! empty($matchedAttachment['url'])) {
+                $imgUrl = $matchedAttachment['url'];
+            }
+
+            if (! $imgUrl) {
+                return $imgAlt ? "[{$imgAlt}]" : '';
+            }
+
+            return "[![{$imgAlt}]({$imgUrl})]({$imgUrl})";
+        }
+
+        if ($type === 'inlineCard') {
+            $cardUrl = $attrs['url'] ?? ($attrs['data']['url'] ?? '');
+            return $cardUrl ? "[{$cardUrl}]({$cardUrl})" : '';
+        }
+
+        if ($type === 'blockCard') {
+            $cardUrl = $attrs['url'] ?? ($attrs['data']['url'] ?? '');
+            return $cardUrl ? "\n\n[{$cardUrl}]({$cardUrl})\n\n" : '';
+        }
+
         $children = [];
         if (isset($node['content']) && is_array($node['content'])) {
             foreach ($node['content'] as $child) {
-                $children[] = self::parseAdfToMarkdown($child);
+                $children[] = self::parseAdfToMarkdown($child, $attachments, $itemKey, $usedAttachmentIds);
             }
         }
 
@@ -676,6 +782,10 @@ class JiraProvider implements ProjectManagementProvider
             'hardBreak'   => "\n",
             'codeBlock'   => "```\n" . $inner . "\n```\n\n",
             'blockquote'  => "> " . $inner . "\n\n",
+            'mediaSingle' => "\n\n" . trim($inner) . "\n\n",
+            'mediaGroup'  => "\n\n" . trim($inner) . "\n\n",
+            'expand'      => "\n\n> **" . ($attrs['title'] ?? 'Details') . "**\n" . preg_replace('/^/m', '> ', trim($inner)) . "\n\n",
+            'rule'        => "\n\n---\n\n",
             default       => $inner,
         };
 
@@ -709,6 +819,23 @@ class JiraProvider implements ProjectManagementProvider
         $assigneeName      = $fields['assignee']['displayName'] ?? null;
         $assigneeUserId    = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $assigneeAccountId, $assigneeEmail, $assigneeName);
 
+        $rawAttachments = $fields['attachment'] ?? [];
+        $attachments = [];
+        if (is_array($rawAttachments)) {
+            foreach ($rawAttachments as $att) {
+                $attachments[] = [
+                    'id'            => (string) ($att['id'] ?? ''),
+                    'filename'      => $att['filename'] ?? 'attachment',
+                    'size'          => (int) ($att['size'] ?? 0),
+                    'mime_type'     => $att['mimeType'] ?? ($att['mime_type'] ?? 'application/octet-stream'),
+                    'url'           => $att['content'] ?? ($att['url'] ?? null),
+                    'thumbnail_url' => $att['thumbnail'] ?? ($att['thumbnail_url'] ?? null),
+                    'author_name'   => $att['author']['displayName'] ?? ($att['author_name'] ?? null),
+                    'created_at'    => $att['created'] ?? ($att['created_at'] ?? null),
+                ];
+            }
+        }
+
         return PmWorkItem::updateOrCreate(
             [
                 'external_item_id' => (string) $issue['id'],
@@ -719,7 +846,8 @@ class JiraProvider implements ProjectManagementProvider
                 'pm_project_id'              => $project->id,
                 'external_item_key'          => $issue['key'] ?? '',
                 'summary'                    => $fields['summary'] ?? '',
-                'description'                => self::parseAdfToMarkdown($fields['description'] ?? null),
+                'description'                => self::parseAdfToMarkdown($fields['description'] ?? null, $attachments, $issue['key'] ?? null),
+                'attachments_json'           => $attachments,
                 'item_type'                  => $fields['issuetype']['name'] ?? 'Task',
                 'priority'                   => $fields['priority']['name'] ?? 'Medium',
                 'external_status'            => $jiraStatus,

@@ -220,7 +220,7 @@ class NeedsAttentionWidget extends BaseWidget
                             if (str_starts_with(trim($desc), '{') && str_contains($desc, '"type":"doc"')) {
                                 try {
                                     $json = json_decode($desc, true);
-                                    $parsed = \App\Services\PM\Providers\JiraProvider::parseAdfToMarkdown($json);
+                                    $parsed = \App\Services\PM\Providers\JiraProvider::parseAdfToMarkdown($json, $workItem->attachments_json ?? [], $workItem->external_item_key);
                                     $descriptionMarkdown = $parsed ?: $desc;
                                 } catch (\Throwable $e) {
                                     $descriptionMarkdown = $desc;

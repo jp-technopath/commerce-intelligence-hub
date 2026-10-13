@@ -34,13 +34,15 @@ class PmWorkItem extends Model
         'is_blocked',
         'blocked_reason',
         'labels_json',
+        'attachments_json',
         'external_updated_at',
         'last_synced_at',
     ];
 
     protected $casts = [
         'is_blocked'          => 'boolean',
-        'labels_json'          => 'array',
+        'labels_json'         => 'array',
+        'attachments_json'    => 'array',
         'target_due_date'     => 'date',
         'external_updated_at' => 'datetime',
         'last_synced_at'      => 'datetime',
@@ -247,6 +249,22 @@ class PmWorkItem extends Model
     {
         return str_starts_with($this->external_item_key ?? '', 'SUP-')
             || $this->project?->external_project_key === 'SUP';
+    }
+
+    /**
+     * Check if work item has stored attachments.
+     */
+    public function hasAttachments(): bool
+    {
+        return ! empty($this->attachments_json);
+    }
+
+    /**
+     * Get count of stored attachments.
+     */
+    public function getAttachmentCount(): int
+    {
+        return is_array($this->attachments_json) ? count($this->attachments_json) : 0;
     }
 
     /**
