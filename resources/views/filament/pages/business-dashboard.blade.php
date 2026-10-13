@@ -79,6 +79,146 @@
         .dark .change-down-good { background: rgba(16,185,129,0.15); color: #34d399; }
         .dark .change-flat { background: rgba(148,163,184,0.1); color: #64748b; }
 
+        .dashboard-control-card {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.75rem;
+            background: white;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            transition: all 0.2s ease;
+        }
+        .dark .dashboard-control-card {
+            background: rgb(30, 41, 59) !important;
+            border-color: rgba(148, 163, 184, 0.15) !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        }
+
+        .dashboard-select {
+            border: none;
+            background: transparent;
+            font-size: 0.875rem;
+            font-weight: 700;
+            cursor: pointer;
+            padding-right: 2rem;
+            outline: none;
+            color: #0f172a;
+        }
+        .dark .dashboard-select {
+            color: #f8fafc !important;
+            background-color: transparent !important;
+        }
+        .dark .dashboard-select option {
+            background-color: rgb(30, 41, 59) !important;
+            color: #f8fafc !important;
+        }
+
+        .period-selector-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem;
+            border-radius: 0.625rem;
+            background: white;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            transition: all 0.2s ease;
+        }
+        .dark .period-selector-bar {
+            background: rgb(30, 41, 59) !important;
+            border-color: rgba(148, 163, 184, 0.15) !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        }
+
+        .period-btn {
+            padding: 0.375rem 0.875rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: 0.5rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .period-btn-active {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+            color: #ffffff !important;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        }
+        .period-btn-inactive {
+            background: transparent;
+            color: #64748b;
+        }
+        .period-btn-inactive:hover {
+            background: #f1f5f9;
+            color: #0f172a;
+        }
+        .dark .period-btn-inactive {
+            color: #94a3b8 !important;
+        }
+        .dark .period-btn-inactive:hover {
+            background: rgba(51, 65, 85, 0.8) !important;
+            color: #f8fafc !important;
+        }
+
+        .dashboard-content-card {
+            border-radius: 1rem;
+            background: white;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            transition: all 0.25s ease;
+        }
+        .dark .dashboard-content-card {
+            background: rgb(30, 41, 59) !important;
+            border-color: rgba(148, 163, 184, 0.15) !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        }
+
+        .funnel-container {
+            border-radius: 0.75rem;
+            background: white;
+            border: 1px solid #e2e8f0;
+            padding: 1.5rem;
+            margin-top: 0.75rem;
+            transition: all 0.25s ease;
+        }
+        .dark .funnel-container {
+            background: rgb(30, 41, 59) !important;
+            border-color: rgba(148, 163, 184, 0.15) !important;
+        }
+        .funnel-stage-label {
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: #334155;
+        }
+        .dark .funnel-stage-label {
+            color: #f1f5f9 !important;
+        }
+
+        .finding-item-link {
+            display: block;
+            padding: 0.75rem;
+            border-radius: 0.625rem;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            text-decoration: none;
+            transition: all 0.2s;
+            background: rgba(248, 250, 252, 0.5);
+        }
+        .finding-item-link:hover {
+            border-color: #a5b4fc;
+            background: #f8fafc;
+        }
+        .dark .finding-item-link {
+            background: rgba(15, 23, 42, 0.4) !important;
+            border-color: rgba(148, 163, 184, 0.1) !important;
+        }
+        .dark .finding-item-link:hover {
+            border-color: #6366f1 !important;
+            background: rgba(30, 41, 59, 0.8) !important;
+        }
+
         .bottom-panel {
             display: grid;
             grid-template-columns: 2fr 1fr;
@@ -89,15 +229,13 @@
 
     {{-- ── Top Bar: Client Switcher + Period Selector ────────────────────── --}}
     <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 2rem;">
-        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1rem; border-radius: 0.75rem; background: white; border: 1px solid rgba(148,163,184,0.15); box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
-             class="dark:!bg-slate-800 dark:!border-slate-700">
-            <div style="width: 2rem; height: 2rem; border-radius: 0.5rem; background: rgba(99,102,241,0.1); display: flex; align-items: center; justify-content: center;">
+        <div class="dashboard-control-card">
+            <div style="width: 2rem; height: 2rem; border-radius: 0.5rem; background: rgba(99,102,241,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
                 <x-heroicon-o-building-office-2 class="w-4 h-4" style="color: #6366f1;" />
             </div>
             <select
                 wire:model.live="selectedClientId"
-                style="border: none; background: transparent; font-size: 0.875rem; font-weight: 700; cursor: pointer; padding-right: 2rem; outline: none;"
-                class="text-gray-900 dark:text-white"
+                class="dashboard-select"
             >
                 @foreach($this->getClients() as $id => $name)
                     <option value="{{ $id }}">{{ $name }}</option>
@@ -105,16 +243,11 @@
             </select>
         </div>
 
-        <div style="display: flex; align-items: center; gap: 0.25rem; padding: 0.25rem; border-radius: 0.625rem; background: white; border: 1px solid rgba(148,163,184,0.15); box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
-             class="dark:!bg-slate-800 dark:!border-slate-700">
+        <div class="period-selector-bar">
             @foreach(['7' => '7 Days', '14' => '14 Days', '30' => '30 Days', '60' => '60 Days', '90' => '90 Days', '360' => '360 Days', 'ytd' => 'YTD'] as $val => $lbl)
                 <button
                     wire:click="$set('period', '{{ $val }}')"
-                    style="padding: 0.375rem 0.875rem; font-size: 0.75rem; font-weight: 600; border-radius: 0.5rem; border: none; cursor: pointer; transition: all 0.2s;
-                        {{ $period == $val
-                            ? 'background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; box-shadow: 0 2px 8px rgba(99,102,241,0.3);'
-                            : 'background: transparent; color: #64748b;' }}"
-                    class="{{ $period != $val ? 'hover:!bg-gray-100 dark:hover:!bg-slate-700' : '' }}"
+                    class="period-btn {{ $period == $val ? 'period-btn-active' : 'period-btn-inactive' }}"
                 >
                     {{ $lbl }}
                 </button>
@@ -154,13 +287,7 @@
             </div>
 
             {{-- Funnel visualization --}}
-            <div style="
-                background: white;
-                border: 1px solid #e2e8f0;
-                border-radius: 0.75rem;
-                padding: 1.5rem;
-                margin-top: 0.75rem;
-            " class="dark:bg-gray-800 dark:border-gray-700">
+            <div class="funnel-container">
                 @php
                     $stages = $funnel['stages'] ?? [];
                     $counts = array_column($stages, 'count');
@@ -171,7 +298,7 @@
                     <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: {{ $i < count($stages) - 1 ? '0.25rem' : '0' }};">
                         {{-- Label --}}
                         <div style="min-width: 120px; text-align: right;">
-                            <div style="font-size: 0.8125rem; font-weight: 600;" class="text-gray-700 dark:text-gray-200">{{ $stage['label'] }}</div>
+                            <div class="funnel-stage-label">{{ $stage['label'] }}</div>
                         </div>
 
                         {{-- Bar --}}
@@ -356,8 +483,7 @@
     @php $canViewFindings = $this->canViewFindings(); @endphp
     <div class="bottom-panel" @if(! $canViewFindings) style="grid-template-columns: 1fr;" @endif>
         {{-- Revenue Trend Chart --}}
-        <div style="border-radius: 1rem; background: white; border: 1px solid rgba(148,163,184,0.15); padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
-             class="dark:!bg-slate-800 dark:!border-slate-700">
+        <div class="dashboard-content-card">
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem;">
                 <div style="width: 1.75rem; height: 1.75rem; border-radius: 0.5rem; background: rgba(99,102,241,0.1); display: flex; align-items: center; justify-content: center;">
                     <x-heroicon-o-chart-bar class="w-3.5 h-3.5" style="color: #6366f1;" />
@@ -523,8 +649,7 @@
 
         @if($canViewFindings)
         {{-- Findings Panel --}}
-        <div style="border-radius: 1rem; background: white; border: 1px solid rgba(148,163,184,0.15); padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);"
-             class="dark:!bg-slate-800 dark:!border-slate-700">
+        <div class="dashboard-content-card">
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem;">
                 <div style="width: 1.75rem; height: 1.75rem; border-radius: 0.5rem; background: rgba(239,68,68,0.1); display: flex; align-items: center; justify-content: center;">
                     <x-heroicon-o-shield-exclamation class="w-3.5 h-3.5" style="color: #ef4444;" />
@@ -555,8 +680,7 @@
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                         @foreach($findings['recent'] as $f)
                             <a href="{{ route('filament.admin.resources.findings.view', $f) }}"
-                                style="display: block; padding: 0.75rem; border-radius: 0.625rem; border: 1px solid rgba(148,163,184,0.1); text-decoration: none; transition: all 0.2s;"
-                                class="hover:!border-indigo-300 dark:hover:!border-indigo-600 hover:!bg-gray-50 dark:hover:!bg-slate-700/50"
+                                class="finding-item-link"
                                 onmouseover="this.style.transform='translateX(4px)'" onmouseout="this.style.transform='none'">
                                 <div style="display: flex; align-items: flex-start; gap: 0.625rem;">
                                     <span style="margin-top: 0.375rem; flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 9999px;

@@ -36,6 +36,7 @@ class AdminPanelProvider extends PanelProvider
             ->brandLogo(asset('images/technopath-brand-logo-sharp.png'))
             ->darkModeBrandLogo(asset('images/technopath-brand-logo-dark.png'))
             ->brandLogoHeight('2.5rem')
+            ->favicon(asset('images/t-icon.png'))
             ->sidebarCollapsibleOnDesktop()
             ->maxContentWidth('max-w-[85%]')
             ->renderHook(

@@ -19,12 +19,16 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Auth;
+use Livewire\Attributes\Url;
 
 class WorkInProgress extends Page implements HasForms, HasTable
 {
     use InteractsWithForms;
     use InteractsWithTable;
     use HasScopedClientFilter;
+
+    #[Url(keep: true)]
+    public string $quick_filter = 'all';
 
     protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
@@ -85,24 +89,36 @@ class WorkInProgress extends Page implements HasForms, HasTable
             ? (int) session('current_client_id')
             : $this->defaultScopedClientId();
 
-        return $table
-            ->query(
-                PmWorkItem::query()
+        $query = PmWorkItem::query()
+            ->where('client_id', $clientId)
+            ->whereHas('project', function ($q) {
+                $q->where('external_project_key', '!=', 'SUP');
+            })
+            ->where('external_item_key', 'NOT LIKE', 'SUP-%')
+            ->whereIn('id', function ($sub) use ($clientId) {
+                $sub->select(\Illuminate\Support\Facades\DB::raw('MAX(id)'))
+                    ->from('pm_work_items')
                     ->where('client_id', $clientId)
-                    ->whereNotIn('normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
-                    ->excludeBacklogAndOnHold()
-                    ->whereHas('project', function ($q) {
-                        $q->where('external_project_key', '!=', 'SUP');
-                    })
-                    ->where('external_item_key', 'NOT LIKE', 'SUP-%')
-                    ->whereIn('id', function ($sub) use ($clientId) {
-                        $sub->select(\Illuminate\Support\Facades\DB::raw('MAX(id)'))
-                            ->from('pm_work_items')
-                            ->where('client_id', $clientId)
-                            ->groupBy('external_item_key');
-                    })
-                    ->orderBy('updated_at', 'desc')
-            )
+                    ->groupBy('external_item_key');
+            });
+
+        match ($this->quick_filter) {
+            'pipeline' => $query->whereIn('normalized_delivery_status', ['ready', 'in_progress']),
+            'ready' => $query->where('normalized_delivery_status', 'ready'),
+            'in_progress' => $query->where(function ($q) {
+                $q->where('normalized_delivery_status', 'in_progress')
+                  ->orWhereRaw('LOWER(external_status) LIKE ?', ['%in progress%']);
+            }),
+            'ready_for_deployment' => $query->where('normalized_delivery_status', 'ready_for_deployment'),
+            'backlog' => $query->whereIn('normalized_delivery_status', ['backlog', 'on_hold']),
+            'done' => $query->whereIn('normalized_delivery_status', ['completed', 'resolved']),
+            default => $query->whereNotIn('normalized_delivery_status', ['cancelled', 'canceled', 'rejected', 'aborted']),
+        };
+
+        $query->orderBy('updated_at', 'desc');
+
+        return $table
+            ->query($query)
             ->columns([
                 Tables\Columns\TextColumn::make('external_item_key')
                     ->label('Key')
@@ -182,8 +198,11 @@ class WorkInProgress extends Page implements HasForms, HasTable
                         'on_hold'         => 'On Hold',
                         'rework'          => 'Rework',
                     ])
-                    ->default(fn () => request()->query('scope') ?? 'all_pipeline')
                     ->query(function ($query, array $data) {
+                        if ($this->quick_filter !== 'all') {
+                            return $query;
+                        }
+
                         $value = $data['value'] ?? 'all_pipeline';
 
                         return match ($value) {
@@ -402,6 +421,101 @@ class WorkInProgress extends Page implements HasForms, HasTable
 
                         $this->dispatch('client-changed');
                     }),
+            ])
+            ->emptyStateHeading(fn () => match ($this->quick_filter) {
+                'pipeline'             => 'No active pipeline tasks',
+                'ready'                => 'No tasks ready for development',
+                'in_progress'          => 'No tasks currently in progress',
+                'ready_for_deployment' => 'No tasks ready for deployment',
+                'backlog'              => 'No tasks in backlog',
+                'done'                 => 'No completed tasks found',
+                default                => 'No work items found',
+            })
+            ->emptyStateDescription(fn () => match ($this->quick_filter) {
+                'pipeline'             => 'There are currently no tasks in Ready for Dev or In Progress for this client.',
+                'ready'                => 'There are currently no tasks waiting to be picked up for development.',
+                'in_progress'          => 'There is no work actively being worked on by engineers at this time.',
+                'ready_for_deployment' => 'There are no completed features awaiting staging or production deployment.',
+                'backlog'              => 'There are no pending or parked items in the backlog for this client.',
+                'done'                 => 'No finished work items match the selected client filter.',
+                default                => 'Try selecting a different filter or customer account above.',
+            })
+            ->emptyStateActions([
+                Action::make('clear_quick_filter')
+                    ->label('View All Tasks')
+                    ->icon('heroicon-m-arrow-path')
+                    ->visible(fn () => $this->quick_filter !== 'all')
+                    ->action(fn () => $this->setQuickFilter('all')),
             ]);
+    }
+
+    public function setQuickFilter(string $filter): void
+    {
+        $this->quick_filter = $filter;
+        $this->resetTable();
+    }
+
+    public function clearQuickFilter(): void
+    {
+        $this->setQuickFilter('all');
+    }
+
+    public function getQuickFilterCounts(): array
+    {
+        $clientId = $this->isClientIdInScope(session('current_client_id'))
+            ? (int) session('current_client_id')
+            : $this->defaultScopedClientId();
+
+        if (! $clientId) {
+            return [
+                'all' => 0,
+                'pipeline' => 0,
+                'ready' => 0,
+                'in_progress' => 0,
+                'ready_for_deployment' => 0,
+                'backlog' => 0,
+                'done' => 0,
+            ];
+        }
+
+        $subQuery = \Illuminate\Support\Facades\DB::table('pm_work_items')
+            ->select(\Illuminate\Support\Facades\DB::raw('MAX(id) as id'))
+            ->where('client_id', $clientId)
+            ->groupBy('external_item_key');
+
+        $grouped = PmWorkItem::query()
+            ->where('client_id', $clientId)
+            ->where('external_item_key', 'NOT LIKE', 'SUP-%')
+            ->whereHas('project', function ($q) {
+                $q->where('external_project_key', '!=', 'SUP');
+            })
+            ->whereIn('id', $subQuery)
+            ->select('normalized_delivery_status', \Illuminate\Support\Facades\DB::raw('count(*) as count'))
+            ->groupBy('normalized_delivery_status')
+            ->pluck('count', 'normalized_delivery_status')
+            ->toArray();
+
+        $ready = (int) ($grouped['ready'] ?? 0);
+        $inProgress = (int) ($grouped['in_progress'] ?? 0);
+        $readyDeploy = (int) ($grouped['ready_for_deployment'] ?? 0);
+        $backlog = (int) ($grouped['backlog'] ?? 0) + (int) ($grouped['on_hold'] ?? 0);
+        $done = (int) ($grouped['completed'] ?? 0) + (int) ($grouped['resolved'] ?? 0);
+
+        $all = 0;
+        foreach ($grouped as $status => $cnt) {
+            if (! in_array($status, ['cancelled', 'canceled', 'rejected', 'aborted'], true)) {
+                $all += (int) $cnt;
+            }
+        }
+
+        return [
+            'all' => $all,
+            'pipeline' => $ready + $inProgress,
+            'ready' => $ready,
+            'in_progress' => $inProgress,
+            'ready_for_deployment' => $readyDeploy,
+            'backlog' => $backlog,
+            'done' => $done,
+        ];
     }
 }
