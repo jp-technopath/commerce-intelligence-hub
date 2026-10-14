@@ -294,9 +294,11 @@ class GoogleOAuthController extends Controller
         $client->setScopes(config('meeting_agent.google.workspace_scopes', [
             'openid',
             'email',
-            'https://www.googleapis.com/auth/calendar.readonly',
+            'profile',
+            'https://www.googleapis.com/auth/calendar.events.readonly',
             'https://www.googleapis.com/auth/gmail.compose',
             'https://www.googleapis.com/auth/drive.file',
+            'https://www.googleapis.com/auth/drive.readonly',
         ]));
         $client->setAccessType('offline');
         $client->setPrompt('consent');
