@@ -39,7 +39,7 @@ class MeetingIntelligenceService
             return 'reviewed_ready';
         }
 
-        if (! empty($prep->prep_content) || ! empty($prep->executive_briefing)) {
+        if (! empty($prep->internal_summary) || ! empty($prep->generated_status_email_body) || ! empty($prep->prep_content) || ! empty($prep->executive_briefing) || ! empty($prep->generated_at)) {
             return 'draft_generated';
         }
 
@@ -73,7 +73,7 @@ class MeetingIntelligenceService
             return 'reviewed_ready';
         }
 
-        if (! empty($followUp->follow_up_content) || ! empty($followUp->executive_summary)) {
+        if (! empty($followUp->summary) || ! empty($followUp->generated_followup_email_body) || ! empty($followUp->follow_up_content) || ! empty($followUp->executive_summary) || ! empty($followUp->generated_at)) {
             return 'draft_generated';
         }
 
@@ -83,9 +83,10 @@ class MeetingIntelligenceService
     /**
      * Get upcoming meetings owned by user or relevant to user's assigned clients.
      */
-    public function getUserUpcomingMeetings(User $user, int $days = 3): Collection
+    public function getUserUpcomingMeetings(User $user, int $days = 3, int $hoursBehind = 0): Collection
     {
         $now = now();
+        $start = $hoursBehind > 0 ? $now->copy()->subHours($hoursBehind) : $now;
         $cutoff = $now->copy()->addDays($days);
         $effectiveUser = \App\Services\PM\IdentityResolverService::resolveEffectiveUser($user);
 
@@ -100,7 +101,7 @@ class MeetingIntelligenceService
 
         $meetings = ClientMeeting::with(['client', 'prep', 'followUp'])
             ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
-            ->whereBetween('meeting_start_at', [$now, $cutoff])
+            ->whereBetween('meeting_start_at', [$start, $cutoff])
             ->where(function ($q) use ($user, $effectiveUser, $userEmails) {
                 $q->where('internal_owner_id', $user->id)
                   ->orWhere('internal_owner_id', $effectiveUser->id);
@@ -116,6 +117,7 @@ class MeetingIntelligenceService
 
         return $meetings->map(function ($m) {
             $m->prep_stage = $this->getMeetingPrepStage($m);
+            $m->followup_stage = $this->getMeetingFollowUpStage($m);
             return $m;
         });
     }

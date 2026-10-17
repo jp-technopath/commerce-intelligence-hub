@@ -421,26 +421,38 @@
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             4. Upcoming Meetings
                         </h2>
-                        <span class="{{ count($upcomingMeetings) > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' }} font-semibold text-xs px-2.5 py-0.5 rounded-full">
+                        <span class="{{ count($upcomingMeetings) > 0 ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' }} font-semibold text-xs px-2.5 py-0.5 rounded-full">
                             {{ count($upcomingMeetings) }} upcoming
                         </span>
                     </div>
-                    <a href="#" class="text-blue-600 hover:underline text-xs font-semibold">
+                    <a href="{{ \App\Filament\Resources\ClientMeetingResource::getUrl('index') }}" class="text-blue-600 dark:text-blue-400 hover:underline text-xs font-semibold">
                         View calendar
                     </a>
                 </div>
 
                 <div class="space-y-4">
                     @forelse ($upcomingMeetings as $meeting)
-                        <div class="flex items-start justify-between gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 transition border border-transparent hover:border-slate-100">
-                            <div class="flex items-start gap-3">
+                        <div class="flex items-start justify-between gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 transition border border-transparent hover:border-slate-100 dark:hover:border-slate-800">
+                            <div class="flex items-start gap-3 min-w-0 flex-1">
                                 <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border 
-                                    {{ $meeting['icon_color'] === 'blue' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-amber-50 text-amber-600 border-amber-100' }}">
-                                    <x-heroicon-m-calendar-days class="w-5 h-5" />
+                                    {{ ($meeting['action_type'] ?? '') === 'prep' ? 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-900' : 'bg-purple-50 text-purple-600 border-purple-100 dark:bg-purple-950/60 dark:text-purple-400 dark:border-purple-900' }}">
+                                    @if (($meeting['action_type'] ?? '') === 'prep')
+                                        <x-heroicon-m-calendar-days class="w-5 h-5" />
+                                    @else
+                                        <x-heroicon-m-chat-bubble-left-right class="w-5 h-5" />
+                                    @endif
                                 </div>
-                                <div>
-                                    <div class="text-sm font-bold text-slate-900 dark:text-slate-100">
-                                        {{ $meeting['title'] }}
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <a href="{{ $meeting['view_url'] }}" class="text-sm font-bold text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 transition truncate">
+                                            {{ $meeting['title'] }}
+                                        </a>
+                                        @if (! empty($meeting['badge_label']))
+                                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border
+                                                {{ ($meeting['badge_color'] ?? '') === 'amber' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800' : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800' }}">
+                                                {{ $meeting['badge_label'] }}
+                                            </span>
+                                        @endif
                                     </div>
                                     <div class="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
                                         {{ $meeting['time_label'] }}
@@ -451,12 +463,17 @@
                                 </div>
                             </div>
 
-                            <button
-                                type="button"
-                                class="bg-[#EFF6FF] hover:bg-blue-100 text-[#2563EB] border border-blue-200 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap shadow-2xs transition shrink-0"
+                            <a
+                                href="{{ $meeting['action_url'] }}"
+                                class="inline-flex items-center gap-1.5 {{ ($meeting['action_type'] ?? '') === 'prep' ? 'bg-[#EFF6FF] hover:bg-blue-100 text-[#2563EB] border-blue-200 dark:bg-blue-950/60 dark:hover:bg-blue-900 dark:text-blue-300 dark:border-blue-800' : 'bg-[#F5F3FF] hover:bg-purple-100 text-[#7C3AED] border-purple-200 dark:bg-purple-950/60 dark:hover:bg-purple-900 dark:text-purple-300 dark:border-purple-800' }} border text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap shadow-2xs transition shrink-0"
                             >
-                                {{ $meeting['action_label'] }}
-                            </button>
+                                @if (($meeting['action_type'] ?? '') === 'prep')
+                                    <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0" />
+                                @else
+                                    <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0" />
+                                @endif
+                                <span>{{ $meeting['action_label'] }}</span>
+                            </a>
                         </div>
                     @empty
                         <div class="py-10 flex flex-col items-center justify-center text-center">
@@ -464,10 +481,10 @@
                                 <x-heroicon-m-calendar class="w-5 h-5" />
                             </div>
                             <div class="font-bold text-sm text-slate-800 dark:text-slate-200">
-                                No Upcoming Meetings
+                                All Upcoming Meetings Prepared
                             </div>
                             <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                                You have no upcoming meetings scheduled today or tomorrow.
+                                No meetings are missing preparation or follow-up.
                             </div>
                         </div>
                     @endforelse

@@ -389,27 +389,117 @@ class EngineerDashboard extends Page implements HasForms
 
         try {
             $meetingService = app(MeetingIntelligenceService::class);
-            $meetings = $meetingService->getUserUpcomingMeetings($targetUser, 5);
+            // Look up to 7 days ahead and back 24 hours to include recent meetings needing follow-up
+            $meetings = $meetingService->getUserUpcomingMeetings($targetUser, 7, 24);
 
             if ($meetings->isEmpty()) {
                 return [];
             }
 
             $mapped = [];
-            foreach ($meetings->take(2) as $idx => $m) {
+            foreach ($meetings as $m) {
+                // Determine whether prep is complete (exists, has content/briefing/reviewed/completed, no AI error)
+                $hasPrep = false;
+                if ($m->prep && empty($m->prep->ai_error)) {
+                    if (
+                        ! empty($m->prep->internal_summary) ||
+                        ! empty($m->prep->generated_status_email_body) ||
+                        ! empty($m->prep->recommended_agenda) ||
+                        ! empty($m->prep->prep_content) ||
+                        ! empty($m->prep->executive_briefing) ||
+                        ! empty($m->prep->email_sent_at) ||
+                        ! empty($m->prep->generated_at) ||
+                        ($m->prep->status ?? null) === 'completed' ||
+                        ! empty($m->prep->metadata['is_reviewed'])
+                    ) {
+                        $hasPrep = true;
+                    }
+                }
+                if (
+                    $m->status === \App\Enums\MeetingStatus::PrepGenerated ||
+                    $m->status === \App\Enums\MeetingStatus::DraftCreated ||
+                    $m->status === \App\Enums\MeetingStatus::FollowUpPending ||
+                    $m->status === \App\Enums\MeetingStatus::FollowUpGenerated ||
+                    $m->status === \App\Enums\MeetingStatus::Completed ||
+                    in_array($m->metadata['prep_stage'] ?? null, ['draft_generated', 'reviewed_ready', 'completed'], true)
+                ) {
+                    $hasPrep = true;
+                }
+
+                // Determine whether follow-up is complete (exists, has content/summary/email_sent/completed, no AI error)
+                $hasFollowUp = false;
+                if ($m->followUp && empty($m->followUp->ai_error)) {
+                    if (
+                        ! empty($m->followUp->summary) ||
+                        ! empty($m->followUp->generated_followup_email_body) ||
+                        ! empty($m->followUp->follow_up_content) ||
+                        ! empty($m->followUp->executive_summary) ||
+                        ! empty($m->followUp->email_sent_at) ||
+                        ! empty($m->followUp->generated_at) ||
+                        ($m->followUp->status ?? null) === 'completed' ||
+                        ! empty($m->followUp->metadata['is_completed'])
+                    ) {
+                        $hasFollowUp = true;
+                    }
+                }
+                if (
+                    $m->status === \App\Enums\MeetingStatus::FollowUpGenerated ||
+                    $m->status === \App\Enums\MeetingStatus::Completed ||
+                    in_array($m->metadata['followup_stage'] ?? null, ['draft_generated', 'reviewed_ready', 'completed'], true)
+                ) {
+                    $hasFollowUp = true;
+                }
+
+                // ONLY show meetings missing prep OR missing follow up.
+                // If both are completed, exclude it!
+                if ($hasPrep && $hasFollowUp) {
+                    continue;
+                }
+
                 $start = $m->meeting_start_at ? Carbon::parse($m->meeting_start_at) : now()->addDay();
                 $end = $m->meeting_end_at ? Carbon::parse($m->meeting_end_at) : $start->copy()->addHour();
-                $timeString = ($start->isTomorrow() ? 'Tomorrow, ' : $start->format('D, M j, ')) . $start->format('g:i') . ' – ' . $end->format('g:i A');
 
-                $action = ($m->prep_stage ?? 'needed') === 'needed' ? 'View preparation brief' : 'Add to preparation list';
+                $datePrefix = $start->isToday() ? 'Today, ' : ($start->isTomorrow() ? 'Tomorrow, ' : ($start->isYesterday() ? 'Yesterday, ' : $start->format('D, M j, ')));
+                $timeString = $datePrefix . $start->format('g:i') . ' – ' . $end->format('g:i A');
+
+                $isPast = $start->isPast();
+
+                // If missing prep and meeting hasn't already concluded, button creates prep
+                if (! $hasPrep && ! $isPast) {
+                    $actionLabel = 'Create prep';
+                    $actionType = 'prep';
+                    $actionUrl = route('filament.admin.resources.client-meetings.view', [
+                        'record' => $m->id,
+                        'tab'    => 'prep',
+                        'action' => 'generatePrep',
+                    ]);
+                    $badgeLabel = 'Missing prep';
+                    $badgeColor = 'amber';
+                } else {
+                    // Prep is completed or meeting already occurred, but follow up is missing
+                    $actionLabel = 'Create follow up';
+                    $actionType = 'follow_up';
+                    $actionUrl = route('filament.admin.resources.client-meetings.view', [
+                        'record' => $m->id,
+                        'tab'    => 'follow-up',
+                        'action' => 'generateFollowUp',
+                    ]);
+                    $badgeLabel = 'Missing follow-up';
+                    $badgeColor = 'indigo';
+                }
 
                 $mapped[] = [
                     'id'           => $m->id,
                     'title'        => $m->title,
                     'time_label'   => $timeString,
                     'description'  => $m->client?->name ? "Meeting with {$m->client->name} team on milestone delivery." : 'Prepare project update and discuss next sprint.',
-                    'action_label' => $action,
-                    'icon_color'   => $idx === 0 ? 'blue' : 'amber',
+                    'action_label' => $actionLabel,
+                    'action_type'  => $actionType,
+                    'action_url'   => $actionUrl,
+                    'badge_label'  => $badgeLabel,
+                    'badge_color'  => $badgeColor,
+                    'view_url'     => route('filament.admin.resources.client-meetings.view', ['record' => $m->id]),
+                    'icon_color'   => $actionType === 'prep' ? 'blue' : 'amber',
                 ];
             }
 

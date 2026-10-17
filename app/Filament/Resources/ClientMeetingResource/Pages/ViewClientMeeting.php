@@ -46,6 +46,20 @@ class ViewClientMeeting extends ViewRecord
         ];
     }
 
+    public function mount(int | string $record): void
+    {
+        parent::mount($record);
+
+        if (! auth()->user()?->isClientOnly()) {
+            $action = request()->query('action');
+            if ($action === 'generatePrep' || request()->boolean('generate_prep')) {
+                $this->defaultAction = 'generatePrep';
+            } elseif ($action === 'generateFollowUp' || request()->boolean('generate_follow_up')) {
+                $this->defaultAction = 'generateFollowUp';
+            }
+        }
+    }
+
     public function hydrate(): void
     {
         if ($this->record) {
@@ -84,7 +98,23 @@ class ViewClientMeeting extends ViewRecord
                     ->tabs($tabs)
                     ->columnSpanFull()
                     ->contained()
-                    ->persistTabInQueryString(),
+                    ->persistTabInQueryString()
+                    ->activeTab(function () {
+                        $tab = request()->query('tab');
+                        if (in_array($tab, ['prep', 'pre-meeting-prep', 'pre_meeting_prep', 'pre-meeting-prep-tab', 'meeting-tabs-pre-meeting-prep-tab', '-pre-meeting-prep-tab'], true)) {
+                            return 3;
+                        }
+                        if (in_array($tab, ['follow-up', 'followup', 'follow_up', 'follow-up-tab', 'meeting-tabs-follow-up-tab', '-follow-up-tab'], true)) {
+                            return 5;
+                        }
+                        if (in_array($tab, ['notes', 'meeting-notes', 'meeting_notes', 'meeting-notes-tab', 'meeting-tabs-meeting-notes-tab', '-meeting-notes-tab'], true)) {
+                            return 4;
+                        }
+                        if (in_array($tab, ['info', 'meeting-info', 'meeting_info', 'meeting-info-tab', 'meeting-tabs-meeting-info-tab', '-meeting-info-tab'], true)) {
+                            return 2;
+                        }
+                        return 1;
+                    }),
             ]);
     }
 
@@ -303,8 +333,16 @@ class ViewClientMeeting extends ViewRecord
                             ->schema([
                                 TextEntry::make('no_prep_placeholder')
                                     ->label('')
-                                    ->default('No meeting prep has been generated yet. Use the "Generate Prep" button in the header.')
+                                    ->default('No meeting prep has been generated yet. Use the button below or in the page header to generate AI prep.')
                                     ->columnSpanFull(),
+                                InfolistActions::make([
+                                    InfolistAction::make('triggerGeneratePrep')
+                                        ->label('Generate Meeting Prep')
+                                        ->icon('heroicon-m-sparkles')
+                                        ->color('primary')
+                                        ->button()
+                                        ->action(fn ($livewire) => $livewire->mountAction('generatePrep')),
+                                ]),
                             ]),
                     ];
                 }
@@ -468,8 +506,16 @@ class ViewClientMeeting extends ViewRecord
                             ->schema([
                                 TextEntry::make('no_followup_placeholder')
                                     ->label('')
-                                    ->default('No follow-up has been generated yet. Add meeting notes in the "Meeting Notes" tab, then use the "Generate Follow-Up" button.')
+                                    ->default('No follow-up has been generated yet. Add meeting notes in the "Meeting Notes" tab, then use the button below or in the page header to generate AI follow-up.')
                                     ->columnSpanFull(),
+                                InfolistActions::make([
+                                    InfolistAction::make('triggerGenerateFollowUp')
+                                        ->label('Generate Follow-Up')
+                                        ->icon('heroicon-m-sparkles')
+                                        ->color('primary')
+                                        ->button()
+                                        ->action(fn ($livewire) => $livewire->mountAction('generateFollowUp')),
+                                ]),
                             ]),
                     ];
                 }
