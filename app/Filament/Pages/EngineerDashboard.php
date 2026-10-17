@@ -2,7 +2,11 @@
 
 namespace App\Filament\Pages;
 
+use App\Jobs\SyncPmProjectJob;
 use App\Models\Client;
+use App\Models\ClientMeeting;
+use App\Models\PmConnection;
+use App\Models\PmProject;
 use App\Models\PmWorkItem;
 use App\Models\User;
 use App\Services\Intelligence\MeetingIntelligenceService;
@@ -15,6 +19,7 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Forms\Form;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Auth;
 
@@ -99,6 +104,181 @@ class EngineerDashboard extends Page implements HasForms
     public function dismissAiInsight(): void
     {
         $this->showAiInsight = false;
+    }
+
+    public function getLastSyncedAt(): ?Carbon
+    {
+        $lastPm = PmWorkItem::max('last_synced_at');
+        $lastConn = PmConnection::max('last_synced_at');
+        $lastMeeting = ClientMeeting::max('updated_at');
+
+        $latest = collect([$lastPm, $lastConn, $lastMeeting])
+            ->filter()
+            ->map(fn ($ts) => Carbon::parse($ts))
+            ->max();
+
+        return $latest;
+    }
+
+    public function refreshDashboardData(): void
+    {
+        try {
+            $activeProjects = PmProject::where('is_active', true)->get();
+            foreach ($activeProjects as $project) {
+                SyncPmProjectJob::dispatch($project, 14);
+            }
+
+            if (class_exists(\App\Jobs\MeetingAgent\ScanGoogleCalendarJob::class)) {
+                \App\Jobs\MeetingAgent\ScanGoogleCalendarJob::dispatch();
+            }
+
+            Notification::make()
+                ->title('Refresh Queued')
+                ->body('Sync queued for ' . $activeProjects->count() . ' active project(s) and calendar meetings.')
+                ->success()
+                ->send();
+
+            $this->dispatch('$refresh');
+        } catch (\Throwable $e) {
+            Notification::make()
+                ->title('Refresh Failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    }
+
+    public function getNextDueItem(
+        ?User $targetUser,
+        array $workPlanItems,
+        array $needsAttentionItems,
+        array $upcomingMeetings
+    ): array {
+        // 1. Check for upcoming meetings today missing prep
+        $meetingMissingPrepToday = collect($upcomingMeetings)->first(function ($m) {
+            return ($m['action_type'] ?? '') === 'prep' &&
+                isset($m['raw_start']) &&
+                Carbon::parse($m['raw_start'])->isToday();
+        });
+
+        if ($meetingMissingPrepToday) {
+            return [
+                'type'         => 'meeting_prep',
+                'badge_text'   => 'Meeting Prep Required',
+                'badge_color'  => 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+                'title'        => $meetingMissingPrepToday['title'],
+                'subtitle'     => 'Starts at ' . Carbon::parse($meetingMissingPrepToday['raw_start'])->format('g:i A') . ' • Missing preparation brief & Jira context',
+                'due_label'    => $meetingMissingPrepToday['time_label'],
+                'target_id'    => 'section-upcoming-meetings',
+                'action_label' => 'Jump to meeting',
+                'action_url'   => $meetingMissingPrepToday['action_url'] ?? null,
+            ];
+        }
+
+        // 2. Check for high-priority blocker / attention items
+        $highAttention = collect($needsAttentionItems)->first(function ($item) {
+            return ($item['priority'] ?? '') === 'High';
+        });
+
+        if ($highAttention) {
+            $keyPrefix = ! empty($highAttention['key']) ? "{$highAttention['key']}: " : '';
+            return [
+                'type'         => 'blocker',
+                'badge_text'   => 'Needs Immediate Attention',
+                'badge_color'  => 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800',
+                'title'        => $keyPrefix . $highAttention['title'],
+                'subtitle'     => $highAttention['description'],
+                'due_label'    => 'Urgent attention required',
+                'target_id'    => 'section-needs-attention',
+                'action_label' => 'Jump to blocker',
+                'action_url'   => $highAttention['jira_url'] ?? null,
+            ];
+        }
+
+        // 3. Check for any upcoming meeting missing prep (tomorrow/next days)
+        $meetingMissingPrep = collect($upcomingMeetings)->first(function ($m) {
+            return ($m['action_type'] ?? '') === 'prep';
+        });
+
+        if ($meetingMissingPrep) {
+            return [
+                'type'         => 'meeting_prep',
+                'badge_text'   => 'Meeting Prep Pending',
+                'badge_color'  => 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+                'title'        => $meetingMissingPrep['title'],
+                'subtitle'     => 'Scheduled ' . $meetingMissingPrep['time_label'] . ' • Needs briefing generated',
+                'due_label'    => $meetingMissingPrep['time_label'],
+                'target_id'    => 'section-upcoming-meetings',
+                'action_label' => 'Jump to meeting',
+                'action_url'   => $meetingMissingPrep['action_url'] ?? null,
+            ];
+        }
+
+        // 4. Check for meetings missing follow-up
+        $meetingMissingFollowUp = collect($upcomingMeetings)->first(function ($m) {
+            return ($m['action_type'] ?? '') === 'follow_up';
+        });
+
+        if ($meetingMissingFollowUp) {
+            return [
+                'type'         => 'meeting_followup',
+                'badge_text'   => 'Meeting Follow-up Needed',
+                'badge_color'  => 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800',
+                'title'        => $meetingMissingFollowUp['title'],
+                'subtitle'     => 'Completed ' . $meetingMissingFollowUp['time_label'] . ' • Client summary & action items pending',
+                'due_label'    => 'Follow-up pending',
+                'target_id'    => 'section-upcoming-meetings',
+                'action_label' => 'Jump to meeting',
+                'action_url'   => $meetingMissingFollowUp['action_url'] ?? null,
+            ];
+        }
+
+        // 5. Check for any remaining attention item
+        $anyAttention = collect($needsAttentionItems)->first();
+        if ($anyAttention) {
+            $keyPrefix = ! empty($anyAttention['key']) ? "{$anyAttention['key']}: " : '';
+            return [
+                'type'         => 'attention',
+                'badge_text'   => 'Action Required',
+                'badge_color'  => 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+                'title'        => $keyPrefix . $anyAttention['title'],
+                'subtitle'     => $anyAttention['description'],
+                'due_label'    => 'Action required today',
+                'target_id'    => 'section-needs-attention',
+                'action_label' => 'Jump to item',
+                'action_url'   => $anyAttention['jira_url'] ?? null,
+            ];
+        }
+
+        // 6. Check for #1 task in Recommended Work Plan
+        $topWorkItem = collect($workPlanItems)->first();
+        if ($topWorkItem) {
+            $keyPrefix = ! empty($topWorkItem['key']) ? "{$topWorkItem['key']}: " : '';
+            return [
+                'type'         => 'work_plan',
+                'badge_text'   => 'Top Priority Task (#1)',
+                'badge_color'  => 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800',
+                'title'        => $keyPrefix . $topWorkItem['title'],
+                'subtitle'     => $topWorkItem['project'] . ' • Est. ' . $topWorkItem['est_time'] . ' • ' . $topWorkItem['why_matters'],
+                'due_label'    => 'Recommended next',
+                'target_id'    => 'section-work-plan',
+                'action_label' => 'Jump to task',
+                'action_url'   => $topWorkItem['jira_url'] ?? null,
+            ];
+        }
+
+        // 7. Caught up
+        return [
+            'type'         => 'none',
+            'badge_text'   => 'All Clear',
+            'badge_color'  => 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800',
+            'title'        => 'You are all caught up!',
+            'subtitle'     => 'No immediate blockers, upcoming meeting prep, or pending tasks requiring immediate action.',
+            'due_label'    => 'Up to date',
+            'target_id'    => 'section-work-plan',
+            'action_label' => 'View work plan',
+            'action_url'   => null,
+        ];
     }
 
     public function getUserOptions(): array
