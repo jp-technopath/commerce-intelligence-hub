@@ -23,20 +23,21 @@
             </p>
         </div>
 
-        <div class="flex items-center flex-wrap gap-3">
+        <div class="flex items-center flex-wrap gap-2.5">
             {{-- Last Synced Pill with Refresh Button --}}
-            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 shadow-xs flex items-center gap-2.5">
+            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-3 pr-1.5 py-1 shadow-2xs flex items-center gap-2">
                 <div class="flex items-center gap-1.5" title="{{ $lastSyncedAt ? 'Last synced: ' . $lastSyncedAt->format('M j, Y g:i A') : 'No sync recorded yet' }}">
-                    <span class="w-2 h-2 rounded-full {{ $lastSyncedAt ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600' }}"></span>
+                    <span class="w-2 h-2 rounded-full {{ $lastSyncedAt ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600' }}"></span>
                     <span class="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
                         Synced {{ $lastSyncedAt ? $lastSyncedAt->diffForHumans() : 'Never' }}
                     </span>
                 </div>
+                <div class="h-3.5 w-px bg-slate-200 dark:bg-slate-700"></div>
                 <button
                     type="button"
                     wire:click="refreshDashboardData"
                     wire:loading.attr="disabled"
-                    class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 font-semibold text-xs flex items-center gap-1 pl-2 border-l border-slate-200 dark:border-slate-700 transition cursor-pointer disabled:opacity-50"
+                    class="text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-slate-700 font-semibold text-xs flex items-center gap-1 px-2 py-0.5 rounded transition cursor-pointer disabled:opacity-50"
                     title="Refresh data from Jira & Calendar"
                 >
                     <x-heroicon-m-arrow-path class="w-3.5 h-3.5 shrink-0" wire:loading.class="animate-spin" wire:target="refreshDashboardData" />
@@ -126,133 +127,214 @@
         </div>
     </div>
 
-    {{-- TOP DASHBOARD SUMMARY & NEXT DUE ITEM CARD --}}
-    <div class="bg-gradient-to-br from-white via-slate-50/50 to-blue-50/30 dark:from-slate-900 dark:via-slate-900/90 dark:to-blue-950/20 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 md:p-6 shadow-xs">
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-            {{-- Left Side: Daily Executive Summary & Quick-Jump Chips (7 cols) --}}
-            <div class="lg:col-span-7 space-y-4">
-                <div class="flex items-center gap-2.5">
-                    <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 flex items-center justify-center shrink-0">
-                        <x-heroicon-m-sparkles class="w-4.5 h-4.5" />
-                    </div>
-                    <div>
-                        <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight leading-none">
-                            Today's Overview
-                        </h2>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                            @if (count($needsAttentionItems) > 0)
-                                You have <span class="font-semibold text-rose-600 dark:text-rose-400">{{ count($needsAttentionItems) }} item(s)</span> requiring attention and <span class="font-semibold text-slate-800 dark:text-slate-200">{{ count($workPlanItems) }} task(s)</span> on your work plan.
-                            @elseif (count($upcomingMeetings) > 0)
-                                You have <span class="font-semibold text-amber-600 dark:text-amber-400">{{ count($upcomingMeetings) }} meeting(s)</span> needing prep or follow-up today.
-                            @else
-                                Everything is on track today with <span class="font-semibold text-slate-800 dark:text-slate-200">{{ count($workPlanItems) }} task(s)</span> prioritized for execution.
-                            @endif
-                        </p>
-                    </div>
-                </div>
+    {{-- STYLES FOR COMPACT COMMAND BAR --}}
+    <style>
+        .compact-cmd-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+        }
+        @media (min-width: 1024px) {
+            .compact-cmd-grid {
+                grid-template-columns: 1.1fr 0.9fr;
+                gap: 0.875rem;
+            }
+        }
+        .compact-cmd-card {
+            background: #ffffff;
+            border: 1px solid rgba(226, 232, 240, 0.9);
+            border-radius: 0.875rem;
+            padding: 0.75rem 1rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.02);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 100px;
+        }
+        .dark .compact-cmd-card {
+            background: #0f172a;
+            border-color: #1e293b;
+        }
+        .compact-cmd-chips {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        @media (max-width: 640px) {
+            .compact-cmd-chips {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        .compact-cmd-chip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.35rem 0.6rem;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: left;
+        }
+        .dark .compact-cmd-chip {
+            background: #1e293b;
+            border-color: #334155;
+        }
+        .compact-cmd-chip:hover {
+            background: #f1f5f9;
+            border-color: #cbd5e1;
+            transform: translateY(-1px);
+        }
+        .dark .compact-cmd-chip:hover {
+            background: #334155;
+            border-color: #475569;
+        }
+        .compact-spotlight-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid rgba(226, 232, 240, 0.9);
+            border-radius: 0.875rem;
+            padding: 0.75rem 1rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.02);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 100px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .dark .compact-spotlight-card {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-color: #1e293b;
+        }
+        .compact-spotlight-card:hover {
+            border-color: #93c5fd;
+            box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.1);
+            transform: translateY(-1px);
+        }
+        .dark .compact-spotlight-card:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.25);
+        }
+    </style>
 
-                {{-- Interactive Quick-Jump Stat Chips --}}
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-                    {{-- 1. Tasks To Do --}}
-                    <button 
-                        type="button" 
-                        onclick="jumpToSection('section-work-plan')"
-                        class="p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-800/80 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-xs transition text-left group cursor-pointer"
-                    >
-                        <div class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider group-hover:text-blue-600 transition">
-                            Work Plan
-                        </div>
-                        <div class="text-lg font-extrabold text-slate-900 dark:text-slate-100 mt-0.5 flex items-center justify-between">
-                            <span>{{ count($workPlanItems) }}</span>
-                            <span class="text-[10px] font-normal text-slate-400 group-hover:text-blue-500 transition">tasks &darr;</span>
-                        </div>
-                    </button>
-
-                    {{-- 2. Needs Attention --}}
-                    <button 
-                        type="button" 
-                        onclick="jumpToSection('section-needs-attention')"
-                        class="p-2.5 rounded-xl border {{ count($needsAttentionItems) > 0 ? 'border-rose-200 bg-rose-50/50 dark:border-rose-900/60 dark:bg-rose-950/20' : 'border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-800/80' }} hover:border-rose-300 dark:hover:border-rose-700 hover:shadow-xs transition text-left group cursor-pointer"
-                    >
-                        <div class="text-[10px] font-semibold {{ count($needsAttentionItems) > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400' }} uppercase tracking-wider transition">
-                            Attention
-                        </div>
-                        <div class="text-lg font-extrabold {{ count($needsAttentionItems) > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100' }} mt-0.5 flex items-center justify-between">
-                            <span>{{ count($needsAttentionItems) }}</span>
-                            <span class="text-[10px] font-normal {{ count($needsAttentionItems) > 0 ? 'text-rose-500' : 'text-slate-400' }} transition">items &darr;</span>
-                        </div>
-                    </button>
-
-                    {{-- 3. Meetings Requiring Action --}}
-                    <button 
-                        type="button" 
-                        onclick="jumpToSection('section-upcoming-meetings')"
-                        class="p-2.5 rounded-xl border {{ count($upcomingMeetings) > 0 ? 'border-amber-200 bg-amber-50/50 dark:border-amber-900/60 dark:bg-amber-950/20' : 'border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-800/80' }} hover:border-amber-300 dark:hover:border-amber-700 hover:shadow-xs transition text-left group cursor-pointer"
-                    >
-                        <div class="text-[10px] font-semibold {{ count($upcomingMeetings) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400' }} uppercase tracking-wider transition">
-                            Meetings
-                        </div>
-                        <div class="text-lg font-extrabold {{ count($upcomingMeetings) > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100' }} mt-0.5 flex items-center justify-between">
-                            <span>{{ count($upcomingMeetings) }}</span>
-                            <span class="text-[10px] font-normal {{ count($upcomingMeetings) > 0 ? 'text-amber-500' : 'text-slate-400' }} transition">action &darr;</span>
-                        </div>
-                    </button>
-
-                    {{-- 4. Hours Tracked --}}
-                    <button 
-                        type="button" 
-                        onclick="jumpToSection('section-hours')"
-                        class="p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-800/80 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-xs transition text-left group cursor-pointer"
-                    >
-                        <div class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider group-hover:text-blue-600 transition">
-                            Hours
-                        </div>
-                        <div class="text-lg font-extrabold text-slate-900 dark:text-slate-100 mt-0.5 flex items-center justify-between">
-                            <span>{{ $hoursData['total_hours'] }}h</span>
-                            <span class="text-[10px] font-normal text-slate-400 group-hover:text-blue-500 transition">{{ $hoursData['progress_pct'] }}% &darr;</span>
-                        </div>
-                    </button>
+    {{-- TOP DASHBOARD SUMMARY & NEXT DUE ITEM COMMAND BAR --}}
+    <div class="compact-cmd-grid">
+        {{-- Card 1: Today at a Glance & Quick-Jump Counters --}}
+        <div class="compact-cmd-card">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400 shrink-0">
+                        <x-heroicon-m-sparkles class="w-3.5 h-3.5" />
+                    </span>
+                    <span class="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                        Today's Overview
+                    </span>
+                    <span class="text-slate-300 dark:text-slate-600">•</span>
+                    <span class="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        @if (count($needsAttentionItems) > 0)
+                            <strong class="text-rose-600 dark:text-rose-400">{{ count($needsAttentionItems) }} item(s)</strong> need attention
+                        @elseif (count($upcomingMeetings) > 0)
+                            <strong class="text-amber-600 dark:text-amber-400">{{ count($upcomingMeetings) }} meeting(s)</strong> need prep or follow-up
+                        @else
+                            All clear &bull; <strong>{{ count($workPlanItems) }} task(s)</strong> scheduled
+                        @endif
+                    </span>
                 </div>
             </div>
 
-            {{-- Right Side: Next Due Item Spotlight (5 cols) --}}
-            <div class="lg:col-span-5">
-                <div 
-                    onclick="jumpToSection('{{ $nextDueItem['target_id'] }}')"
-                    class="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 hover:border-blue-300 dark:hover:border-blue-600 rounded-xl p-4 shadow-xs hover:shadow-md transition cursor-pointer group flex flex-col justify-between relative overflow-hidden"
+            {{-- 4 Stat Chips --}}
+            <div class="compact-cmd-chips">
+                <button 
+                    type="button" 
+                    onclick="jumpToSection('section-work-plan')"
+                    class="compact-cmd-chip"
+                    title="Jump to Work Plan"
                 >
-                    <div class="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-xl pointer-events-none"></div>
-
-                    <div>
-                        <div class="flex items-center justify-between gap-2 mb-2">
-                            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md {{ $nextDueItem['badge_color'] }}">
-                                {{ $nextDueItem['badge_text'] }}
-                            </span>
-                            <span class="text-[11px] font-medium text-slate-400 flex items-center gap-1">
-                                <x-heroicon-m-clock class="w-3.5 h-3.5 text-slate-400" />
-                                <span>{{ $nextDueItem['due_label'] }}</span>
-                            </span>
-                        </div>
-
-                        <h3 class="text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition line-clamp-2 leading-snug">
-                            {{ $nextDueItem['title'] }}
-                        </h3>
-
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-                            {{ $nextDueItem['subtitle'] }}
-                        </p>
+                    <div class="min-w-0">
+                        <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-none">Work Plan</div>
+                        <div class="text-sm font-extrabold text-slate-900 dark:text-slate-100 leading-tight mt-0.5">{{ count($workPlanItems) }}</div>
                     </div>
+                    <span class="text-[11px] text-slate-400">&darr;</span>
+                </button>
 
-                    <div class="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                        <span class="text-xs font-semibold text-blue-600 dark:text-blue-400 group-hover:underline inline-flex items-center gap-1">
-                            <span>{{ $nextDueItem['action_label'] }}</span>
-                            <span class="transition-transform group-hover:translate-y-0.5">&darr;</span>
-                        </span>
-                        <span class="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
-                            Next Due Item
-                        </span>
+                <button 
+                    type="button" 
+                    onclick="jumpToSection('section-needs-attention')"
+                    class="compact-cmd-chip {{ count($needsAttentionItems) > 0 ? 'border-rose-200 bg-rose-50/70 dark:bg-rose-950/30' : '' }}"
+                    title="Jump to Needs Attention"
+                >
+                    <div class="min-w-0">
+                        <div class="text-[10px] uppercase font-bold {{ count($needsAttentionItems) > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400' }} tracking-wider leading-none">Attention</div>
+                        <div class="text-sm font-extrabold {{ count($needsAttentionItems) > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100' }} leading-tight mt-0.5">{{ count($needsAttentionItems) }}</div>
                     </div>
+                    <span class="text-[11px] {{ count($needsAttentionItems) > 0 ? 'text-rose-500' : 'text-slate-400' }}">&darr;</span>
+                </button>
+
+                <button 
+                    type="button" 
+                    onclick="jumpToSection('section-upcoming-meetings')"
+                    class="compact-cmd-chip {{ count($upcomingMeetings) > 0 ? 'border-amber-200 bg-amber-50/70 dark:bg-amber-950/30' : '' }}"
+                    title="Jump to Upcoming Meetings"
+                >
+                    <div class="min-w-0">
+                        <div class="text-[10px] uppercase font-bold {{ count($upcomingMeetings) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400' }} tracking-wider leading-none">Meetings</div>
+                        <div class="text-sm font-extrabold {{ count($upcomingMeetings) > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100' }} leading-tight mt-0.5">{{ count($upcomingMeetings) }}</div>
+                    </div>
+                    <span class="text-[11px] {{ count($upcomingMeetings) > 0 ? 'text-amber-500' : 'text-slate-400' }}">&darr;</span>
+                </button>
+
+                <button 
+                    type="button" 
+                    onclick="jumpToSection('section-hours')"
+                    class="compact-cmd-chip"
+                    title="Jump to Hours"
+                >
+                    <div class="min-w-0">
+                        <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-none">Hours</div>
+                        <div class="text-sm font-extrabold text-slate-900 dark:text-slate-100 leading-tight mt-0.5">{{ $hoursData['total_hours'] }}h</div>
+                    </div>
+                    <span class="text-[11px] text-slate-400">&darr;</span>
+                </button>
+            </div>
+        </div>
+
+        {{-- Card 2: Next Due Item Spotlight --}}
+        <div 
+            onclick="jumpToSection('{{ $nextDueItem['target_id'] }}')"
+            class="compact-spotlight-card group"
+            title="Click to jump to {{ $nextDueItem['title'] }}"
+        >
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider {{ $nextDueItem['badge_color'] }}">
+                        {{ $nextDueItem['badge_text'] }}
+                    </span>
                 </div>
+                <div class="flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0">
+                    <x-heroicon-m-clock class="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{{ $nextDueItem['due_label'] }}</span>
+                </div>
+            </div>
+
+            <div class="my-1 min-w-0">
+                <div class="text-xs md:text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition truncate leading-snug">
+                    {{ $nextDueItem['title'] }}
+                </div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                    {{ $nextDueItem['subtitle'] }}
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
+                <span class="font-semibold text-blue-600 dark:text-blue-400 group-hover:underline inline-flex items-center gap-1">
+                    <span>{{ $nextDueItem['action_label'] }}</span>
+                    <span class="transition-transform group-hover:translate-y-0.5">&darr;</span>
+                </span>
+                <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Next Due Item
+                </span>
             </div>
         </div>
     </div>
