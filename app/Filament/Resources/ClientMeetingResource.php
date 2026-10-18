@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Enums\MeetingSource;
 use App\Enums\MeetingStatus;
 use App\Filament\Resources\ClientMeetingResource\Pages;
+use App\Models\Client;
 use App\Models\ClientMeeting;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -13,16 +14,24 @@ use Filament\Support\Enums\FontWeight;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 
 class ClientMeetingResource extends Resource
 {
     protected static ?string $model = ClientMeeting::class;
+
     protected static ?string $navigationIcon = 'heroicon-o-calendar-days';
+
     protected static ?string $navigationGroup = 'Meetings';
+
     protected static ?int $navigationSort = 1;
+
     protected static ?string $navigationLabel = 'Customer Meetings';
+
     protected static ?string $slug = 'client-meetings';
+
     protected static ?string $modelLabel = 'Customer Meeting';
+
     protected static ?string $pluralModelLabel = 'Customer Meetings';
 
     public static function canViewAny(): bool
@@ -77,7 +86,7 @@ class ClientMeetingResource extends Resource
                         ->live()
                         ->afterStateUpdated(function (Forms\Get $get, Forms\Set $set, ?string $state) {
                             if ($state) {
-                                $client = \App\Models\Client::find($state);
+                                $client = Client::find($state);
                                 if ($client && ! empty($client->jira_project_key)) {
                                     $set('project_key', $client->jira_project_key);
                                 }
@@ -178,28 +187,21 @@ class ClientMeetingResource extends Resource
                 Tables\Filters\SelectFilter::make('view_scope')
                     ->label('View Scope')
                     ->options([
-                        'my_invites' => 'My Calendar Invites',
-                        'all_team'   => 'All Team Invites',
+                        'my_meetings' => 'My Meetings (Creator / Owner)',
+                        'all_team' => 'All Team Meetings',
                     ])
-                    ->default('my_invites')
+                    ->default('my_meetings')
                     ->query(function (Builder $query, array $data) {
-                        $value = $data['value'] ?? 'my_invites';
+                        $value = $data['value'] ?? 'my_meetings';
                         /** @var \App\Models\User|null $user */
-                        $user = \Illuminate\Support\Facades\Auth::user();
+                        $user = Auth::user();
 
                         if (! $user) {
                             return;
                         }
 
-                        if ($value === 'my_invites') {
-                            $email = strtolower($user->email ?? '');
-                            $query->where(function ($q) use ($user, $email) {
-                                $q->where('internal_owner_id', $user->id)
-                                  ->orWhere('scanned_by_user_id', $user->id);
-                                if (! empty($email)) {
-                                    $q->orWhere('internal_attendees', 'like', "%{$email}%");
-                                }
-                            });
+                        if ($value === 'my_meetings' || $value === 'my_invites') {
+                            $query->ownedOrCreatedBy($user);
                         }
                     }),
 
@@ -211,8 +213,10 @@ class ClientMeetingResource extends Resource
                 Tables\Filters\SelectFilter::make('client_id')
                     ->relationship('client', 'name', function ($query) {
                         /** @var User|null $user */
-                        $user = \Illuminate\Support\Facades\Auth::user();
-                        if (! $user) return $query;
+                        $user = Auth::user();
+                        if (! $user) {
+                            return $query;
+                        }
 
                         if (! $user->isSuperAdmin()) {
                             $assignedClientIds = $user->getAssignedClientIds();
@@ -220,6 +224,7 @@ class ClientMeetingResource extends Resource
                                 $query->whereIn('id', $assignedClientIds);
                             }
                         }
+
                         return $query;
                     })
                     ->label('Client'),
@@ -275,10 +280,10 @@ class ClientMeetingResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'  => Pages\ListClientMeetings::route('/'),
+            'index' => Pages\ListClientMeetings::route('/'),
             'create' => Pages\CreateClientMeeting::route('/create'),
-            'view'   => Pages\ViewClientMeeting::route('/{record}'),
-            'edit'   => Pages\EditClientMeeting::route('/{record}/edit'),
+            'view' => Pages\ViewClientMeeting::route('/{record}'),
+            'edit' => Pages\EditClientMeeting::route('/{record}/edit'),
         ];
     }
 }

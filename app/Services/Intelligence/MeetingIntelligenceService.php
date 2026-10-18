@@ -8,7 +8,6 @@ use App\Enums\FindingStatus;
 use App\Models\ClientMeeting;
 use App\Models\Finding;
 use App\Models\User;
-use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
 class MeetingIntelligenceService
@@ -88,36 +87,18 @@ class MeetingIntelligenceService
         $now = now();
         $start = $hoursBehind > 0 ? $now->copy()->subHours($hoursBehind) : $now;
         $cutoff = $now->copy()->addDays($days);
-        $effectiveUser = \App\Services\PM\IdentityResolverService::resolveEffectiveUser($user);
-
-        $userEmails = [$user->email, $effectiveUser->email];
-        if (in_array($effectiveUser->id, [2, 6])) {
-            $userEmails = array_unique(array_merge($userEmails, ['jp@technopath.co', 'jeanpaulhanna@gmail.com']));
-        } elseif ($effectiveUser->id === 3) {
-            $userEmails = array_unique(array_merge($userEmails, ['donia@technopath.co', 'doniaakhaled@gmail.com']));
-        } elseif (in_array($effectiveUser->id, [4, 7])) {
-            $userEmails = array_unique(array_merge($userEmails, ['nour@technopath.co', 'nour@technopath.ai', 'nour.ayman91@gmail.com']));
-        }
 
         $meetings = ClientMeeting::with(['client', 'prep', 'followUp'])
             ->whereHas('client', fn ($q) => $q->withJiraProjectKey())
             ->whereBetween('meeting_start_at', [$start, $cutoff])
-            ->where(function ($q) use ($user, $effectiveUser, $userEmails) {
-                $q->where('internal_owner_id', $user->id)
-                  ->orWhere('internal_owner_id', $effectiveUser->id);
-
-                foreach ($userEmails as $email) {
-                    if (! empty($email)) {
-                        $q->orWhere('internal_attendees', 'like', '%' . $email . '%');
-                    }
-                }
-            })
+            ->ownedOrCreatedBy($user)
             ->orderBy('meeting_start_at', 'asc')
             ->get();
 
         return $meetings->map(function ($m) {
             $m->prep_stage = $this->getMeetingPrepStage($m);
             $m->followup_stage = $this->getMeetingFollowUpStage($m);
+
             return $m;
         });
     }
@@ -147,14 +128,14 @@ class MeetingIntelligenceService
             $followUpStage = $this->getMeetingFollowUpStage($meeting);
 
             $data = [
-                'id'               => $meeting->id,
-                'title'            => $meeting->title,
-                'client_name'      => $meeting->client?->name ?? 'Unmapped Client',
-                'owner_name'       => $meeting->owner?->name ?? 'Unassigned',
-                'is_unassigned'    => $meeting->internal_owner_id === null,
+                'id' => $meeting->id,
+                'title' => $meeting->title,
+                'client_name' => $meeting->client?->name ?? 'Unmapped Client',
+                'owner_name' => $meeting->owner?->name ?? 'Unassigned',
+                'is_unassigned' => $meeting->internal_owner_id === null,
                 'meeting_start_at' => $meeting->meeting_start_at,
-                'prep_stage'       => $prepStage,
-                'follow_up_stage'  => $followUpStage,
+                'prep_stage' => $prepStage,
+                'follow_up_stage' => $followUpStage,
             ];
 
             if ($isPast) {
@@ -166,7 +147,7 @@ class MeetingIntelligenceService
 
         return [
             'upcoming' => $upcoming,
-            'recent'   => $recent,
+            'recent' => $recent,
         ];
     }
 
@@ -206,25 +187,25 @@ class MeetingIntelligenceService
                             'fingerprint' => $fingerprint,
                         ],
                         [
-                            'client_id'                  => $m->client_id,
-                            'responsible_user_id'        => $m->internal_owner_id,
-                            'source_type'                => 'client_meeting',
-                            'source_id'                  => (string) $m->id,
-                            'finding_type'               => $isUnassigned ? 'unassigned_meeting_owner' : 'meeting_prep_' . $prepStage,
-                            'finding_category'           => FindingCategory::MeetingPreparation,
-                            'title'                      => $title,
-                            'description'                => "Meeting starts {$m->meeting_start_at->diffForHumans()}. Current preparation stage: {$prepStage}.",
-                            'severity'                   => $severity,
-                            'status'                     => FindingStatus::New,
-                            'visibility_classification'  => 'internal',
-                            'is_customer_visible'        => false,
-                            'evidence_json'              => [
-                                'meeting_id'  => $m->id,
-                                'prep_stage'  => $prepStage,
+                            'client_id' => $m->client_id,
+                            'responsible_user_id' => $m->internal_owner_id,
+                            'source_type' => 'client_meeting',
+                            'source_id' => (string) $m->id,
+                            'finding_type' => $isUnassigned ? 'unassigned_meeting_owner' : 'meeting_prep_'.$prepStage,
+                            'finding_category' => FindingCategory::MeetingPreparation,
+                            'title' => $title,
+                            'description' => "Meeting starts {$m->meeting_start_at->diffForHumans()}. Current preparation stage: {$prepStage}.",
+                            'severity' => $severity,
+                            'status' => FindingStatus::New,
+                            'visibility_classification' => 'internal',
+                            'is_customer_visible' => false,
+                            'evidence_json' => [
+                                'meeting_id' => $m->id,
+                                'prep_stage' => $prepStage,
                                 'hours_until' => $hoursUntil,
-                                'start_at'    => $m->meeting_start_at->toIso8601String(),
+                                'start_at' => $m->meeting_start_at->toIso8601String(),
                             ],
-                            'detected_at'                => now(),
+                            'detected_at' => now(),
                         ]
                     );
                     $syncedCount++;
@@ -240,23 +221,23 @@ class MeetingIntelligenceService
                             'fingerprint' => $fingerprint,
                         ],
                         [
-                            'client_id'                  => $m->client_id,
-                            'responsible_user_id'        => $m->internal_owner_id,
-                            'source_type'                => 'client_meeting',
-                            'source_id'                  => (string) $m->id,
-                            'finding_type'               => 'meeting_followup_' . $followUpStage,
-                            'finding_category'           => FindingCategory::MeetingFollowUp,
-                            'title'                      => "Meeting follow-up needed: {$m->title}",
-                            'description'                => "Meeting concluded {$m->meeting_start_at->diffForHumans()}. Action items and summary pending.",
-                            'severity'                   => FindingSeverity::Medium,
-                            'status'                     => FindingStatus::New,
-                            'visibility_classification'  => 'internal',
-                            'is_customer_visible'        => false,
-                            'evidence_json'              => [
-                                'meeting_id'      => $m->id,
+                            'client_id' => $m->client_id,
+                            'responsible_user_id' => $m->internal_owner_id,
+                            'source_type' => 'client_meeting',
+                            'source_id' => (string) $m->id,
+                            'finding_type' => 'meeting_followup_'.$followUpStage,
+                            'finding_category' => FindingCategory::MeetingFollowUp,
+                            'title' => "Meeting follow-up needed: {$m->title}",
+                            'description' => "Meeting concluded {$m->meeting_start_at->diffForHumans()}. Action items and summary pending.",
+                            'severity' => FindingSeverity::Medium,
+                            'status' => FindingStatus::New,
+                            'visibility_classification' => 'internal',
+                            'is_customer_visible' => false,
+                            'evidence_json' => [
+                                'meeting_id' => $m->id,
                                 'follow_up_stage' => $followUpStage,
                             ],
-                            'detected_at'                => now(),
+                            'detected_at' => now(),
                         ]
                     );
                     $syncedCount++;
