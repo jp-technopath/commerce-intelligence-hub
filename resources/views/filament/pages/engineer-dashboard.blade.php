@@ -389,6 +389,95 @@
             background-color: rgba(2, 44, 34, 0.3) !important;
             border-color: rgba(4, 120, 87, 0.4) !important;
         }
+
+        /* Section 3: My Hours styling */
+        .hours-card {
+            padding: 1.5rem !important;
+        }
+        @media (min-width: 768px) {
+            .hours-card {
+                padding: 1.75rem !important;
+            }
+        }
+        .hours-swatch {
+            display: inline-block !important;
+            width: 14px !important;
+            height: 14px !important;
+            min-width: 14px !important;
+            min-height: 14px !important;
+            border-radius: 3px !important;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+        }
+        .hours-main-track {
+            width: 100% !important;
+            height: 10px !important;
+            min-height: 10px !important;
+            background-color: #f1f5f9 !important;
+            border-radius: 9999px !important;
+            overflow: hidden !important;
+            border: 1px solid #e2e8f0 !important;
+        }
+        .dark .hours-main-track {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+        }
+        .hours-main-fill {
+            height: 10px !important;
+            min-height: 10px !important;
+            border-radius: 9999px !important;
+            background: linear-gradient(90deg, #2563eb 0%, #4f46e5 50%, #10b981 100%) !important;
+            transition: width 0.5s ease !important;
+        }
+        .hours-customer-track {
+            display: inline-block !important;
+            width: 60px !important;
+            height: 6px !important;
+            min-height: 6px !important;
+            background-color: #f1f5f9 !important;
+            border-radius: 9999px !important;
+            overflow: hidden !important;
+            border: 1px solid #e2e8f0 !important;
+        }
+        .dark .hours-customer-track {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+        }
+        .hours-customer-fill {
+            height: 6px !important;
+            min-height: 6px !important;
+            border-radius: 9999px !important;
+        }
+        .hours-missing-card {
+            background-color: #eff6ff !important;
+            border: 1px solid #bfdbfe !important;
+            border-radius: 0.875rem !important;
+            padding: 1.125rem 1.25rem !important;
+        }
+        .dark .hours-missing-card {
+            background-color: rgba(30, 58, 138, 0.3) !important;
+            border-color: rgba(59, 130, 246, 0.4) !important;
+        }
+        .hours-task-badge {
+            display: inline-block !important;
+            background-color: #ffffff !important;
+            border: 1px solid #bfdbfe !important;
+            color: #1d4ed8 !important;
+            font-family: monospace !important;
+            font-weight: 700 !important;
+            font-size: 11px !important;
+            padding: 3px 8px !important;
+            border-radius: 5px !important;
+            transition: all 0.15s ease !important;
+        }
+        .dark .hours-task-badge {
+            background-color: #1e293b !important;
+            border-color: #3b82f6 !important;
+            color: #93c5fd !important;
+        }
+        .hours-task-badge:hover {
+            opacity: 0.85 !important;
+            border-color: #2563eb !important;
+        }
     </style>
 
     {{-- TOP DASHBOARD SUMMARY & NEXT DUE ITEM COMMAND BAR --}}
@@ -884,82 +973,91 @@
         </div>
 
         {{-- SECTION 3: My Hours This Month --}}
-        <div id="section-hours" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 md:p-6 shadow-xs flex flex-col justify-between">
+        <div id="section-hours" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl hours-card shadow-xs flex flex-col justify-between">
             <div>
-                <div class="flex items-center justify-between mb-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-2 h-5 rounded-full bg-emerald-500 dark:bg-emerald-400 inline-block"></span>
+                <div class="flex items-center justify-between mb-5">
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-2.5 h-5 rounded-full inline-block" style="background-color: #10b981 !important;"></span>
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             3. My Hours This Month
                         </h2>
                     </div>
-                    <span class="text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md border border-slate-200/80 dark:border-slate-700/80">
+                    <span 
+                        class="text-xs font-semibold px-2.5 py-1 rounded-md border"
+                        style="background-color: #f8fafc !important; color: #475569 !important; border: 1px solid #e2e8f0 !important;"
+                    >
                         {{ now()->format('F Y') }}
                     </span>
                 </div>
 
-                {{-- Compact Stat and Progress Bar --}}
-                <div class="mb-3.5">
-                    <div class="flex items-baseline justify-between mb-1.5">
-                        <div class="flex items-baseline gap-1.5">
-                            <span class="text-2xl md:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+                {{-- Prominent Stat and Progress Bar --}}
+                <div class="mb-6">
+                    <div class="flex items-baseline justify-between mb-2">
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
                                 {{ $hoursData['total_hours'] }}h
                             </span>
-                            <span class="text-xs font-medium text-slate-400 dark:text-slate-500">
+                            <span class="text-sm font-medium text-slate-400 dark:text-slate-500">
                                 of {{ $hoursData['allocated_hours'] }}h allocation
                             </span>
                         </div>
-                        <span class="text-xs font-bold {{ $hoursData['progress_pct'] >= 80 ? 'text-emerald-700 bg-emerald-50 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800' : 'text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-900/60' }} px-2 py-0.5 rounded-md border shadow-2xs">
+                        <span 
+                            class="text-xs font-bold px-2.5 py-0.5 rounded-md border shadow-2xs"
+                            style="background-color: {{ $hoursData['progress_pct'] >= 80 ? '#ecfdf5' : '#eff6ff' }} !important; color: {{ $hoursData['progress_pct'] >= 80 ? '#047857' : '#1d4ed8' }} !important; border-color: {{ $hoursData['progress_pct'] >= 80 ? '#a7f3d0' : '#bfdbfe' }} !important;"
+                        >
                             {{ $hoursData['progress_pct'] }}%
                         </span>
                     </div>
 
-                    {{-- High-contrast Gradient Progress Bar --}}
-                    <div class="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden border border-slate-200/60 dark:border-slate-700/60">
+                    {{-- High-contrast Full Progress Bar with Solid Fallbacks --}}
+                    <div class="hours-main-track">
                         <div 
-                            class="bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-500 h-2.5 rounded-full transition-all duration-500" 
-                            style="width: {{ min(100, $hoursData['progress_pct']) }}%"
+                            class="hours-main-fill" 
+                            style="width: {{ min(100, max(2, $hoursData['progress_pct'])) }}% !important;"
                         ></div>
                     </div>
                 </div>
 
-                {{-- Customer Breakdown Table (Compact & Sharp) --}}
-                <div class="overflow-x-auto mb-3.5">
+                {{-- Customer Breakdown Table with Comfortable Padding & Visible Colors --}}
+                <div class="overflow-x-auto mb-4">
                     <table class="w-full text-xs">
                         <thead>
-                            <tr class="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 text-left">
-                                <th class="pb-1.5 font-semibold">Customer</th>
-                                <th class="pb-1.5 text-right font-semibold pr-2">Hours</th>
-                                <th class="pb-1.5 text-right font-semibold pr-2">Allocation</th>
-                                <th class="pb-1.5 text-right font-semibold w-24">%</th>
+                            <tr class="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 text-left">
+                                <th class="pb-2.5 px-3 font-semibold">Customer</th>
+                                <th class="pb-2.5 px-3 text-right font-semibold">Hours</th>
+                                <th class="pb-2.5 px-3 text-right font-semibold">Allocation</th>
+                                <th class="pb-2.5 px-3 text-right font-semibold w-28">%</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
+                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
                             @forelse ($hoursData['customers'] as $c)
-                                <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition">
-                                    <td class="py-1.5 pr-2">
-                                        <div class="flex items-center gap-2">
-                                            <span class="w-2.5 h-2.5 rounded-xs shrink-0 ring-1 ring-black/10 dark:ring-white/10" style="background-color: {{ $c['color'] }}"></span>
-                                            <span class="font-medium text-slate-800 dark:text-slate-200 truncate max-w-[150px] sm:max-w-none">
+                                <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition">
+                                    <td class="py-3 px-3">
+                                        <div class="flex items-center gap-2.5">
+                                            <span 
+                                                class="hours-swatch shrink-0" 
+                                                style="background-color: {{ $c['color'] }} !important;"
+                                            ></span>
+                                            <span class="font-bold text-xs md:text-sm text-slate-800 dark:text-slate-200">
                                                 {{ $c['name'] }}
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="py-1.5 pr-2 text-right font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                                    <td class="py-3 px-3 text-right font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100 whitespace-nowrap">
                                         {{ $c['hours'] }}
                                     </td>
-                                    <td class="py-1.5 pr-2 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                                    <td class="py-3 px-3 text-right text-xs md:text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">
                                         {{ $c['allocation'] }}
                                     </td>
-                                    <td class="py-1.5 text-right whitespace-nowrap">
-                                        <div class="flex items-center justify-end gap-1.5">
-                                            <span class="font-semibold text-slate-700 dark:text-slate-300 w-7 text-right text-[11px]">
+                                    <td class="py-3 px-3 text-right whitespace-nowrap">
+                                        <div class="flex items-center justify-end gap-2.5">
+                                            <span class="font-bold text-slate-700 dark:text-slate-300 w-8 text-right text-xs">
                                                 {{ $c['pct'] }}%
                                             </span>
-                                            <div class="w-12 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden shrink-0">
+                                            <div class="hours-customer-track shrink-0">
                                                 <div 
-                                                    class="h-1.5 rounded-full" 
-                                                    style="width: {{ min(100, $c['pct']) }}%; background-color: {{ $c['color'] }}"
+                                                    class="hours-customer-fill" 
+                                                    style="width: {{ min(100, max(2, $c['pct'])) }}% !important; background-color: {{ $c['color'] }} !important;"
                                                 ></div>
                                             </div>
                                         </div>
@@ -967,7 +1065,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="4" class="py-3 text-center text-slate-400 text-xs">
+                                    <td colspan="4" class="py-5 text-center text-slate-400 text-xs">
                                         No customer spaces tracked yet this month.
                                     </td>
                                 </tr>
@@ -979,11 +1077,11 @@
 
             {{-- Missing Time Info Card --}}
             @if ($hoursData['missing_time_count'] > 0)
-                <div class="bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-xl p-3 flex flex-col gap-2 mt-auto">
+                <div class="hours-missing-card flex flex-col gap-2.5 mt-5">
                     <div class="flex items-start justify-between gap-3">
-                        <div class="flex items-start gap-2 min-w-0">
-                            <x-heroicon-m-information-circle class="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-                            <div class="text-xs text-slate-700 dark:text-slate-300 leading-snug">
+                        <div class="flex items-start gap-2.5 min-w-0">
+                            <x-heroicon-m-information-circle class="w-5 h-5 shrink-0 mt-0.5" style="color: #2563eb !important;" />
+                            <div class="text-xs md:text-sm text-slate-800 dark:text-slate-200 leading-relaxed">
                                 You have <strong>{{ $hoursData['missing_time_count'] }} tasks completed with no time entries</strong>. Consider adding time to keep your hours up to date.
                             </div>
                         </div>
@@ -993,24 +1091,24 @@
                                 href="{{ $hoursData['missing_time_jira_url'] }}" 
                                 target="_blank" 
                                 rel="noopener noreferrer"
-                                class="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
+                                class="btn-action-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
                                 title="Open filtered search in Jira"
                             >
                                 <span>View in Jira</span>
-                                <span class="text-[10px]">&rarr;</span>
+                                <span class="text-[11px]">&rarr;</span>
                             </a>
                         @endif
                     </div>
 
                     @if (! empty($hoursData['missing_time_keys']))
-                        <div class="flex items-center gap-1.5 pl-6 flex-wrap">
-                            <span class="text-[11px] text-slate-400 font-medium">Tasks:</span>
+                        <div class="flex items-center gap-2 pl-7.5 flex-wrap mt-1">
+                            <span class="text-xs text-slate-500 font-semibold">Tasks:</span>
                             @foreach ($hoursData['missing_time_keys'] as $mKey)
                                 <a 
                                     href="https://technopath.atlassian.net/browse/{{ $mKey }}"
-                                    target="_blank"
+                                    target="_blank" 
                                     rel="noopener noreferrer"
-                                    class="inline-block px-1.5 py-0.5 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-800 rounded text-[10px] font-mono font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/40 transition"
+                                    class="hours-task-badge"
                                     title="Open {{ $mKey }} in Jira"
                                 >
                                     {{ $mKey }}
@@ -1020,8 +1118,11 @@
                     @endif
                 </div>
             @else
-                <div class="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl p-2.5 flex items-center gap-2 mt-auto text-xs text-emerald-800 dark:text-emerald-300">
-                    <x-heroicon-m-check-circle class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div 
+                    class="rounded-xl flex items-center gap-2.5 mt-5 text-xs font-medium"
+                    style="background-color: #ecfdf5 !important; border: 1px solid #a7f3d0 !important; color: #065f46 !important; padding: 12px 16px !important;"
+                >
+                    <x-heroicon-m-check-circle class="w-5 h-5 shrink-0" style="color: #059669 !important;" />
                     <span>All completed tasks have time entries logged.</span>
                 </div>
             @endif
@@ -1156,15 +1257,20 @@
                                             </span>
                                         </div>
                                     </td>
+                                    @php
+                                        $hStatus = strtolower($p['health'] ?? '');
+                                        $hStyle = match ($hStatus) {
+                                            'healthy' => ['bg' => '#ecfdf5', 'text' => '#047857', 'border' => '#a7f3d0', 'dot' => '#10b981'],
+                                            'watch'   => ['bg' => '#fffbeb', 'text' => '#b45309', 'border' => '#fde68a', 'dot' => '#f59e0b'],
+                                            default   => ['bg' => '#fff1f2', 'text' => '#be123c', 'border' => '#fecdd3', 'dot' => '#f43f5e'],
+                                        };
+                                    @endphp
                                     <td class="py-3 px-3">
-                                        <span class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $p['health_class'] }}">
-                                            @if ($p['health'] === 'Healthy')
-                                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                            @elseif ($p['health'] === 'Watch')
-                                                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                            @else
-                                                <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                                            @endif
+                                        <span 
+                                            class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border shadow-2xs {{ $p['health_class'] }}"
+                                            style="background-color: {{ $hStyle['bg'] }} !important; color: {{ $hStyle['text'] }} !important; border-color: {{ $hStyle['border'] }} !important;"
+                                        >
+                                            <span class="w-1.5 h-1.5 rounded-full inline-block" style="background-color: {{ $hStyle['dot'] }} !important;"></span>
                                             <span>{{ $p['health'] }}</span>
                                         </span>
                                     </td>
