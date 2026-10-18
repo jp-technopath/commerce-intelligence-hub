@@ -27,7 +27,14 @@
             {{-- Last Synced Pill with Refresh Button --}}
             <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-3 pr-1.5 py-1 shadow-2xs flex items-center gap-2">
                 <div class="flex items-center gap-1.5" title="{{ $lastSyncedAt ? 'Last synced: ' . $lastSyncedAt->format('M j, Y g:i A') : 'No sync recorded yet' }}">
-                    <span class="w-2 h-2 rounded-full {{ $lastSyncedAt ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600' }}"></span>
+                    @if ($lastSyncedAt)
+                        <span class="relative flex h-2 w-2">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                    @else
+                        <span class="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></span>
+                    @endif
                     <span class="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
                         Synced {{ $lastSyncedAt ? $lastSyncedAt->diffForHumans() : 'Never' }}
                     </span>
@@ -46,12 +53,12 @@
                 </button>
             </div>
 
-            {{-- Date Selector Pill --}}
-            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3.5 py-1.5 shadow-xs flex items-center gap-2 cursor-pointer hover:border-slate-300 transition">
-                <span class="text-xs font-medium text-slate-700 dark:text-slate-200">
+            {{-- Current Date Display --}}
+            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 shadow-2xs flex items-center gap-1.5" title="Today's Date">
+                <x-heroicon-m-calendar-days class="w-3.5 h-3.5 text-blue-500 dark:text-blue-400 shrink-0" />
+                <span class="text-xs font-semibold text-slate-800 dark:text-slate-200">
                     {{ now()->format('D, M j, Y') }}
                 </span>
-                <x-heroicon-m-chevron-down class="w-3.5 h-3.5 text-slate-400" />
             </div>
 
             {{-- Engineer Switcher Profile Card --}}
@@ -65,7 +72,7 @@
                     class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 rounded-xl px-2.5 py-1.5 shadow-xs flex items-center gap-2.5 cursor-pointer transition select-none"
                     title="Switch engineer view"
                 >
-                    <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700 bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
+                    <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-indigo-200 dark:border-indigo-800 bg-gradient-to-tr from-indigo-500 via-indigo-600 to-purple-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
                         {{ substr($targetUser?->name ?? 'Alex Chen', 0, 2) }}
                     </div>
                     <div class="text-left pr-1">
@@ -145,7 +152,7 @@
             border: 1px solid rgba(226, 232, 240, 0.9);
             border-radius: 0.875rem;
             padding: 0.75rem 1rem;
-            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.02);
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.03);
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -170,7 +177,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0.35rem 0.6rem;
+            padding: 0.4rem 0.6rem;
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             border-radius: 0.5rem;
@@ -183,20 +190,15 @@
             border-color: #334155;
         }
         .compact-cmd-chip:hover {
-            background: #f1f5f9;
-            border-color: #cbd5e1;
             transform: translateY(-1px);
-        }
-        .dark .compact-cmd-chip:hover {
-            background: #334155;
-            border-color: #475569;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
         }
         .compact-spotlight-card {
             background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
             border: 1px solid rgba(226, 232, 240, 0.9);
             border-radius: 0.875rem;
             padding: 0.75rem 1rem;
-            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.02);
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.03);
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -209,13 +211,11 @@
             border-color: #1e293b;
         }
         .compact-spotlight-card:hover {
-            border-color: #93c5fd;
-            box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.1);
+            box-shadow: 0 4px 14px -2px rgba(59, 130, 246, 0.12);
             transform: translateY(-1px);
         }
         .dark .compact-spotlight-card:hover {
-            border-color: #3b82f6;
-            box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.25);
+            box-shadow: 0 4px 14px -2px rgba(59, 130, 246, 0.25);
         }
     </style>
 
@@ -225,7 +225,7 @@
         <div class="compact-cmd-card">
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400 shrink-0">
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-md bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 shrink-0 shadow-2xs">
                         <x-heroicon-m-sparkles class="w-3.5 h-3.5" />
                     </span>
                     <span class="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
@@ -249,11 +249,14 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-work-plan')"
-                    class="compact-cmd-chip"
+                    class="compact-cmd-chip hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-indigo-50/40"
                     title="Jump to Work Plan"
                 >
                     <div class="min-w-0">
-                        <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-none">Work Plan</div>
+                        <div class="flex items-center gap-1">
+                            <x-heroicon-m-clipboard-document-list class="w-3 h-3 text-indigo-500 shrink-0" />
+                            <span class="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400 tracking-wider leading-none">Work Plan</span>
+                        </div>
                         <div class="text-sm font-extrabold text-slate-900 dark:text-slate-100 leading-tight mt-0.5">{{ count($workPlanItems) }}</div>
                     </div>
                     <span class="text-[11px] text-slate-400">&darr;</span>
@@ -262,11 +265,19 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-needs-attention')"
-                    class="compact-cmd-chip {{ count($needsAttentionItems) > 0 ? 'border-rose-200 bg-rose-50/70 dark:bg-rose-950/30' : '' }}"
+                    class="compact-cmd-chip {{ count($needsAttentionItems) > 0 ? 'border-rose-200 bg-rose-50/70 dark:bg-rose-950/40 hover:bg-rose-100/60' : 'hover:border-emerald-300 hover:bg-emerald-50/30' }}"
                     title="Jump to Needs Attention"
                 >
                     <div class="min-w-0">
-                        <div class="text-[10px] uppercase font-bold {{ count($needsAttentionItems) > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400' }} tracking-wider leading-none">Attention</div>
+                        <div class="flex items-center gap-1">
+                            @if (count($needsAttentionItems) > 0)
+                                <x-heroicon-m-exclamation-triangle class="w-3 h-3 text-rose-500 shrink-0" />
+                                <span class="text-[10px] uppercase font-bold text-rose-600 dark:text-rose-400 tracking-wider leading-none">Attention</span>
+                            @else
+                                <x-heroicon-m-check-circle class="w-3 h-3 text-emerald-500 shrink-0" />
+                                <span class="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 tracking-wider leading-none">Attention</span>
+                            @endif
+                        </div>
                         <div class="text-sm font-extrabold {{ count($needsAttentionItems) > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100' }} leading-tight mt-0.5">{{ count($needsAttentionItems) }}</div>
                     </div>
                     <span class="text-[11px] {{ count($needsAttentionItems) > 0 ? 'text-rose-500' : 'text-slate-400' }}">&darr;</span>
@@ -275,11 +286,14 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-upcoming-meetings')"
-                    class="compact-cmd-chip {{ count($upcomingMeetings) > 0 ? 'border-amber-200 bg-amber-50/70 dark:bg-amber-950/30' : '' }}"
+                    class="compact-cmd-chip {{ count($upcomingMeetings) > 0 ? 'border-amber-200 bg-amber-50/70 dark:bg-amber-950/40 hover:bg-amber-100/60' : 'hover:border-blue-300 hover:bg-blue-50/30' }}"
                     title="Jump to Upcoming Meetings"
                 >
                     <div class="min-w-0">
-                        <div class="text-[10px] uppercase font-bold {{ count($upcomingMeetings) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400' }} tracking-wider leading-none">Meetings</div>
+                        <div class="flex items-center gap-1">
+                            <x-heroicon-m-calendar-days class="w-3 h-3 {{ count($upcomingMeetings) > 0 ? 'text-amber-500' : 'text-blue-500' }} shrink-0" />
+                            <span class="text-[10px] uppercase font-bold {{ count($upcomingMeetings) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400' }} tracking-wider leading-none">Meetings</span>
+                        </div>
                         <div class="text-sm font-extrabold {{ count($upcomingMeetings) > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900 dark:text-slate-100' }} leading-tight mt-0.5">{{ count($upcomingMeetings) }}</div>
                     </div>
                     <span class="text-[11px] {{ count($upcomingMeetings) > 0 ? 'text-amber-500' : 'text-slate-400' }}">&darr;</span>
@@ -288,11 +302,14 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-hours')"
-                    class="compact-cmd-chip"
+                    class="compact-cmd-chip hover:border-emerald-300 dark:hover:border-emerald-600 hover:bg-emerald-50/40"
                     title="Jump to Hours"
                 >
                     <div class="min-w-0">
-                        <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-none">Hours</div>
+                        <div class="flex items-center gap-1">
+                            <x-heroicon-m-clock class="w-3 h-3 text-emerald-500 shrink-0" />
+                            <span class="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 tracking-wider leading-none">Hours</span>
+                        </div>
                         <div class="text-sm font-extrabold text-slate-900 dark:text-slate-100 leading-tight mt-0.5">{{ $hoursData['total_hours'] }}h</div>
                     </div>
                     <span class="text-[11px] text-slate-400">&darr;</span>
@@ -301,9 +318,18 @@
         </div>
 
         {{-- Card 2: Next Due Item Spotlight --}}
+        @php
+            $spotlightBorder = match($nextDueItem['type'] ?? '') {
+                'meeting_prep' => 'border-l-4 border-l-amber-500',
+                'meeting_followup' => 'border-l-4 border-l-purple-500',
+                'blocker' => 'border-l-4 border-l-rose-500',
+                'work_plan' => 'border-l-4 border-l-blue-500',
+                default => 'border-l-4 border-l-emerald-500',
+            };
+        @endphp
         <div 
             onclick="jumpToSection('{{ $nextDueItem['target_id'] }}')"
-            class="compact-spotlight-card group"
+            class="compact-spotlight-card group {{ $spotlightBorder }}"
             title="Click to jump to {{ $nextDueItem['title'] }}"
         >
             <div class="flex items-center justify-between gap-2">
@@ -327,12 +353,49 @@
                 </div>
             </div>
 
-            <div class="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-xs">
-                <span class="font-semibold text-blue-600 dark:text-blue-400 group-hover:underline inline-flex items-center gap-1">
-                    <span>{{ $nextDueItem['action_label'] }}</span>
-                    <span class="transition-transform group-hover:translate-y-0.5">&darr;</span>
-                </span>
-                <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+            <div class="flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-slate-800 text-xs mt-0.5">
+                <div class="flex items-center gap-2">
+                    @if (! empty($nextDueItem['action_url']))
+                        <a
+                            href="{{ $nextDueItem['action_url'] }}"
+                            onclick="event.stopPropagation();"
+                            class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold {{ in_array($nextDueItem['type'] ?? '', ['meeting_prep', 'meeting_followup'], true) ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-2xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200' }} transition cursor-pointer"
+                            @if (! str_starts_with($nextDueItem['action_url'], '/')) target="_blank" rel="noopener" @endif
+                        >
+                            @if (($nextDueItem['type'] ?? '') === 'meeting_prep')
+                                <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0" />
+                                <span>Create prep</span>
+                            @elseif (($nextDueItem['type'] ?? '') === 'meeting_followup')
+                                <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0" />
+                                <span>Create follow up</span>
+                            @else
+                                <span>{{ $nextDueItem['action_label'] }}</span>
+                            @endif
+                            <span class="text-[10px]">&rarr;</span>
+                        </a>
+
+                        <button
+                            type="button"
+                            onclick="event.stopPropagation(); jumpToSection('{{ $nextDueItem['target_id'] }}')"
+                            class="text-[11px] font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition inline-flex items-center gap-0.5 cursor-pointer"
+                            title="Scroll down to meetings"
+                        >
+                            <span>Jump to meeting</span>
+                            <span>&darr;</span>
+                        </button>
+                    @else
+                        <button
+                            type="button"
+                            onclick="event.stopPropagation(); jumpToSection('{{ $nextDueItem['target_id'] }}')"
+                            class="font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                        >
+                            <span>{{ $nextDueItem['action_label'] }}</span>
+                            <span class="transition-transform group-hover:translate-y-0.5">&darr;</span>
+                        </button>
+                    @endif
+                </div>
+
+                <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">
                     Next Due Item
                 </span>
             </div>
@@ -342,11 +405,15 @@
     {{-- SECTION 1: My Recommended Work Plan --}}
     <div id="section-work-plan" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
         <div class="flex items-center gap-3 mb-4">
-            <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                1. My Recommended Work Plan
-            </h2>
-            <span class="bg-[#F3E8FF] text-[#7E22CE] dark:bg-purple-950/70 dark:text-purple-300 font-medium text-xs px-3 py-1 rounded-full flex items-center gap-1.5">
-                AI prioritized for today
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-5 rounded-full bg-indigo-600 dark:bg-indigo-500 inline-block"></span>
+                <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                    1. My Recommended Work Plan
+                </h2>
+            </div>
+            <span class="bg-purple-100 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 font-semibold text-xs px-3 py-1 rounded-full flex items-center gap-1.5 border border-purple-200/80 dark:border-purple-800/80 shadow-2xs">
+                <x-heroicon-m-sparkles class="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                <span>AI prioritized for today</span>
             </span>
         </div>
 
@@ -354,7 +421,7 @@
             <table class="w-full text-left border-collapse">
                 <thead>
                     <tr class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-                        <th class="py-2.5 px-3 w-12">Oor</th>
+                        <th class="py-2.5 px-3 w-12 font-bold text-slate-500 dark:text-slate-400">#</th>
                         <th class="py-2.5 px-3">Task</th>
                         <th class="py-2.5 px-3">Project</th>
                         <th class="py-2.5 px-3">Priority</th>
@@ -365,6 +432,15 @@
                 </thead>
                 <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
                     @forelse ($workPlanItems as $item)
+                        @php
+                            $iconBg = match($item['icon_type'] ?? '') {
+                                'pr' => 'bg-amber-100 text-amber-700 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+                                'doc' => 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800',
+                                'search' => 'bg-purple-100 text-purple-700 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800',
+                                'branch' => 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800',
+                                default => 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200 dark:border-blue-800',
+                            };
+                        @endphp
                         <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                             {{-- Order Number Badge --}}
                             <td class="py-3 px-3 align-middle">
@@ -376,8 +452,7 @@
                             {{-- Task Icon & Title & Key --}}
                             <td class="py-3 px-3 align-middle">
                                 <div class="flex items-center gap-3">
-                                    <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 
-                                        {{ $item['icon_type'] === 'pr' ? 'bg-amber-50 text-amber-600' : ($item['icon_type'] === 'search' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600') }}">
+                                    <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $iconBg }}">
                                         @if ($item['icon_type'] === 'pr')
                                             <x-heroicon-m-arrows-right-left class="w-4 h-4" />
                                         @elseif ($item['icon_type'] === 'doc')
@@ -399,7 +474,7 @@
                                                 href="{{ $item['jira_url'] }}" 
                                                 target="_blank" 
                                                 rel="noopener noreferrer" 
-                                                class="text-xs text-slate-400 hover:text-blue-600 font-medium mt-0.5 inline-block transition"
+                                                class="text-[11px] font-mono font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/60 dark:border-blue-900/60 hover:bg-blue-100 dark:hover:bg-blue-900/80 mt-1 inline-block transition"
                                             >
                                                 {{ $item['key'] }}
                                             </a>
@@ -409,25 +484,33 @@
                             </td>
 
                             {{-- Project --}}
-                            <td class="py-3 px-3 align-middle text-xs md:text-sm font-medium text-slate-700 dark:text-slate-300">
-                                {{ $item['project'] }}
+                            <td class="py-3 px-3 align-middle">
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80 whitespace-nowrap">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    {{ $item['project'] }}
+                                </span>
                             </td>
 
                             {{-- Priority Pill --}}
                             <td class="py-3 px-3 align-middle">
-                                <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}">
+                                <span class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}">
                                     {{ $item['priority'] }}
                                 </span>
                             </td>
 
                             {{-- Est. Time --}}
-                            <td class="py-3 px-3 align-middle text-xs md:text-sm text-slate-600 dark:text-slate-400">
-                                {{ $item['est_time'] }}
+                            <td class="py-3 px-3 align-middle">
+                                <span class="inline-flex items-center gap-1 text-xs font-mono font-medium text-slate-700 dark:text-slate-300 bg-slate-100/90 dark:bg-slate-800/80 px-2 py-0.5 rounded border border-slate-200/60 dark:border-slate-700/60 whitespace-nowrap">
+                                    <x-heroicon-m-clock class="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    {{ $item['est_time'] }}
+                                </span>
                             </td>
 
                             {{-- Why this matters --}}
-                            <td class="py-3 px-3 align-middle text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-sm">
-                                {{ $item['why_matters'] }}
+                            <td class="py-3 px-3 align-middle max-w-sm">
+                                <div class="border-l-2 border-indigo-400 dark:border-indigo-500 pl-2.5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                                    {{ $item['why_matters'] }}
+                                </div>
                             </td>
 
                             {{-- Action: Start Button linking to Jira --}}
@@ -436,9 +519,10 @@
                                     href="{{ $item['jira_url'] }}" 
                                     target="_blank" 
                                     rel="noopener noreferrer"
-                                    class="bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-semibold text-xs px-4 py-1.5 rounded-lg shadow-2xs transition inline-flex items-center justify-center"
+                                    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-2xs hover:shadow-xs transition inline-flex items-center gap-1"
                                 >
-                                    Start
+                                    <span>Start</span>
+                                    <span class="text-[10px]">&rarr;</span>
                                 </a>
                             </td>
                         </tr>
@@ -470,25 +554,31 @@
         <div id="section-needs-attention" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center gap-2.5">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-5 rounded-full bg-rose-500 dark:bg-rose-400 inline-block"></span>
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             2. Needs My Attention
                         </h2>
-                        <span class="{{ count($needsAttentionItems) > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' }} font-semibold text-xs px-2.5 py-0.5 rounded-full">
+                        <span class="{{ count($needsAttentionItems) > 0 ? 'bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800' }} font-bold text-xs px-2.5 py-0.5 rounded-full shadow-2xs">
                             {{ count($needsAttentionItems) }} {{ count($needsAttentionItems) === 1 ? 'item' : 'items' }}
                         </span>
                     </div>
-                    <a href="#" class="text-blue-600 hover:underline text-xs font-semibold">
-                        View all
-                    </a>
                 </div>
 
                 <div class="divide-y divide-slate-50 dark:divide-slate-800/60">
                     @forelse ($needsAttentionItems as $item)
+                        @php
+                            $attIconBg = match($item['icon'] ?? '') {
+                                'alert' => 'bg-rose-100 text-rose-600 border border-rose-200 dark:bg-rose-950/70 dark:text-rose-400 dark:border-rose-800',
+                                'meeting' => 'bg-amber-100 text-amber-600 border border-amber-200 dark:bg-amber-950/70 dark:text-amber-400 dark:border-amber-800',
+                                'chat' => 'bg-purple-100 text-purple-600 border border-purple-200 dark:bg-purple-950/70 dark:text-purple-400 dark:border-purple-800',
+                                'timer' => 'bg-blue-100 text-blue-600 border border-blue-200 dark:bg-blue-950/70 dark:text-blue-400 dark:border-blue-800',
+                                default => 'bg-amber-100 text-amber-600 border border-amber-200 dark:bg-amber-950/70 dark:text-amber-400 dark:border-amber-800',
+                            };
+                        @endphp
                         <div class="py-3 flex items-center justify-between gap-3 group">
-                            <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 
-                                    {{ $item['icon'] === 'alert' || $item['priority'] === 'High' ? 'bg-rose-50 text-rose-500' : ($item['icon'] === 'meeting' ? 'bg-blue-50 text-blue-500' : 'bg-amber-50 text-amber-500') }}">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $attIconBg }}">
                                     @if ($item['icon'] === 'chat')
                                         <x-heroicon-m-chat-bubble-left-right class="w-4 h-4" />
                                     @elseif ($item['icon'] === 'meeting')
@@ -501,8 +591,8 @@
                                         <x-heroicon-m-clock class="w-4 h-4" />
                                     @endif
                                 </div>
-                                <div>
-                                    <div class="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100">
+                                <div class="min-w-0">
+                                    <div class="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100 truncate">
                                         {{ $item['title'] }}
                                     </div>
                                     <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">
@@ -513,7 +603,7 @@
                                              href="{{ $item['jira_url'] }}" 
                                             target="_blank" 
                                             rel="noopener noreferrer" 
-                                            class="text-[11px] font-medium text-slate-400 hover:text-blue-600 mt-0.5 inline-block transition"
+                                            class="text-[11px] font-mono font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/60 dark:border-blue-900/60 hover:bg-blue-100 dark:hover:bg-blue-900/80 mt-1 inline-block transition"
                                         >
                                             {{ $item['key'] }}
                                         </a>
@@ -522,15 +612,13 @@
                             </div>
 
                             <div class="flex items-center gap-2.5 shrink-0">
-                                <span class="text-xs font-semibold px-2 py-0.5 rounded-full border {{ $item['priority_class'] }}">
+                                <span class="text-xs font-bold px-2 py-0.5 rounded-full border {{ $item['priority_class'] }}">
                                     {{ $item['priority'] }}
                                 </span>
                                 @if (!empty($item['jira_url']))
-                                    <a href="{{ $item['jira_url'] }}" target="_blank" rel="noopener noreferrer">
-                                        <x-heroicon-m-chevron-right class="w-4 h-4 text-slate-400 hover:text-slate-600 transition" />
+                                    <a href="{{ $item['jira_url'] }}" target="_blank" rel="noopener noreferrer" class="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition" title="Open in Jira">
+                                        <x-heroicon-m-arrow-top-right-on-square class="w-4 h-4" />
                                     </a>
-                                @else
-                                    <x-heroicon-m-chevron-right class="w-4 h-4 text-slate-400" />
                                 @endif
                             </div>
                         </div>
@@ -552,98 +640,147 @@
         </div>
 
         {{-- SECTION 3: My Hours This Month --}}
-        <div id="section-hours" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
+        <div id="section-hours" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 md:p-6 shadow-xs flex flex-col justify-between">
             <div>
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                        3. My Hours This Month
-                    </h2>
-                    <div class="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer hover:bg-slate-50">
-                        <span>Track time</span>
-                        <x-heroicon-m-chevron-down class="w-3.5 h-3.5 text-slate-400" />
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-5 rounded-full bg-emerald-500 dark:bg-emerald-400 inline-block"></span>
+                        <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                            3. My Hours This Month
+                        </h2>
                     </div>
-                </div>
-
-                {{-- Big Stat and Allocation --}}
-                <div class="flex items-baseline mb-3">
-                    <span class="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-                        {{ $hoursData['total_hours'] }}h
-                    </span>
-                    <span class="text-xs md:text-sm font-medium text-slate-400 ml-2">
-                        of {{ $hoursData['allocated_hours'] }}h allocation
+                    <span class="text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md border border-slate-200/80 dark:border-slate-700/80">
+                        {{ now()->format('F Y') }}
                     </span>
                 </div>
 
-                {{-- Full-width Progress Bar --}}
-                <div class="flex items-center gap-3 mb-5">
-                    <div class="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden flex-1">
+                {{-- Compact Stat and Progress Bar --}}
+                <div class="mb-3.5">
+                    <div class="flex items-baseline justify-between mb-1.5">
+                        <div class="flex items-baseline gap-1.5">
+                            <span class="text-2xl md:text-3xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+                                {{ $hoursData['total_hours'] }}h
+                            </span>
+                            <span class="text-xs font-medium text-slate-400 dark:text-slate-500">
+                                of {{ $hoursData['allocated_hours'] }}h allocation
+                            </span>
+                        </div>
+                        <span class="text-xs font-bold {{ $hoursData['progress_pct'] >= 80 ? 'text-emerald-700 bg-emerald-50 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800' : 'text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-900/60' }} px-2 py-0.5 rounded-md border shadow-2xs">
+                            {{ $hoursData['progress_pct'] }}%
+                        </span>
+                    </div>
+
+                    {{-- High-contrast Gradient Progress Bar --}}
+                    <div class="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden border border-slate-200/60 dark:border-slate-700/60">
                         <div 
-                            class="bg-[#2563EB] h-2.5 rounded-full transition-all duration-500" 
-                            style="width: {{ $hoursData['progress_pct'] }}%"
+                            class="bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-500 h-2.5 rounded-full transition-all duration-500" 
+                            style="width: {{ min(100, $hoursData['progress_pct']) }}%"
                         ></div>
                     </div>
-                    <span class="text-xs font-bold text-slate-700 dark:text-slate-300 shrink-0">
-                        {{ $hoursData['progress_pct'] }}%
-                    </span>
                 </div>
 
-                {{-- Customer Breakdown Table --}}
-                <div class="mb-4">
-                    <div class="grid grid-cols-12 text-[11px] font-semibold text-slate-400 uppercase tracking-wider py-1.5 border-b border-slate-100 dark:border-slate-800">
-                        <div class="col-span-5">Customer</div>
-                        <div class="col-span-2 text-right">Hours</div>
-                        <div class="col-span-2 text-right">Allocation</div>
-                        <div class="col-span-3 text-right">%</div>
-                    </div>
-                    <div class="divide-y divide-slate-50 dark:divide-slate-800/60">
-                        @forelse ($hoursData['customers'] as $c)
-                            <div class="grid grid-cols-12 items-center py-2 text-xs">
-                                <div class="col-span-5 flex items-center gap-2">
-                                    <span class="w-3 h-3 rounded-xs shrink-0" style="background-color: {{ $c['color'] }}"></span>
-                                    <span class="font-medium text-slate-800 dark:text-slate-200 truncate">
-                                        {{ $c['name'] }}
-                                    </span>
-                                </div>
-                                <div class="col-span-2 text-right font-bold text-slate-900 dark:text-slate-100">
-                                    {{ $c['hours'] }}
-                                </div>
-                                <div class="col-span-2 text-right text-slate-500 dark:text-slate-400">
-                                    {{ $c['allocation'] }}
-                                </div>
-                                <div class="col-span-3 flex items-center justify-end gap-2">
-                                    <span class="font-semibold text-slate-700 dark:text-slate-300 w-8 text-right">
-                                        {{ $c['pct'] }}%
-                                    </span>
-                                    <div class="w-12 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden shrink-0">
-                                        <div 
-                                            class="{{ $c['bar_color'] }} h-1.5 rounded-full" 
-                                            style="width: {{ min(100, $c['pct']) }}%"
-                                        ></div>
-                                    </div>
-                                </div>
-                            </div>
-                        @empty
-                            <div class="py-4 text-center text-xs text-slate-400">
-                                No customer spaces tracked yet this month.
-                            </div>
-                        @endforelse
-                    </div>
+                {{-- Customer Breakdown Table (Compact & Sharp) --}}
+                <div class="overflow-x-auto mb-3.5">
+                    <table class="w-full text-xs">
+                        <thead>
+                            <tr class="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 text-left">
+                                <th class="pb-1.5 font-semibold">Customer</th>
+                                <th class="pb-1.5 text-right font-semibold pr-2">Hours</th>
+                                <th class="pb-1.5 text-right font-semibold pr-2">Allocation</th>
+                                <th class="pb-1.5 text-right font-semibold w-24">%</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
+                            @forelse ($hoursData['customers'] as $c)
+                                <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition">
+                                    <td class="py-1.5 pr-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="w-2.5 h-2.5 rounded-xs shrink-0 ring-1 ring-black/10 dark:ring-white/10" style="background-color: {{ $c['color'] }}"></span>
+                                            <span class="font-medium text-slate-800 dark:text-slate-200 truncate max-w-[150px] sm:max-w-none">
+                                                {{ $c['name'] }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="py-1.5 pr-2 text-right font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                                        {{ $c['hours'] }}
+                                    </td>
+                                    <td class="py-1.5 pr-2 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                                        {{ $c['allocation'] }}
+                                    </td>
+                                    <td class="py-1.5 text-right whitespace-nowrap">
+                                        <div class="flex items-center justify-end gap-1.5">
+                                            <span class="font-semibold text-slate-700 dark:text-slate-300 w-7 text-right text-[11px]">
+                                                {{ $c['pct'] }}%
+                                            </span>
+                                            <div class="w-12 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden shrink-0">
+                                                <div 
+                                                    class="h-1.5 rounded-full" 
+                                                    style="width: {{ min(100, $c['pct']) }}%; background-color: {{ $c['color'] }}"
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="4" class="py-3 text-center text-slate-400 text-xs">
+                                        No customer spaces tracked yet this month.
+                                    </td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
             {{-- Missing Time Info Card --}}
-            <div class="bg-[#F0F7FF] dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/60 rounded-xl p-3.5 flex items-start gap-3 mt-2">
-                <x-heroicon-m-information-circle class="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-                <div>
-                    <div class="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-                        You have {{ $hoursData['missing_time_count'] }} tasks completed with no time entries. Consider adding time to keep your hours up to date.
+            @if ($hoursData['missing_time_count'] > 0)
+                <div class="bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-xl p-3 flex flex-col gap-2 mt-auto">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="flex items-start gap-2 min-w-0">
+                            <x-heroicon-m-information-circle class="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                            <div class="text-xs text-slate-700 dark:text-slate-300 leading-snug">
+                                You have <strong>{{ $hoursData['missing_time_count'] }} tasks completed with no time entries</strong>. Consider adding time to keep your hours up to date.
+                            </div>
+                        </div>
+
+                        @if (! empty($hoursData['missing_time_jira_url']))
+                            <a 
+                                href="{{ $hoursData['missing_time_jira_url'] }}" 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                class="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
+                                title="Open filtered search in Jira"
+                            >
+                                <span>View in Jira</span>
+                                <span class="text-[10px]">&rarr;</span>
+                            </a>
+                        @endif
                     </div>
-                    <a href="#" class="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline mt-1.5 inline-flex items-center gap-1">
-                        <span>View missing time entries</span>
-                        <span>&rarr;</span>
-                    </a>
+
+                    @if (! empty($hoursData['missing_time_keys']))
+                        <div class="flex items-center gap-1.5 pl-6 flex-wrap">
+                            <span class="text-[11px] text-slate-400 font-medium">Tasks:</span>
+                            @foreach ($hoursData['missing_time_keys'] as $mKey)
+                                <a 
+                                    href="https://technopath.atlassian.net/browse/{{ $mKey }}"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="inline-block px-1.5 py-0.5 bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-800 rounded text-[10px] font-mono font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/40 transition"
+                                    title="Open {{ $mKey }} in Jira"
+                                >
+                                    {{ $mKey }}
+                                </a>
+                            @endforeach
+                        </div>
+                    @endif
                 </div>
-            </div>
+            @else
+                <div class="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl p-2.5 flex items-center gap-2 mt-auto text-xs text-emerald-800 dark:text-emerald-300">
+                    <x-heroicon-m-check-circle class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>All completed tasks have time entries logged.</span>
+                </div>
+            @endif
         </div>
     </div>
 
@@ -653,11 +790,12 @@
         <div id="section-upcoming-meetings" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center gap-2.5">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-5 rounded-full bg-blue-600 dark:bg-blue-500 inline-block"></span>
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             4. Upcoming Meetings
                         </h2>
-                        <span class="{{ count($upcomingMeetings) > 0 ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' }} font-semibold text-xs px-2.5 py-0.5 rounded-full">
+                        <span class="{{ count($upcomingMeetings) > 0 ? 'bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' }} font-bold text-xs px-2.5 py-0.5 rounded-full shadow-2xs">
                             {{ count($upcomingMeetings) }} upcoming
                         </span>
                     </div>
@@ -671,7 +809,7 @@
                         <div class="flex items-start justify-between gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 transition border border-transparent hover:border-slate-100 dark:hover:border-slate-800">
                             <div class="flex items-start gap-3 min-w-0 flex-1">
                                 <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border 
-                                    {{ ($meeting['action_type'] ?? '') === 'prep' ? 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-900' : 'bg-purple-50 text-purple-600 border-purple-100 dark:bg-purple-950/60 dark:text-purple-400 dark:border-purple-900' }}">
+                                    {{ ($meeting['action_type'] ?? '') === 'prep' ? 'bg-blue-100 text-blue-600 border-blue-200 dark:bg-blue-950/80 dark:text-blue-400 dark:border-blue-900 shadow-2xs' : 'bg-purple-100 text-purple-600 border-purple-200 dark:bg-purple-950/80 dark:text-purple-400 dark:border-purple-900 shadow-2xs' }}">
                                     @if (($meeting['action_type'] ?? '') === 'prep')
                                         <x-heroicon-m-calendar-days class="w-5 h-5" />
                                     @else
@@ -684,7 +822,7 @@
                                             {{ $meeting['title'] }}
                                         </a>
                                         @if (! empty($meeting['badge_label']))
-                                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full border
+                                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border
                                                 {{ ($meeting['badge_color'] ?? '') === 'amber' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800' : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800' }}">
                                                 {{ $meeting['badge_label'] }}
                                             </span>
@@ -699,17 +837,25 @@
                                 </div>
                             </div>
 
-                            <a
-                                href="{{ $meeting['action_url'] }}"
-                                class="inline-flex items-center gap-1.5 {{ ($meeting['action_type'] ?? '') === 'prep' ? 'bg-[#EFF6FF] hover:bg-blue-100 text-[#2563EB] border-blue-200 dark:bg-blue-950/60 dark:hover:bg-blue-900 dark:text-blue-300 dark:border-blue-800' : 'bg-[#F5F3FF] hover:bg-purple-100 text-[#7C3AED] border-purple-200 dark:bg-purple-950/60 dark:hover:bg-purple-900 dark:text-purple-300 dark:border-purple-800' }} border text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap shadow-2xs transition shrink-0"
-                            >
-                                @if (($meeting['action_type'] ?? '') === 'prep')
+                            @if (($meeting['action_type'] ?? '') === 'prep')
+                                <a
+                                    href="{{ $meeting['action_url'] }}"
+                                    class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg whitespace-nowrap shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
+                                >
                                     <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0" />
-                                @else
+                                    <span>Create prep</span>
+                                    <span class="text-[10px]">&rarr;</span>
+                                </a>
+                            @else
+                                <a
+                                    href="{{ $meeting['action_url'] }}"
+                                    class="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg whitespace-nowrap shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
+                                >
                                     <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0" />
-                                @endif
-                                <span>{{ $meeting['action_label'] }}</span>
-                            </a>
+                                    <span>Create follow up</span>
+                                    <span class="text-[10px]">&rarr;</span>
+                                </a>
+                            @endif
                         </div>
                     @empty
                         <div class="py-10 flex flex-col items-center justify-center text-center">
@@ -732,17 +878,15 @@
         <div id="section-project-health" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center gap-2.5">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-5 rounded-full bg-violet-600 dark:bg-violet-500 inline-block"></span>
                         <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
                             5. My Project Health
                         </h2>
-                        <span class="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 font-semibold text-xs px-2.5 py-0.5 rounded-full">
+                        <span class="bg-violet-100 text-violet-800 border border-violet-200 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-800 font-bold text-xs px-2.5 py-0.5 rounded-full shadow-2xs">
                             {{ count($projectHealthItems) }} projects
                         </span>
                     </div>
-                    <a href="#" class="text-blue-600 hover:underline text-xs font-semibold">
-                        View all
-                    </a>
                 </div>
 
                 <div class="overflow-x-auto">
@@ -758,22 +902,36 @@
                         <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
                             @forelse ($projectHealthItems as $p)
                                 <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
-                                    <td class="py-3 px-3 font-semibold text-sm text-slate-900 dark:text-slate-100">
-                                        {{ $p['name'] }}
+                                    <td class="py-3 px-3">
+                                        <div class="flex items-center gap-2.5">
+                                            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80 font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                                {{ strtoupper(substr($p['name'], 0, 2)) }}
+                                            </div>
+                                            <span class="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100">
+                                                {{ $p['name'] }}
+                                            </span>
+                                        </div>
                                     </td>
                                     <td class="py-3 px-3">
-                                        <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full border {{ $p['health_class'] }}">
-                                            {{ $p['health'] }}
+                                        <span class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $p['health_class'] }}">
+                                            @if ($p['health'] === 'Healthy')
+                                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                            @elseif ($p['health'] === 'Watch')
+                                                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                            @else
+                                                <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                            @endif
+                                            <span>{{ $p['health'] }}</span>
                                         </span>
                                     </td>
-                                    <td class="py-3 px-3 text-xs {{ $p['is_urgent'] ? 'font-bold text-rose-600' : 'text-slate-600 dark:text-slate-400' }}">
+                                    <td class="py-3 px-3 text-xs {{ $p['is_urgent'] ? 'font-bold text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-400' }}">
                                         {{ $p['upcoming'] }}
                                     </td>
                                     <td class="py-3 px-3 text-right">
-                                        <div class="inline-flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-blue-600 cursor-pointer">
+                                        <span class="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/80">
                                             <span>{{ $p['tasks_count'] }}</span>
-                                            <x-heroicon-m-chevron-right class="w-3.5 h-3.5 text-slate-400" />
-                                        </div>
+                                            <span class="text-[10px] text-slate-400 font-normal">tasks</span>
+                                        </span>
                                     </td>
                                 </tr>
                             @empty
@@ -792,16 +950,16 @@
 
     {{-- SECTION 6: AI Insight Banner --}}
     @if ($showAiInsight)
-        <div class="bg-[#FAF5FF] dark:bg-purple-950/20 border border-purple-200/90 dark:border-purple-900/60 rounded-2xl p-4 flex items-center justify-between shadow-2xs transition">
+        <div class="bg-gradient-to-r from-purple-50 via-indigo-50/50 to-purple-50 dark:from-purple-950/40 dark:via-indigo-950/30 dark:to-purple-950/40 border border-purple-200 dark:border-purple-800/80 rounded-2xl p-4 flex items-center justify-between shadow-2xs transition">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 flex items-center justify-center shrink-0">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
                     <x-heroicon-m-sparkles class="w-5 h-5" />
                 </div>
                 <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
-                    <span class="text-sm font-bold text-purple-900 dark:text-purple-200 whitespace-nowrap">
+                    <span class="text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-300 bg-purple-100/80 dark:bg-purple-900/60 px-2 py-0.5 rounded border border-purple-200/60 dark:border-purple-800/60 whitespace-nowrap">
                         AI Insight
                     </span>
-                    <span class="text-xs md:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                    <span class="text-xs md:text-sm font-medium text-slate-700 dark:text-slate-300 leading-relaxed">
                         {{ $aiInsightText }}
                     </span>
                 </div>
@@ -810,7 +968,7 @@
             <button 
                 type="button" 
                 wire:click="dismissAiInsight" 
-                class="text-slate-400 hover:text-slate-600 p-1 rounded-md transition shrink-0 ml-4"
+                class="text-slate-400 hover:text-slate-600 p-1 rounded-md transition shrink-0 ml-4 cursor-pointer"
                 title="Dismiss insight"
             >
                 <x-heroicon-m-x-mark class="w-4 h-4" />

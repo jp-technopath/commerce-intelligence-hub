@@ -170,7 +170,7 @@ class EngineerDashboard extends Page implements HasForms
                 'subtitle'     => 'Starts at ' . Carbon::parse($meetingMissingPrepToday['raw_start'])->format('g:i A') . ' • Missing preparation brief & Jira context',
                 'due_label'    => $meetingMissingPrepToday['time_label'],
                 'target_id'    => 'section-upcoming-meetings',
-                'action_label' => 'Jump to meeting',
+                'action_label' => 'Create prep',
                 'action_url'   => $meetingMissingPrepToday['action_url'] ?? null,
             ];
         }
@@ -209,7 +209,7 @@ class EngineerDashboard extends Page implements HasForms
                 'subtitle'     => 'Scheduled ' . $meetingMissingPrep['time_label'] . ' • Needs briefing generated',
                 'due_label'    => $meetingMissingPrep['time_label'],
                 'target_id'    => 'section-upcoming-meetings',
-                'action_label' => 'Jump to meeting',
+                'action_label' => 'Create prep',
                 'action_url'   => $meetingMissingPrep['action_url'] ?? null,
             ];
         }
@@ -228,7 +228,7 @@ class EngineerDashboard extends Page implements HasForms
                 'subtitle'     => 'Completed ' . $meetingMissingFollowUp['time_label'] . ' • Client summary & action items pending',
                 'due_label'    => 'Follow-up pending',
                 'target_id'    => 'section-upcoming-meetings',
-                'action_label' => 'Jump to meeting',
+                'action_label' => 'Create follow up',
                 'action_url'   => $meetingMissingFollowUp['action_url'] ?? null,
             ];
         }
@@ -360,11 +360,11 @@ class EngineerDashboard extends Page implements HasForms
             }
 
             $orderStyles = [
-                1 => ['bg' => 'bg-rose-50 text-rose-500 border-rose-100', 'num' => 1],
-                2 => ['bg' => 'bg-amber-50 text-amber-600 border-amber-100', 'num' => 2],
-                3 => ['bg' => 'bg-amber-50 text-amber-600 border-amber-100', 'num' => 3],
-                4 => ['bg' => 'bg-blue-50 text-blue-600 border-blue-100', 'num' => 4],
-                5 => ['bg' => 'bg-emerald-50 text-emerald-600 border-emerald-100', 'num' => 5],
+                1 => ['bg' => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800', 'num' => 1],
+                2 => ['bg' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800', 'num' => 2],
+                3 => ['bg' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800', 'num' => 3],
+                4 => ['bg' => 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800', 'num' => 4],
+                5 => ['bg' => 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800', 'num' => 5],
             ];
 
             $mapped = [];
@@ -372,9 +372,9 @@ class EngineerDashboard extends Page implements HasForms
                 $pos = $index + 1;
                 $priority = $item['priority'] ?: 'Medium';
                 $priorityClass = match (strtolower($priority)) {
-                    'highest', 'critical', 'high' => 'bg-rose-50 text-rose-600 border-rose-100',
-                    'medium' => 'bg-amber-50 text-amber-700 border-amber-100',
-                    default => 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                    'highest', 'critical', 'high' => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
+                    'medium' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+                    default => 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
                 };
 
                 $iconType = 'task';
@@ -461,7 +461,7 @@ class EngineerDashboard extends Page implements HasForms
                     'description'    => $raw['title'] ?? $raw['reason'] ?? 'Attention required',
                     'key'            => $raw['key'] ?? null,
                     'priority'       => $isHigh ? 'High' : 'Medium',
-                    'priority_class' => $isHigh ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-amber-50 text-amber-700 border-amber-100',
+                    'priority_class' => $isHigh ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
                     'jira_url'       => $raw['jira_url'] ?: (! empty($raw['key']) ? 'https://technopath.atlassian.net/browse/' . $raw['key'] : null),
                 ];
             }
@@ -478,11 +478,13 @@ class EngineerDashboard extends Page implements HasForms
 
         if (! $targetUser) {
             return [
-                'total_hours'        => 0,
-                'allocated_hours'    => $defaultAllocation,
-                'progress_pct'       => 0,
-                'customers'          => [],
-                'missing_time_count' => 0,
+                'total_hours'           => 0,
+                'allocated_hours'       => $defaultAllocation,
+                'progress_pct'          => 0,
+                'customers'             => [],
+                'missing_time_count'    => 0,
+                'missing_time_keys'     => [],
+                'missing_time_jira_url' => null,
             ];
         }
 
@@ -543,20 +545,32 @@ class EngineerDashboard extends Page implements HasForms
 
             $progressPct = $allocation > 0 ? min(100, (int) round(($totalHours / $allocation) * 100)) : 0;
 
+            $missingItems = $hoursInfo['missing_time_items'] ?? [];
+            $missingKeys = collect($missingItems)->pluck('external_item_key')->filter()->values()->all();
+            $jiraFilterUrl = null;
+            if (! empty($missingKeys)) {
+                $jql = 'key in (' . implode(', ', $missingKeys) . ') ORDER BY updated DESC';
+                $jiraFilterUrl = 'https://technopath.atlassian.net/issues/?jql=' . rawurlencode($jql);
+            }
+
             return [
-                'total_hours'        => round($totalHours, 1),
-                'allocated_hours'    => $allocation,
-                'progress_pct'       => $progressPct,
-                'customers'          => $customers,
-                'missing_time_count' => (int) ($hoursInfo['missing_time_count'] ?? 0),
+                'total_hours'           => round($totalHours, 1),
+                'allocated_hours'       => $allocation,
+                'progress_pct'          => $progressPct,
+                'customers'             => $customers,
+                'missing_time_count'    => (int) ($hoursInfo['missing_time_count'] ?? 0),
+                'missing_time_keys'     => $missingKeys,
+                'missing_time_jira_url' => $jiraFilterUrl,
             ];
         } catch (\Throwable $e) {
             return [
-                'total_hours'        => 0,
-                'allocated_hours'    => $defaultAllocation,
-                'progress_pct'       => 0,
-                'customers'          => [],
-                'missing_time_count' => 0,
+                'total_hours'           => 0,
+                'allocated_hours'       => $defaultAllocation,
+                'progress_pct'          => 0,
+                'customers'             => [],
+                'missing_time_count'    => 0,
+                'missing_time_keys'     => [],
+                'missing_time_jira_url' => null,
             ];
         }
     }
@@ -720,9 +734,9 @@ class EngineerDashboard extends Page implements HasForms
                 $eval = $healthService->evaluateClientHealth($client);
                 $status = $eval['status'] ?? 'Healthy';
                 $badgeClass = match (strtolower($status)) {
-                    'healthy' => 'bg-emerald-50 text-emerald-700 border-emerald-100',
-                    'watch' => 'bg-amber-50 text-amber-700 border-amber-100',
-                    default => 'bg-rose-50 text-rose-700 border-rose-100',
+                    'healthy' => 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+                    'watch' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+                    default => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
                 };
 
                 $taskCount = PmWorkItem::forCustomerSpacesWithJiraCode()

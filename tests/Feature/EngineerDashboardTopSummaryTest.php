@@ -195,6 +195,50 @@ class EngineerDashboardTopSummaryTest extends TestCase
         $this->assertStringContainsString('TEST-99: Implement Checkout', $nextDue['title']);
     }
 
+    public function test_next_due_item_prioritizes_meeting_prep_today_with_direct_action_url(): void
+    {
+        $page = new EngineerDashboard();
+
+        $upcomingMeetings = [
+            [
+                'id'          => 42,
+                'title'       => 'Weekly Client Sync',
+                'action_type' => 'prep',
+                'raw_start'   => Carbon::now()->addHours(3),
+                'time_label'  => 'Today, 3:00 PM',
+                'action_url'  => '/admin/client-meetings/42?tab=prep&action=generatePrep',
+            ],
+        ];
+
+        $nextDue = $page->getNextDueItem($this->user, [], [], $upcomingMeetings);
+
+        $this->assertEquals('meeting_prep', $nextDue['type']);
+        $this->assertEquals('Create prep', $nextDue['action_label']);
+        $this->assertEquals('/admin/client-meetings/42?tab=prep&action=generatePrep', $nextDue['action_url']);
+    }
+
+    public function test_next_due_item_prioritizes_meeting_followup_with_direct_action_url(): void
+    {
+        $page = new EngineerDashboard();
+
+        $upcomingMeetings = [
+            [
+                'id'          => 43,
+                'title'       => 'Architecture Review',
+                'action_type' => 'follow_up',
+                'raw_start'   => Carbon::now()->subHours(2),
+                'time_label'  => 'Today, 10:00 AM',
+                'action_url'  => '/admin/client-meetings/43?tab=follow-up&action=generateFollowUp',
+            ],
+        ];
+
+        $nextDue = $page->getNextDueItem($this->user, [], [], $upcomingMeetings);
+
+        $this->assertEquals('meeting_followup', $nextDue['type']);
+        $this->assertEquals('Create follow up', $nextDue['action_label']);
+        $this->assertEquals('/admin/client-meetings/43?tab=follow-up&action=generateFollowUp', $nextDue['action_url']);
+    }
+
     public function test_engineer_dashboard_renders_top_card_sync_button_and_section_anchors(): void
     {
         $this->actingAs($this->user);
@@ -208,6 +252,53 @@ class EngineerDashboardTopSummaryTest extends TestCase
             ->assertSee('id="section-hours"', false)
             ->assertSee('id="section-upcoming-meetings"', false)
             ->assertSee('id="section-project-health"', false)
-            ->assertSee('function jumpToSection', false);
+            ->assertSee('function jumpToSection', false)
+            ->assertDontSee('x-heroicon-m-chevron-down class="w-3.5 h-3.5 text-slate-400"', false)
+            ->assertDontSee('Track time');
+    }
+
+    public function test_my_hours_generates_jira_filter_url_for_missing_time_tasks(): void
+    {
+        $mockTimeService = $this->createMock(\App\Services\Intelligence\TimeTrackingService::class);
+        $mockTimeService->method('getUserMonthlyHours')->willReturn([
+            'total_hours'            => 21.4,
+            'working_capacity_hours' => 160,
+            'by_customer'            => [
+                [
+                    'client_name'     => 'Technopath Internal',
+                    'hours'           => 8.3,
+                    'allocated_hours' => 60,
+                ],
+            ],
+            'missing_time_count'     => 3,
+            'missing_time_items'     => [
+                ['external_item_key' => 'SHEL-229'],
+                ['external_item_key' => 'TEC-277'],
+                ['external_item_key' => 'SHEL-98'],
+            ],
+        ]);
+
+        $this->app->instance(\App\Services\Intelligence\TimeTrackingService::class, $mockTimeService);
+
+        $page = new EngineerDashboard();
+        $hoursData = $page->getMyHoursData($this->user);
+
+        $this->assertEquals(3, $hoursData['missing_time_count']);
+        $this->assertEquals(['SHEL-229', 'TEC-277', 'SHEL-98'], $hoursData['missing_time_keys']);
+        $this->assertNotNull($hoursData['missing_time_jira_url']);
+        $this->assertStringContainsString('https://technopath.atlassian.net/issues/?jql=', $hoursData['missing_time_jira_url']);
+        $this->assertStringContainsString('SHEL-229', urldecode($hoursData['missing_time_jira_url']));
+        $this->assertStringContainsString('TEC-277', urldecode($hoursData['missing_time_jira_url']));
+        $this->assertStringContainsString('SHEL-98', urldecode($hoursData['missing_time_jira_url']));
+
+        $this->actingAs($this->user);
+        session(['engineer_dashboard_user_id' => $this->user->id]);
+
+        Livewire::test(EngineerDashboard::class)
+            ->assertSee('tasks completed with no time entries')
+            ->assertSee('View in Jira')
+            ->assertSee('https://technopath.atlassian.net/browse/SHEL-229', false)
+            ->assertSee('https://technopath.atlassian.net/browse/TEC-277', false)
+            ->assertSee('https://technopath.atlassian.net/browse/SHEL-98', false);
     }
 }
