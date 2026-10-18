@@ -162,6 +162,12 @@ class EngineerDashboard extends Page implements HasForms
         });
 
         if ($meetingMissingPrepToday) {
+            $prepUrl = $meetingMissingPrepToday['action_url'] ?? (! empty($meetingMissingPrepToday['id']) ? route('filament.admin.resources.client-meetings.view', [
+                'record' => $meetingMissingPrepToday['id'],
+                'tab'    => 'prep',
+                'action' => 'generatePrep',
+            ]) : route('filament.admin.resources.client-meetings.index'));
+
             return [
                 'type'         => 'meeting_prep',
                 'badge_text'   => 'Meeting Prep Required',
@@ -171,7 +177,7 @@ class EngineerDashboard extends Page implements HasForms
                 'due_label'    => $meetingMissingPrepToday['time_label'],
                 'target_id'    => 'section-upcoming-meetings',
                 'action_label' => 'Create prep',
-                'action_url'   => $meetingMissingPrepToday['action_url'] ?? null,
+                'action_url'   => $prepUrl,
             ];
         }
 
@@ -201,6 +207,12 @@ class EngineerDashboard extends Page implements HasForms
         });
 
         if ($meetingMissingPrep) {
+            $prepUrl = $meetingMissingPrep['action_url'] ?? (! empty($meetingMissingPrep['id']) ? route('filament.admin.resources.client-meetings.view', [
+                'record' => $meetingMissingPrep['id'],
+                'tab'    => 'prep',
+                'action' => 'generatePrep',
+            ]) : route('filament.admin.resources.client-meetings.index'));
+
             return [
                 'type'         => 'meeting_prep',
                 'badge_text'   => 'Meeting Prep Pending',
@@ -210,7 +222,7 @@ class EngineerDashboard extends Page implements HasForms
                 'due_label'    => $meetingMissingPrep['time_label'],
                 'target_id'    => 'section-upcoming-meetings',
                 'action_label' => 'Create prep',
-                'action_url'   => $meetingMissingPrep['action_url'] ?? null,
+                'action_url'   => $prepUrl,
             ];
         }
 
@@ -220,6 +232,12 @@ class EngineerDashboard extends Page implements HasForms
         });
 
         if ($meetingMissingFollowUp) {
+            $followupUrl = $meetingMissingFollowUp['action_url'] ?? (! empty($meetingMissingFollowUp['id']) ? route('filament.admin.resources.client-meetings.view', [
+                'record' => $meetingMissingFollowUp['id'],
+                'tab'    => 'follow-up',
+                'action' => 'generateFollowUp',
+            ]) : route('filament.admin.resources.client-meetings.index'));
+
             return [
                 'type'         => 'meeting_followup',
                 'badge_text'   => 'Meeting Follow-up Needed',
@@ -229,7 +247,7 @@ class EngineerDashboard extends Page implements HasForms
                 'due_label'    => 'Follow-up pending',
                 'target_id'    => 'section-upcoming-meetings',
                 'action_label' => 'Create follow up',
-                'action_url'   => $meetingMissingFollowUp['action_url'] ?? null,
+                'action_url'   => $followupUrl,
             ];
         }
 
@@ -360,21 +378,36 @@ class EngineerDashboard extends Page implements HasForms
             }
 
             $orderStyles = [
-                1 => ['bg' => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800', 'num' => 1],
-                2 => ['bg' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800', 'num' => 2],
-                3 => ['bg' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800', 'num' => 3],
-                4 => ['bg' => 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800', 'num' => 4],
-                5 => ['bg' => 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800', 'num' => 5],
+                1 => ['bg' => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800', 'num' => 1, 'hex_bg' => '#fff1f2', 'hex_text' => '#be123c', 'hex_border' => '#fecdd3', 'hex_bar' => '#f43f5e'],
+                2 => ['bg' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800', 'num' => 2, 'hex_bg' => '#fef3c7', 'hex_text' => '#b45309', 'hex_border' => '#fde68a', 'hex_bar' => '#f59e0b'],
+                3 => ['bg' => 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800', 'num' => 3, 'hex_bg' => '#e0e7ff', 'hex_text' => '#4338ca', 'hex_border' => '#c7d2fe', 'hex_bar' => '#6366f1'],
+                4 => ['bg' => 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800', 'num' => 4, 'hex_bg' => '#eff6ff', 'hex_text' => '#1d4ed8', 'hex_border' => '#bfdbfe', 'hex_bar' => '#3b82f6'],
+                5 => ['bg' => 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800', 'num' => 5, 'hex_bg' => '#f5f3ff', 'hex_text' => '#6d28d9', 'hex_border' => '#ddd6fe', 'hex_bar' => '#8b5cf6'],
             ];
 
             $mapped = [];
             foreach (array_slice($recommended, 0, 5) as $index => $item) {
                 $pos = $index + 1;
                 $priority = $item['priority'] ?: 'Medium';
-                $priorityClass = match (strtolower($priority)) {
-                    'highest', 'critical', 'high' => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
-                    'medium' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
-                    default => 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+                $priorityStyle = match (strtolower($priority)) {
+                    'highest', 'critical', 'high' => [
+                        'class' => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
+                        'hex_bg' => '#fff1f2',
+                        'hex_text' => '#be123c',
+                        'hex_border' => '#fecdd3',
+                    ],
+                    'medium' => [
+                        'class' => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+                        'hex_bg' => '#fef3c7',
+                        'hex_text' => '#b45309',
+                        'hex_border' => '#fde68a',
+                    ],
+                    default => [
+                        'class' => 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+                        'hex_bg' => '#ecfdf5',
+                        'hex_text' => '#047857',
+                        'hex_border' => '#a7f3d0',
+                    ],
                 };
 
                 $iconType = 'task';
@@ -399,7 +432,8 @@ class EngineerDashboard extends Page implements HasForms
                     'key'            => $item['key'] ?? null,
                     'project'        => $item['client_name'] ?? 'Internal',
                     'priority'       => ucfirst(strtolower($priority)),
-                    'priority_class' => $priorityClass,
+                    'priority_class' => $priorityStyle['class'],
+                    'priority_style' => $priorityStyle,
                     'est_time'       => $estTime,
                     'why_matters'    => $item['reasoning'] ?? 'Keep project aligned for upcoming milestone.',
                     'jira_url'       => $item['jira_url'] ?: (! empty($item['key']) ? 'https://technopath.atlassian.net/browse/' . $item['key'] : null),
@@ -686,6 +720,7 @@ class EngineerDashboard extends Page implements HasForms
                     'id'           => $m->id,
                     'title'        => $m->title,
                     'time_label'   => $timeString,
+                    'raw_start'    => $start,
                     'description'  => $m->client?->name ? "Meeting with {$m->client->name} team on milestone delivery." : 'Prepare project update and discuss next sprint.',
                     'action_label' => $actionLabel,
                     'action_type'  => $actionType,

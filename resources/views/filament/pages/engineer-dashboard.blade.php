@@ -134,7 +134,7 @@
         </div>
     </div>
 
-    {{-- STYLES FOR COMPACT COMMAND BAR --}}
+    {{-- STYLES FOR COMPACT COMMAND BAR & DASHBOARD PALETTE --}}
     <style>
         .compact-cmd-grid {
             display: grid;
@@ -217,6 +217,178 @@
         .dark .compact-spotlight-card:hover {
             box-shadow: 0 4px 14px -2px rgba(59, 130, 246, 0.25);
         }
+
+        /* Color Badge & Accent Classes */
+        .color-badge-rose {
+            background-color: #fff1f2 !important;
+            color: #be123c !important;
+            border: 1px solid #fecdd3 !important;
+        }
+        .color-badge-amber {
+            background-color: #fef3c7 !important;
+            color: #b45309 !important;
+            border: 1px solid #fde68a !important;
+        }
+        .color-badge-emerald {
+            background-color: #ecfdf5 !important;
+            color: #047857 !important;
+            border: 1px solid #a7f3d0 !important;
+        }
+        .color-badge-blue {
+            background-color: #eff6ff !important;
+            color: #1d4ed8 !important;
+            border: 1px solid #bfdbfe !important;
+        }
+        .color-badge-indigo {
+            background-color: #e0e7ff !important;
+            color: #4338ca !important;
+            border: 1px solid #c7d2fe !important;
+        }
+        .color-badge-purple {
+            background-color: #f5f3ff !important;
+            color: #6d28d9 !important;
+            border: 1px solid #ddd6fe !important;
+        }
+        .color-badge-slate {
+            background-color: #f8fafc !important;
+            color: #475569 !important;
+            border: 1px solid #e2e8f0 !important;
+        }
+
+        .dark .color-badge-rose {
+            background-color: rgba(76, 5, 25, 0.45) !important;
+            color: #fda4af !important;
+            border-color: rgba(159, 18, 57, 0.6) !important;
+        }
+        .dark .color-badge-amber {
+            background-color: rgba(69, 26, 3, 0.45) !important;
+            color: #fcd34d !important;
+            border-color: rgba(180, 83, 9, 0.6) !important;
+        }
+        .dark .color-badge-emerald {
+            background-color: rgba(2, 44, 34, 0.45) !important;
+            color: #6ee7b7 !important;
+            border-color: rgba(4, 120, 87, 0.6) !important;
+        }
+        .dark .color-badge-blue {
+            background-color: rgba(30, 58, 138, 0.45) !important;
+            color: #93c5fd !important;
+            border-color: rgba(29, 78, 216, 0.6) !important;
+        }
+        .dark .color-badge-indigo {
+            background-color: rgba(49, 46, 129, 0.45) !important;
+            color: #a5b4fc !important;
+            border-color: rgba(67, 56, 202, 0.6) !important;
+        }
+        .dark .color-badge-purple {
+            background-color: rgba(76, 29, 149, 0.45) !important;
+            color: #c4b5fd !important;
+            border-color: rgba(109, 40, 217, 0.6) !important;
+        }
+        .dark .color-badge-slate {
+            background-color: rgba(30, 41, 59, 0.6) !important;
+            color: #cbd5e1 !important;
+            border-color: rgba(71, 85, 105, 0.6) !important;
+        }
+
+        /* Order number badges */
+        .order-badge-1 { background-color: #fff1f2 !important; color: #be123c !important; border-color: #fecdd3 !important; }
+        .order-badge-2 { background-color: #fef3c7 !important; color: #b45309 !important; border-color: #fde68a !important; }
+        .order-badge-3 { background-color: #e0e7ff !important; color: #4338ca !important; border-color: #c7d2fe !important; }
+        .order-badge-4 { background-color: #eff6ff !important; color: #1d4ed8 !important; border-color: #bfdbfe !important; }
+        .order-badge-5 { background-color: #f5f3ff !important; color: #6d28d9 !important; border-color: #ddd6fe !important; }
+
+        .dark .order-badge-1 { background-color: rgba(76, 5, 25, 0.45) !important; color: #fda4af !important; border-color: rgba(159, 18, 57, 0.6) !important; }
+        .dark .order-badge-2 { background-color: rgba(69, 26, 3, 0.45) !important; color: #fcd34d !important; border-color: rgba(180, 83, 9, 0.6) !important; }
+        .dark .order-badge-3 { background-color: rgba(49, 46, 129, 0.45) !important; color: #a5b4fc !important; border-color: rgba(67, 56, 202, 0.6) !important; }
+        .dark .order-badge-4 { background-color: rgba(30, 58, 138, 0.45) !important; color: #93c5fd !important; border-color: rgba(29, 78, 216, 0.6) !important; }
+        .dark .order-badge-5 { background-color: rgba(76, 29, 149, 0.45) !important; color: #c4b5fd !important; border-color: rgba(109, 40, 217, 0.6) !important; }
+
+        /* Action Buttons */
+        .btn-action-primary {
+            background-color: #2563eb !important;
+            color: #ffffff !important;
+            border: 1px solid #1d4ed8 !important;
+            font-weight: 600 !important;
+            box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25) !important;
+        }
+        .btn-action-primary:hover {
+            background-color: #1d4ed8 !important;
+            color: #ffffff !important;
+        }
+        .btn-action-purple {
+            background-color: #7c3aed !important;
+            color: #ffffff !important;
+            border: 1px solid #6d28d9 !important;
+            font-weight: 600 !important;
+            box-shadow: 0 1px 2px rgba(124, 58, 237, 0.25) !important;
+        }
+        .btn-action-purple:hover {
+            background-color: #6d28d9 !important;
+            color: #ffffff !important;
+        }
+        .btn-action-rose {
+            background-color: #e11d48 !important;
+            color: #ffffff !important;
+            border: 1px solid #be123c !important;
+            font-weight: 600 !important;
+            box-shadow: 0 1px 2px rgba(225, 29, 72, 0.25) !important;
+        }
+        .btn-action-rose:hover {
+            background-color: #be123c !important;
+            color: #ffffff !important;
+        }
+
+        /* Command bar chips */
+        .chip-overview-workplan {
+            background-color: #eff6ff !important;
+            border-color: #bfdbfe !important;
+        }
+        .chip-overview-attention-alert {
+            background-color: #fff1f2 !important;
+            border-color: #fecdd3 !important;
+        }
+        .chip-overview-attention-ok {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+        }
+        .chip-overview-meetings-active {
+            background-color: #fef3c7 !important;
+            border-color: #fde68a !important;
+        }
+        .chip-overview-meetings-none {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+        }
+        .chip-overview-hours {
+            background-color: #ecfdf5 !important;
+            border-color: #a7f3d0 !important;
+        }
+
+        .dark .chip-overview-workplan {
+            background-color: rgba(30, 58, 138, 0.25) !important;
+            border-color: rgba(59, 130, 246, 0.4) !important;
+        }
+        .dark .chip-overview-attention-alert {
+            background-color: rgba(76, 5, 25, 0.35) !important;
+            border-color: rgba(159, 18, 57, 0.5) !important;
+        }
+        .dark .chip-overview-attention-ok {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+        }
+        .dark .chip-overview-meetings-active {
+            background-color: rgba(69, 26, 3, 0.35) !important;
+            border-color: rgba(180, 83, 9, 0.5) !important;
+        }
+        .dark .chip-overview-meetings-none {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+        }
+        .dark .chip-overview-hours {
+            background-color: rgba(2, 44, 34, 0.3) !important;
+            border-color: rgba(4, 120, 87, 0.4) !important;
+        }
     </style>
 
     {{-- TOP DASHBOARD SUMMARY & NEXT DUE ITEM COMMAND BAR --}}
@@ -225,8 +397,8 @@
         <div class="compact-cmd-card">
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-md bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400 shrink-0 shadow-2xs">
-                        <x-heroicon-m-sparkles class="w-3.5 h-3.5" />
+                    <span class="inline-flex items-center justify-center w-5 h-5 rounded-md color-badge-blue shrink-0 shadow-2xs">
+                        <x-heroicon-m-sparkles class="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     </span>
                     <span class="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
                         Today's Overview
@@ -234,9 +406,9 @@
                     <span class="text-slate-300 dark:text-slate-600">•</span>
                     <span class="text-xs text-slate-500 dark:text-slate-400 truncate">
                         @if (count($needsAttentionItems) > 0)
-                            <strong class="text-rose-600 dark:text-rose-400">{{ count($needsAttentionItems) }} item(s)</strong> need attention
+                            <strong class="text-rose-600 dark:text-rose-400 font-bold">{{ count($needsAttentionItems) }} item(s)</strong> need attention
                         @elseif (count($upcomingMeetings) > 0)
-                            <strong class="text-amber-600 dark:text-amber-400">{{ count($upcomingMeetings) }} meeting(s)</strong> need prep or follow-up
+                            <strong class="text-amber-600 dark:text-amber-400 font-bold">{{ count($upcomingMeetings) }} meeting(s)</strong> need prep or follow-up
                         @else
                             All clear &bull; <strong>{{ count($workPlanItems) }} task(s)</strong> scheduled
                         @endif
@@ -249,23 +421,23 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-work-plan')"
-                    class="compact-cmd-chip hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-indigo-50/40"
+                    class="compact-cmd-chip chip-overview-workplan"
                     title="Jump to Work Plan"
                 >
                     <div class="min-w-0">
                         <div class="flex items-center gap-1">
-                            <x-heroicon-m-clipboard-document-list class="w-3 h-3 text-indigo-500 shrink-0" />
+                            <x-heroicon-m-clipboard-document-list class="w-3 h-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
                             <span class="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400 tracking-wider leading-none">Work Plan</span>
                         </div>
-                        <div class="text-sm font-extrabold text-slate-900 dark:text-slate-100 leading-tight mt-0.5">{{ count($workPlanItems) }}</div>
+                        <div class="text-sm font-extrabold text-indigo-900 dark:text-indigo-100 leading-tight mt-0.5">{{ count($workPlanItems) }}</div>
                     </div>
-                    <span class="text-[11px] text-slate-400">&darr;</span>
+                    <span class="text-[11px] text-indigo-400 dark:text-indigo-300">&darr;</span>
                 </button>
 
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-needs-attention')"
-                    class="compact-cmd-chip {{ count($needsAttentionItems) > 0 ? 'border-rose-200 bg-rose-50/70 dark:bg-rose-950/40 hover:bg-rose-100/60' : 'hover:border-emerald-300 hover:bg-emerald-50/30' }}"
+                    class="compact-cmd-chip {{ count($needsAttentionItems) > 0 ? 'chip-overview-attention-alert' : 'chip-overview-attention-ok' }}"
                     title="Jump to Needs Attention"
                 >
                     <div class="min-w-0">
@@ -286,7 +458,7 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-upcoming-meetings')"
-                    class="compact-cmd-chip {{ count($upcomingMeetings) > 0 ? 'border-amber-200 bg-amber-50/70 dark:bg-amber-950/40 hover:bg-amber-100/60' : 'hover:border-blue-300 hover:bg-blue-50/30' }}"
+                    class="compact-cmd-chip {{ count($upcomingMeetings) > 0 ? 'chip-overview-meetings-active' : 'chip-overview-meetings-none' }}"
                     title="Jump to Upcoming Meetings"
                 >
                     <div class="min-w-0">
@@ -302,7 +474,7 @@
                 <button 
                     type="button" 
                     onclick="jumpToSection('section-hours')"
-                    class="compact-cmd-chip hover:border-emerald-300 dark:hover:border-emerald-600 hover:bg-emerald-50/40"
+                    class="compact-cmd-chip chip-overview-hours"
                     title="Jump to Hours"
                 >
                     <div class="min-w-0">
@@ -310,31 +482,40 @@
                             <x-heroicon-m-clock class="w-3 h-3 text-emerald-500 shrink-0" />
                             <span class="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 tracking-wider leading-none">Hours</span>
                         </div>
-                        <div class="text-sm font-extrabold text-slate-900 dark:text-slate-100 leading-tight mt-0.5">{{ $hoursData['total_hours'] }}h</div>
+                        <div class="text-sm font-extrabold text-emerald-800 dark:text-emerald-200 leading-tight mt-0.5">{{ $hoursData['total_hours'] }}h</div>
                     </div>
-                    <span class="text-[11px] text-slate-400">&darr;</span>
+                    <span class="text-[11px] text-emerald-500">&darr;</span>
                 </button>
             </div>
         </div>
 
         {{-- Card 2: Next Due Item Spotlight --}}
         @php
-            $spotlightBorder = match($nextDueItem['type'] ?? '') {
-                'meeting_prep' => 'border-l-4 border-l-amber-500',
-                'meeting_followup' => 'border-l-4 border-l-purple-500',
-                'blocker' => 'border-l-4 border-l-rose-500',
-                'work_plan' => 'border-l-4 border-l-blue-500',
-                default => 'border-l-4 border-l-emerald-500',
+            $itemType = $nextDueItem['type'] ?? '';
+            $spotlightBorderColor = match($itemType) {
+                'meeting_prep' => '#f59e0b',
+                'meeting_followup' => '#8b5cf6',
+                'blocker' => '#f43f5e',
+                'work_plan' => '#3b82f6',
+                default => '#10b981',
+            };
+            $spotlightBadgeClass = match($itemType) {
+                'meeting_prep' => 'color-badge-amber',
+                'meeting_followup' => 'color-badge-purple',
+                'blocker' => 'color-badge-rose',
+                'work_plan' => 'color-badge-blue',
+                default => 'color-badge-emerald',
             };
         @endphp
         <div 
             onclick="jumpToSection('{{ $nextDueItem['target_id'] }}')"
-            class="compact-spotlight-card group {{ $spotlightBorder }}"
+            class="compact-spotlight-card group"
+            style="border-left: 4px solid {{ $spotlightBorderColor }} !important;"
             title="Click to jump to {{ $nextDueItem['title'] }}"
         >
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider {{ $nextDueItem['badge_color'] }}">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider {{ $spotlightBadgeClass }}">
                         {{ $nextDueItem['badge_text'] }}
                     </span>
                 </div>
@@ -355,42 +536,92 @@
 
             <div class="flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-slate-800 text-xs mt-0.5">
                 <div class="flex items-center gap-2">
-                    @if (! empty($nextDueItem['action_url']))
+                    @if ($itemType === 'meeting_prep')
                         <a
-                            href="{{ $nextDueItem['action_url'] }}"
+                            href="{{ $nextDueItem['action_url'] ?? route('filament.admin.resources.client-meetings.index') }}"
                             onclick="event.stopPropagation();"
-                            class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold {{ in_array($nextDueItem['type'] ?? '', ['meeting_prep', 'meeting_followup'], true) ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-2xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200' }} transition cursor-pointer"
-                            @if (! str_starts_with($nextDueItem['action_url'], '/')) target="_blank" rel="noopener" @endif
+                            class="btn-action-primary inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition cursor-pointer"
+                            title="Open meeting and generate preparation brief"
                         >
-                            @if (($nextDueItem['type'] ?? '') === 'meeting_prep')
-                                <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0" />
-                                <span>Create prep</span>
-                            @elseif (($nextDueItem['type'] ?? '') === 'meeting_followup')
-                                <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0" />
-                                <span>Create follow up</span>
-                            @else
-                                <span>{{ $nextDueItem['action_label'] }}</span>
-                            @endif
+                            <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0 text-white" />
+                            <span>Create prep</span>
                             <span class="text-[10px]">&rarr;</span>
                         </a>
 
                         <button
                             type="button"
-                            onclick="event.stopPropagation(); jumpToSection('{{ $nextDueItem['target_id'] }}')"
-                            class="text-[11px] font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition inline-flex items-center gap-0.5 cursor-pointer"
-                            title="Scroll down to meetings"
+                            onclick="event.stopPropagation(); jumpToSection('section-upcoming-meetings')"
+                            class="text-[11px] font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition inline-flex items-center gap-0.5 cursor-pointer ml-1"
+                            title="Scroll down to Upcoming Meetings"
                         >
                             <span>Jump to meeting</span>
                             <span>&darr;</span>
                         </button>
+                    @elseif ($itemType === 'meeting_followup')
+                        <a
+                            href="{{ $nextDueItem['action_url'] ?? route('filament.admin.resources.client-meetings.index') }}"
+                            onclick="event.stopPropagation();"
+                            class="btn-action-purple inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition cursor-pointer"
+                            title="Open meeting and generate follow-up summary"
+                        >
+                            <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0 text-white" />
+                            <span>Create follow up</span>
+                            <span class="text-[10px]">&rarr;</span>
+                        </a>
+
+                        <button
+                            type="button"
+                            onclick="event.stopPropagation(); jumpToSection('section-upcoming-meetings')"
+                            class="text-[11px] font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition inline-flex items-center gap-0.5 cursor-pointer ml-1"
+                            title="Scroll down to Upcoming Meetings"
+                        >
+                            <span>Jump to meeting</span>
+                            <span>&darr;</span>
+                        </button>
+                    @elseif ($itemType === 'blocker')
+                        @if (! empty($nextDueItem['action_url']))
+                            <a
+                                href="{{ $nextDueItem['action_url'] }}"
+                                target="_blank"
+                                rel="noopener"
+                                onclick="event.stopPropagation();"
+                                class="btn-action-rose inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition cursor-pointer"
+                            >
+                                <x-heroicon-m-exclamation-triangle class="w-3.5 h-3.5 shrink-0 text-white" />
+                                <span>Resolve blocker</span>
+                                <span class="text-[10px]">&rarr;</span>
+                            </a>
+                        @endif
+
+                        <button
+                            type="button"
+                            onclick="event.stopPropagation(); jumpToSection('section-needs-attention')"
+                            class="text-[11px] font-medium text-rose-600 hover:text-rose-800 dark:hover:text-rose-300 transition inline-flex items-center gap-0.5 cursor-pointer ml-1"
+                        >
+                            <span>Jump to attention</span>
+                            <span>&darr;</span>
+                        </button>
                     @else
+                        @if (! empty($nextDueItem['action_url']))
+                            <a
+                                href="{{ $nextDueItem['action_url'] }}"
+                                target="_blank"
+                                rel="noopener"
+                                onclick="event.stopPropagation();"
+                                class="btn-action-primary inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition cursor-pointer"
+                            >
+                                <span>{{ $nextDueItem['action_label'] }}</span>
+                                <span class="text-[10px]">&rarr;</span>
+                            </a>
+                        @endif
+
                         <button
                             type="button"
                             onclick="event.stopPropagation(); jumpToSection('{{ $nextDueItem['target_id'] }}')"
-                            class="font-semibold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                            class="text-[11px] font-medium text-blue-600 hover:text-blue-800 dark:hover:text-blue-300 transition inline-flex items-center gap-0.5 cursor-pointer ml-1"
                         >
-                            <span>{{ $nextDueItem['action_label'] }}</span>
-                            <span class="transition-transform group-hover:translate-y-0.5">&darr;</span>
+                            <span>Jump to section</span>
+                            <span>&darr;</span>
                         </button>
                     @endif
                 </div>
@@ -444,7 +675,10 @@
                         <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                             {{-- Order Number Badge --}}
                             <td class="py-3 px-3 align-middle">
-                                <div class="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs border {{ $item['order_style']['bg'] }}">
+                                <div 
+                                    class="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs border order-badge-{{ $item['order'] }}"
+                                    style="background-color: {{ $item['order_style']['hex_bg'] ?? '#eff6ff' }} !important; color: {{ $item['order_style']['hex_text'] ?? '#1d4ed8' }} !important; border-color: {{ $item['order_style']['hex_border'] ?? '#bfdbfe' }} !important;"
+                                >
                                     {{ $item['order'] }}
                                 </div>
                             </td>
@@ -452,7 +686,10 @@
                             {{-- Task Icon & Title & Key --}}
                             <td class="py-3 px-3 align-middle">
                                 <div class="flex items-center gap-3">
-                                    <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $iconBg }}">
+                                    <div 
+                                        class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $iconBg }}"
+                                        style="background-color: {{ $item['order_style']['hex_bg'] ?? '#eff6ff' }} !important; color: {{ $item['order_style']['hex_text'] ?? '#1d4ed8' }} !important; border: 1px solid {{ $item['order_style']['hex_border'] ?? '#bfdbfe' }} !important;"
+                                    >
                                         @if ($item['icon_type'] === 'pr')
                                             <x-heroicon-m-arrows-right-left class="w-4 h-4" />
                                         @elseif ($item['icon_type'] === 'doc')
@@ -474,7 +711,7 @@
                                                 href="{{ $item['jira_url'] }}" 
                                                 target="_blank" 
                                                 rel="noopener noreferrer" 
-                                                class="text-[11px] font-mono font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/60 dark:border-blue-900/60 hover:bg-blue-100 dark:hover:bg-blue-900/80 mt-1 inline-block transition"
+                                                class="text-[11px] font-mono font-bold color-badge-blue px-1.5 py-0.5 rounded mt-1 inline-block transition"
                                             >
                                                 {{ $item['key'] }}
                                             </a>
@@ -485,7 +722,7 @@
 
                             {{-- Project --}}
                             <td class="py-3 px-3 align-middle">
-                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80 whitespace-nowrap">
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200/80 dark:border-blue-900/80 whitespace-nowrap">
                                     <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
                                     {{ $item['project'] }}
                                 </span>
@@ -493,7 +730,10 @@
 
                             {{-- Priority Pill --}}
                             <td class="py-3 px-3 align-middle">
-                                <span class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}">
+                                <span 
+                                    class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}"
+                                    style="background-color: {{ $item['priority_style']['hex_bg'] ?? '#f8fafc' }} !important; color: {{ $item['priority_style']['hex_text'] ?? '#475569' }} !important; border-color: {{ $item['priority_style']['hex_border'] ?? '#e2e8f0' }} !important;"
+                                >
                                     {{ $item['priority'] }}
                                 </span>
                             </td>
@@ -508,7 +748,10 @@
 
                             {{-- Why this matters --}}
                             <td class="py-3 px-3 align-middle max-w-sm">
-                                <div class="border-l-2 border-indigo-400 dark:border-indigo-500 pl-2.5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                                <div 
+                                    class="border-l-2 pl-2.5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed"
+                                    style="border-left-color: {{ $item['order_style']['hex_bar'] ?? '#3b82f6' }} !important;"
+                                >
                                     {{ $item['why_matters'] }}
                                 </div>
                             </td>
@@ -519,7 +762,7 @@
                                     href="{{ $item['jira_url'] }}" 
                                     target="_blank" 
                                     rel="noopener noreferrer"
-                                    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-2xs hover:shadow-xs transition inline-flex items-center gap-1"
+                                    class="btn-action-primary font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-2xs hover:shadow-xs transition inline-flex items-center gap-1"
                                 >
                                     <span>Start</span>
                                     <span class="text-[10px]">&rarr;</span>
@@ -568,17 +811,18 @@
                 <div class="divide-y divide-slate-50 dark:divide-slate-800/60">
                     @forelse ($needsAttentionItems as $item)
                         @php
-                            $attIconBg = match($item['icon'] ?? '') {
-                                'alert' => 'bg-rose-100 text-rose-600 border border-rose-200 dark:bg-rose-950/70 dark:text-rose-400 dark:border-rose-800',
-                                'meeting' => 'bg-amber-100 text-amber-600 border border-amber-200 dark:bg-amber-950/70 dark:text-amber-400 dark:border-amber-800',
-                                'chat' => 'bg-purple-100 text-purple-600 border border-purple-200 dark:bg-purple-950/70 dark:text-purple-400 dark:border-purple-800',
-                                'timer' => 'bg-blue-100 text-blue-600 border border-blue-200 dark:bg-blue-950/70 dark:text-blue-400 dark:border-blue-800',
-                                default => 'bg-amber-100 text-amber-600 border border-amber-200 dark:bg-amber-950/70 dark:text-amber-400 dark:border-amber-800',
+                            $attColorClass = match($item['icon'] ?? '') {
+                                'alert' => 'color-badge-rose',
+                                'meeting' => 'color-badge-amber',
+                                'chat' => 'color-badge-purple',
+                                'timer' => 'color-badge-blue',
+                                default => 'color-badge-amber',
                             };
+                            $priorityClass = strtolower($item['priority'] ?? '') === 'high' ? 'color-badge-rose' : 'color-badge-amber';
                         @endphp
                         <div class="py-3 flex items-center justify-between gap-3 group">
                             <div class="flex items-center gap-3 min-w-0">
-                                <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $attIconBg }}">
+                                <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $attColorClass }}">
                                     @if ($item['icon'] === 'chat')
                                         <x-heroicon-m-chat-bubble-left-right class="w-4 h-4" />
                                     @elseif ($item['icon'] === 'meeting')
@@ -601,9 +845,9 @@
                                     @if (!empty($item['key']))
                                         <a 
                                              href="{{ $item['jira_url'] }}" 
-                                            target="_blank" 
-                                            rel="noopener noreferrer" 
-                                            class="text-[11px] font-mono font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/60 dark:border-blue-900/60 hover:bg-blue-100 dark:hover:bg-blue-900/80 mt-1 inline-block transition"
+                                             target="_blank" 
+                                             rel="noopener noreferrer" 
+                                             class="text-[11px] font-mono font-bold color-badge-blue px-1.5 py-0.5 rounded mt-1 inline-block transition"
                                         >
                                             {{ $item['key'] }}
                                         </a>
@@ -612,7 +856,7 @@
                             </div>
 
                             <div class="flex items-center gap-2.5 shrink-0">
-                                <span class="text-xs font-bold px-2 py-0.5 rounded-full border {{ $item['priority_class'] }}">
+                                <span class="text-xs font-bold px-2 py-0.5 rounded-full border {{ $priorityClass }}">
                                     {{ $item['priority'] }}
                                 </span>
                                 @if (!empty($item['jira_url']))
@@ -808,12 +1052,13 @@
                     @forelse ($upcomingMeetings as $meeting)
                         <div class="flex items-start justify-between gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/40 transition border border-transparent hover:border-slate-100 dark:hover:border-slate-800">
                             <div class="flex items-start gap-3 min-w-0 flex-1">
-                                <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border 
-                                    {{ ($meeting['action_type'] ?? '') === 'prep' ? 'bg-blue-100 text-blue-600 border-blue-200 dark:bg-blue-950/80 dark:text-blue-400 dark:border-blue-900 shadow-2xs' : 'bg-purple-100 text-purple-600 border-purple-200 dark:bg-purple-950/80 dark:text-purple-400 dark:border-purple-900 shadow-2xs' }}">
+                                <div 
+                                    class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border shadow-2xs {{ ($meeting['action_type'] ?? '') === 'prep' ? 'color-badge-blue' : 'color-badge-purple' }}"
+                                >
                                     @if (($meeting['action_type'] ?? '') === 'prep')
-                                        <x-heroicon-m-calendar-days class="w-5 h-5" />
+                                        <x-heroicon-m-calendar-days class="w-5 h-5 text-blue-600 dark:text-blue-400" />
                                     @else
-                                        <x-heroicon-m-chat-bubble-left-right class="w-5 h-5" />
+                                        <x-heroicon-m-chat-bubble-left-right class="w-5 h-5 text-purple-600 dark:text-purple-400" />
                                     @endif
                                 </div>
                                 <div class="min-w-0 flex-1">
@@ -822,8 +1067,7 @@
                                             {{ $meeting['title'] }}
                                         </a>
                                         @if (! empty($meeting['badge_label']))
-                                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border
-                                                {{ ($meeting['badge_color'] ?? '') === 'amber' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800' : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800' }}">
+                                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border {{ ($meeting['badge_color'] ?? '') === 'amber' ? 'color-badge-amber' : 'color-badge-purple' }}">
                                                 {{ $meeting['badge_label'] }}
                                             </span>
                                         @endif
@@ -840,18 +1084,18 @@
                             @if (($meeting['action_type'] ?? '') === 'prep')
                                 <a
                                     href="{{ $meeting['action_url'] }}"
-                                    class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg whitespace-nowrap shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
+                                    class="btn-action-primary inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg whitespace-nowrap transition shrink-0 cursor-pointer text-xs font-bold"
                                 >
-                                    <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0" />
+                                    <x-heroicon-m-document-text class="w-3.5 h-3.5 shrink-0 text-white" />
                                     <span>Create prep</span>
                                     <span class="text-[10px]">&rarr;</span>
                                 </a>
                             @else
                                 <a
                                     href="{{ $meeting['action_url'] }}"
-                                    class="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg whitespace-nowrap shadow-2xs hover:shadow-xs transition shrink-0 cursor-pointer"
+                                    class="btn-action-purple inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg whitespace-nowrap transition shrink-0 cursor-pointer text-xs font-bold"
                                 >
-                                    <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0" />
+                                    <x-heroicon-m-clipboard-document-check class="w-3.5 h-3.5 shrink-0 text-white" />
                                     <span>Create follow up</span>
                                     <span class="text-[10px]">&rarr;</span>
                                 </a>

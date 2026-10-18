@@ -45,7 +45,12 @@ class AdminPanelProvider extends PanelProvider
             )
             ->renderHook(
                 \Filament\View\PanelsRenderHook::HEAD_END,
-                fn (): string => \Illuminate\Support\Facades\Blade::render('@include("filament.components.sidebar-custom-styles")')
+                fn (): string => \Illuminate\Support\Facades\Blade::render('
+                    @if (file_exists(public_path("build/manifest.json")) || file_exists(public_path("hot")))
+                        @vite(["resources/css/app.css"])
+                    @endif
+                    @include("filament.components.sidebar-custom-styles")
+                ')
             )
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')

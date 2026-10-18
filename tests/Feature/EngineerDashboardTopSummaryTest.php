@@ -239,6 +239,49 @@ class EngineerDashboardTopSummaryTest extends TestCase
         $this->assertEquals('/admin/client-meetings/43?tab=follow-up&action=generateFollowUp', $nextDue['action_url']);
     }
 
+    public function test_next_due_item_upcoming_meeting_prep_future_day_generates_prep_url(): void
+    {
+        $page = new EngineerDashboard();
+
+        $upcomingMeetings = [
+            [
+                'id'          => 44,
+                'title'       => 'Sprint Planning Next Week',
+                'action_type' => 'prep',
+                'time_label'  => 'Tomorrow, 10:00 AM',
+                // No action_url provided intentionally to test auto-generation
+            ],
+        ];
+
+        $nextDue = $page->getNextDueItem($this->user, [], [], $upcomingMeetings);
+
+        $this->assertEquals('meeting_prep', $nextDue['type']);
+        $this->assertEquals('Create prep', $nextDue['action_label']);
+        $this->assertNotNull($nextDue['action_url']);
+        $this->assertStringContainsString('tab=prep', $nextDue['action_url']);
+        $this->assertStringContainsString('action=generatePrep', $nextDue['action_url']);
+    }
+
+    public function test_spotlight_renders_create_prep_button(): void
+    {
+        $meeting = ClientMeeting::create([
+            'client_id'         => $this->client->id,
+            'title'             => 'Important Client Review',
+            'meeting_start_at'  => Carbon::now()->addDay(),
+            'meeting_end_at'    => Carbon::now()->addDay()->addHour(),
+            'internal_owner_id' => $this->user->id,
+            'status'            => \App\Enums\MeetingStatus::Detected,
+        ]);
+
+        $this->actingAs($this->user);
+
+        Livewire::test(EngineerDashboard::class)
+            ->assertSee('Next Due Item')
+            ->assertSee('Meeting Prep Pending')
+            ->assertSee('Create prep')
+            ->assertSee('Jump to meeting');
+    }
+
     public function test_engineer_dashboard_renders_top_card_sync_button_and_section_anchors(): void
     {
         $this->actingAs($this->user);
