@@ -6,27 +6,41 @@ use App\Enums\ClientStatus;
 use App\Filament\Resources\ClientResource\Pages;
 use App\Filament\Resources\ClientResource\RelationManagers;
 use App\Models\Client;
+use App\Models\ClientFindingConfiguration;
+use App\Models\User;
+use App\Services\Intelligence\FindingRulePreviewer;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\HtmlString;
 
 class ClientResource extends Resource
 {
     protected static ?string $model = Client::class;
+
     protected static ?string $navigationIcon = 'heroicon-o-building-office-2';
+
     protected static ?string $navigationGroup = 'Clients';
+
     protected static ?int $navigationSort = 1;
+
     protected static ?string $recordTitleAttribute = 'name';
 
     public static function canViewAny(): bool
     {
-        /** @var \App\Models\User|null $user */
+        /** @var User|null $user */
         $user = auth()->user();
-        if (! $user) return false;
+        if (! $user) {
+            return false;
+        }
 
-        if ($user->isSuperAdmin()) return true;
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
 
         // Hide Clients management resource from client portal users
         if ($user->isClientOnly()) {
@@ -36,11 +50,11 @@ class ClientResource extends Resource
         return $user->hasPermission('clients.view_any') || $user->hasPermission('clients.view');
     }
 
-    public static function getEloquentQuery(): \Illuminate\Database\Eloquent\Builder
+    public static function getEloquentQuery(): Builder
     {
         $query = parent::getEloquentQuery();
-        /** @var \App\Models\User|null $currentUser */
-        $currentUser = \Illuminate\Support\Facades\Auth::user();
+        /** @var User|null $currentUser */
+        $currentUser = Auth::user();
 
         if (! $currentUser || $currentUser->isSuperAdmin()) {
             return $query;
@@ -89,6 +103,13 @@ class ClientResource extends Resource
                                         ->default(ClientStatus::Active->value)
                                         ->required(),
 
+                                    Forms\Components\Select::make('project_lead_id')
+                                        ->label('Project Lead')
+                                        ->relationship('projectLead', 'name')
+                                        ->searchable()
+                                        ->preload()
+                                        ->nullable(),
+
                                     Forms\Components\Textarea::make('notes')
                                         ->rows(4)
                                         ->columnSpanFull(),
@@ -121,9 +142,9 @@ class ClientResource extends Resource
                                 ->label('Findings Comparison Period')
                                 ->helperText('How the findings engine compares metrics: current N days vs prior N days.')
                                 ->options([
-                                    7   => 'Week over Week (7 days)',
-                                    14  => 'Bi-weekly (14 days)',
-                                    30  => 'Month over Month (30 days)',
+                                    7 => 'Week over Week (7 days)',
+                                    14 => 'Bi-weekly (14 days)',
+                                    30 => 'Month over Month (30 days)',
                                     365 => 'Year over Year / 12 Months (365 days)',
                                 ])
                                 ->default(7)
@@ -138,25 +159,25 @@ class ClientResource extends Resource
                                     Forms\Components\Select::make('metric')
                                         ->label('Metric')
                                         ->options([
-                                            'revenue_decrease'            => 'Revenue Drop',
-                                            'revenue_increase'            => 'Revenue Spike',
-                                            'conversion_decrease'         => 'Conversion Rate Drop',
-                                            'conversion_increase'         => 'Conversion Rate Spike',
-                                            'aov_change'                  => 'AOV Change',
+                                            'revenue_decrease' => 'Revenue Drop',
+                                            'revenue_increase' => 'Revenue Spike',
+                                            'conversion_decrease' => 'Conversion Rate Drop',
+                                            'conversion_increase' => 'Conversion Rate Spike',
+                                            'aov_change' => 'AOV Change',
                                             'returning_customer_decrease' => 'Returning Customer Drop',
-                                            'return_rate_decrease'        => 'Return Rate Drop',
-                                            'rage_clicks_increase'        => 'Rage Clicks Spike',
-                                            'dead_clicks_increase'        => 'Dead Clicks Spike',
-                                            'quickbacks_increase'         => 'Quick Backs Spike',
-                                            'script_errors_increase'      => 'Script Errors Spike',
-                                            'error_clicks_increase'       => 'Error Clicks Spike',
-                                            'friction_score_increase'     => 'Friction Score Spike',
-                                            'lcp_increase'                => 'LCP Degradation',
-                                            'cls_increase'                => 'CLS Degradation',
-                                            'page_load_increase'          => 'Page Load Degradation',
-                                            'bounce_rate_increase'        => 'Bounce Rate Spike',
-                                            'out_of_stock_increase'       => 'Out of Stock Spike',
-                                            'low_stock_increase'          => 'Low Stock Spike',
+                                            'return_rate_decrease' => 'Return Rate Drop',
+                                            'rage_clicks_increase' => 'Rage Clicks Spike',
+                                            'dead_clicks_increase' => 'Dead Clicks Spike',
+                                            'quickbacks_increase' => 'Quick Backs Spike',
+                                            'script_errors_increase' => 'Script Errors Spike',
+                                            'error_clicks_increase' => 'Error Clicks Spike',
+                                            'friction_score_increase' => 'Friction Score Spike',
+                                            'lcp_increase' => 'LCP Degradation',
+                                            'cls_increase' => 'CLS Degradation',
+                                            'page_load_increase' => 'Page Load Degradation',
+                                            'bounce_rate_increase' => 'Bounce Rate Spike',
+                                            'out_of_stock_increase' => 'Out of Stock Spike',
+                                            'low_stock_increase' => 'Low Stock Spike',
                                         ])
                                         ->required(),
 
@@ -173,9 +194,9 @@ class ClientResource extends Resource
                                         ->label('Override Severity (optional)')
                                         ->options([
                                             'critical' => 'Critical',
-                                            'high'     => 'High',
-                                            'medium'   => 'Medium',
-                                            'low'      => 'Low',
+                                            'high' => 'High',
+                                            'medium' => 'Medium',
+                                            'low' => 'Low',
                                         ]),
                                 ])
                                 ->columns(3)
@@ -193,15 +214,15 @@ class ClientResource extends Resource
                                 ->label('')
                                 ->content(function (?Client $record) {
                                     if (! $record) {
-                                        return new \Illuminate\Support\HtmlString('<div class="p-4 text-sm text-gray-500">Save client first to manage findings rules.</div>');
+                                        return new HtmlString('<div class="p-4 text-sm text-gray-500">Save client first to manage findings rules.</div>');
                                     }
-                                    $active = \App\Models\ClientFindingConfiguration::where('client_id', $record->id)->active()->first();
-                                    $previewer = new \App\Services\Intelligence\FindingRulePreviewer();
+                                    $active = ClientFindingConfiguration::where('client_id', $record->id)->active()->first();
+                                    $previewer = new FindingRulePreviewer;
                                     $preview = $active ? $previewer->generatePreview($active->configuration_json) : [];
 
                                     return view('filament.components.finding-rules-preview', [
                                         'preview' => $preview,
-                                        'config'  => $active,
+                                        'config' => $active,
                                     ]);
                                 })
                                 ->columnSpanFull(),
@@ -233,10 +254,16 @@ class ClientResource extends Resource
                     ->formatStateUsing(fn ($state) => $state instanceof ClientStatus ? $state->label() : $state)
                     ->colors([
                         'success' => ClientStatus::Active->value,
-                        'gray'    => ClientStatus::Inactive->value,
+                        'gray' => ClientStatus::Inactive->value,
                         'warning' => ClientStatus::Onboarding->value,
-                        'info'    => ClientStatus::Paused->value,
+                        'info' => ClientStatus::Paused->value,
                     ]),
+
+                Tables\Columns\TextColumn::make('projectLead.name')
+                    ->label('Project Lead')
+                    ->placeholder('Unassigned')
+                    ->sortable()
+                    ->toggleable(),
 
                 Tables\Columns\TextColumn::make('open_findings_count')
                     ->label('Open Findings')
@@ -286,10 +313,10 @@ class ClientResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'  => Pages\ListClients::route('/'),
+            'index' => Pages\ListClients::route('/'),
             'create' => Pages\CreateClient::route('/create'),
-            'view'   => Pages\ViewClient::route('/{record}'),
-            'edit'   => Pages\EditClient::route('/{record}/edit'),
+            'view' => Pages\ViewClient::route('/{record}'),
+            'edit' => Pages\EditClient::route('/{record}/edit'),
         ];
     }
 }

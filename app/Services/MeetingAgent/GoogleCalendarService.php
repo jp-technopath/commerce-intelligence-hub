@@ -8,6 +8,7 @@ use App\Enums\MeetingStatus;
 use App\Models\Client;
 use App\Models\ClientMeeting;
 use App\Models\ConnectedAccount;
+use App\Models\Project;
 use App\Models\User;
 use Carbon\Carbon;
 use Google\Client as GoogleClient;
@@ -24,7 +25,9 @@ use RuntimeException;
 class GoogleCalendarService
 {
     private ConnectedAccount $account;
+
     private Google_Service_Calendar $calendarService;
+
     private User $user;
 
     public function __construct(User $user)
@@ -54,11 +57,11 @@ class GoogleCalendarService
     {
         try {
             $events = $this->calendarService->events->listEvents('primary', [
-                'timeMin'      => $from->toRfc3339String(),
-                'timeMax'      => $to->toRfc3339String(),
+                'timeMin' => $from->toRfc3339String(),
+                'timeMax' => $to->toRfc3339String(),
                 'singleEvents' => true,
-                'orderBy'      => 'startTime',
-                'maxResults'   => 250,
+                'orderBy' => 'startTime',
+                'maxResults' => 250,
             ]);
 
             return $events->getItems() ?? [];
@@ -76,7 +79,7 @@ class GoogleCalendarService
         $settings = isset($this->account) ? ($this->account->settings_json ?? []) : [];
 
         $scanMode = $settings['scan_mode'] ?? 'auto';
-        
+
         $includeKeywords = $settings['include_keywords'] ?? null;
         if ($includeKeywords === null) {
             $includeKeywords = ['#client', '#customer', '#customer-meeting'];
@@ -92,7 +95,7 @@ class GoogleCalendarService
 
         $title = $event->getSummary() ?? '';
         $description = $event->getDescription() ?? '';
-        $titleAndDesc = $title . ' ' . $description;
+        $titleAndDesc = $title.' '.$description;
 
         $companyDomains = config('meeting_agent.calendar.company_domains', []);
 
@@ -216,7 +219,7 @@ class GoogleCalendarService
             } catch (\Exception $e) {
                 Log::warning('GoogleCalendarService: failed to upsert meeting from event', [
                     'event_id' => $event->getId(),
-                    'error'    => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
@@ -230,7 +233,7 @@ class GoogleCalendarService
 
     private function buildGoogleClient(string $refreshToken): GoogleClient
     {
-        $client = new GoogleClient();
+        $client = new GoogleClient;
         $client->setClientId(config('google.client_id'));
         $client->setClientSecret(config('google.client_secret'));
         $client->setAccessType('offline');
@@ -239,15 +242,15 @@ class GoogleCalendarService
             $client->fetchAccessTokenWithRefreshToken($refreshToken);
         } catch (\Exception $e) {
             $this->account->update([
-                'status'     => ConnectedAccountStatus::Error,
-                'last_error' => 'Token refresh failed: ' . $e->getMessage(),
+                'status' => ConnectedAccountStatus::Error,
+                'last_error' => 'Token refresh failed: '.$e->getMessage(),
             ]);
-            throw new RuntimeException("Failed to refresh Google token for user {$this->user->id}: " . $e->getMessage());
+            throw new RuntimeException("Failed to refresh Google token for user {$this->user->id}: ".$e->getMessage());
         }
 
         if ($client->isAccessTokenExpired()) {
             $this->account->update([
-                'status'     => ConnectedAccountStatus::Error,
+                'status' => ConnectedAccountStatus::Error,
                 'last_error' => 'Access token expired after refresh attempt.',
             ]);
             throw new RuntimeException("Google access token expired after refresh for user {$this->user->id}.");
@@ -312,12 +315,12 @@ class GoogleCalendarService
         if (! $existingMeeting && $iCalUid && $startCarbon) {
             $baseUid = explode('_R', $iCalUid)[0];
             $existingMeeting = ClientMeeting::where(function ($q) use ($iCalUid, $baseUid) {
-                    $q->where('google_ical_uid', $iCalUid)
-                      ->orWhere('google_ical_uid', 'like', $baseUid . '%');
-                })
+                $q->where('google_ical_uid', $iCalUid)
+                    ->orWhere('google_ical_uid', 'like', $baseUid.'%');
+            })
                 ->whereBetween('meeting_start_at', [
                     $startCarbon->copy()->subMinutes(15),
-                    $startCarbon->copy()->addMinutes(15)
+                    $startCarbon->copy()->addMinutes(15),
                 ])
                 ->first();
         }
@@ -327,7 +330,7 @@ class GoogleCalendarService
             $existingMeeting = ClientMeeting::whereRaw('LOWER(title) = ?', [strtolower(trim($summary))])
                 ->whereBetween('meeting_start_at', [
                     $startCarbon->copy()->subMinutes(15),
-                    $startCarbon->copy()->addMinutes(15)
+                    $startCarbon->copy()->addMinutes(15),
                 ])
                 ->first();
         }
@@ -339,30 +342,16 @@ class GoogleCalendarService
             $organizerUser = User::whereRaw('LOWER(email) = ?', [strtolower(trim($organizerEmail))])->first();
         }
 
-        // Determine owner ID: prefer event organizer User, then internal organizer attendee (e.g. Nour), then internal attendee User, then scanner
+        $isExternalOrganizer = false;
+        $projectLeadUser = null;
+
         if ($organizerUser) {
             $ownerId = $organizerUser->id;
         } else {
-            $matchedUser = null;
-
-            // Prioritize Nour if in internal attendees
-            $nourUser = User::whereIn('email', ['nour@technopath.co', 'nour@technopath.ai'])->first();
-            $internalEmails = array_map(fn ($a) => strtolower(trim($a['email'] ?? '')), $internalAttendees);
-            if ($nourUser && (in_array('nour@technopath.co', $internalEmails, true) || in_array('nour@technopath.ai', $internalEmails, true))) {
-                $matchedUser = $nourUser;
-            } else {
-                foreach ($internalAttendees as $intAtt) {
-                    if (! empty($intAtt['email'])) {
-                        $u = User::whereRaw('LOWER(email) = ?', [strtolower(trim($intAtt['email']))])->first();
-                        if ($u) {
-                            $matchedUser = $u;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            $ownerId = $matchedUser ? $matchedUser->id : $this->user->id;
+            // Organizer is not an internal user. Check if organizer is external or internal domain
+            $isExternalOrganizer = $this->isExternalEmail($organizerEmail);
+            $projectLeadUser = $this->resolveProjectLead($clientId, $summary, $internalAttendees);
+            $ownerId = $projectLeadUser ? $projectLeadUser->id : $this->user->id;
         }
 
         // Extract meeting links and organizer metadata
@@ -370,9 +359,10 @@ class GoogleCalendarService
         $htmlLink = $event->getHtmlLink();
         $eventMeta = array_filter([
             'organizer_email' => $organizerEmail,
-            'creator_email'   => $event->getCreator()?->getEmail(),
-            'meet_link'       => $meetLink,
-            'html_link'       => $htmlLink,
+            'creator_email' => $event->getCreator()?->getEmail(),
+            'meet_link' => $meetLink,
+            'html_link' => $htmlLink,
+            'is_external_organizer' => $isExternalOrganizer,
         ]);
 
         if ($existingMeeting) {
@@ -390,25 +380,27 @@ class GoogleCalendarService
                 }
             }
 
-            // Update owner_id if organizerUser is found, otherwise keep existing owner_id if already set
-            $finalOwnerId = $organizerUser ? $organizerUser->id : ($existingMeeting->internal_owner_id ?? $ownerId);
+            // Update owner_id: internal organizer takes precedence, then resolved project lead for external meetings, then existing/fallback owner
+            $finalOwnerId = $organizerUser
+                ? $organizerUser->id
+                : ($projectLeadUser ? $projectLeadUser->id : ($existingMeeting->internal_owner_id ?? $ownerId));
             $mergedMeta = array_merge($existingMeeting->metadata ?? [], $eventMeta);
 
             $existingMeeting->update([
-                'google_ical_uid'    => $iCalUid ?: $existingMeeting->google_ical_uid,
-                'google_event_id'    => $event->getId(),
+                'google_ical_uid' => $iCalUid ?: $existingMeeting->google_ical_uid,
+                'google_event_id' => $event->getId(),
                 'google_calendar_id' => 'primary',
-                'title'              => $summary,
-                'meeting_start_at'   => $startCarbon ?? $existingMeeting->meeting_start_at,
-                'meeting_end_at'     => $endCarbon ?? $existingMeeting->meeting_end_at,
-                'timezone'           => $timezone,
-                'client_id'          => $targetClientId,
-                'project_key'        => $projectKey,
-                'internal_owner_id'  => $finalOwnerId,
+                'title' => $summary,
+                'meeting_start_at' => $startCarbon ?? $existingMeeting->meeting_start_at,
+                'meeting_end_at' => $endCarbon ?? $existingMeeting->meeting_end_at,
+                'timezone' => $timezone,
+                'client_id' => $targetClientId,
+                'project_key' => $projectKey,
+                'internal_owner_id' => $finalOwnerId,
                 'external_attendees' => $mergedExternal,
                 'internal_attendees' => $mergedInternal,
-                'metadata'           => $mergedMeta,
-                'status'             => ($existingMeeting->status === MeetingStatus::Canceled || $status === MeetingStatus::Canceled) ? $status : $existingMeeting->status,
+                'metadata' => $mergedMeta,
+                'status' => ($existingMeeting->status === MeetingStatus::Canceled || $status === MeetingStatus::Canceled) ? $status : $existingMeeting->status,
             ]);
 
             return $existingMeeting;
@@ -425,20 +417,20 @@ class GoogleCalendarService
         return ClientMeeting::create([
             'scanned_by_user_id' => $this->user->id,
             'google_calendar_id' => 'primary',
-            'google_event_id'    => $event->getId(),
-            'google_ical_uid'    => $iCalUid,
-            'title'              => $summary,
-            'meeting_start_at'   => $startCarbon,
-            'meeting_end_at'     => $endCarbon,
-            'timezone'           => $timezone,
-            'client_id'          => $clientId,
-            'project_key'        => $projectKey,
-            'internal_owner_id'  => $ownerId,
+            'google_event_id' => $event->getId(),
+            'google_ical_uid' => $iCalUid,
+            'title' => $summary,
+            'meeting_start_at' => $startCarbon,
+            'meeting_end_at' => $endCarbon,
+            'timezone' => $timezone,
+            'client_id' => $clientId,
+            'project_key' => $projectKey,
+            'internal_owner_id' => $ownerId,
             'external_attendees' => $externalAttendees,
             'internal_attendees' => $internalAttendees,
-            'metadata'           => $eventMeta,
-            'status'             => $status,
-            'source'             => MeetingSource::GoogleCalendar,
+            'metadata' => $eventMeta,
+            'status' => $status,
+            'source' => MeetingSource::GoogleCalendar,
         ]);
     }
 
@@ -461,6 +453,7 @@ class GoogleCalendarService
                 }
             }
         }
+
         return array_values($byEmail);
     }
 
@@ -488,15 +481,94 @@ class GoogleCalendarService
     {
         if ($e->getCode() === 401 || $e->getCode() === 403) {
             $this->account->update([
-                'status'     => ConnectedAccountStatus::Error,
-                'last_error' => 'Google API auth error (' . $e->getCode() . '): ' . $e->getMessage(),
+                'status' => ConnectedAccountStatus::Error,
+                'last_error' => 'Google API auth error ('.$e->getCode().'): '.$e->getMessage(),
             ]);
         }
 
         Log::error('GoogleCalendarService: Google API error', [
             'user_id' => $this->user->id,
-            'code'    => $e->getCode(),
+            'code' => $e->getCode(),
             'message' => $e->getMessage(),
         ]);
+    }
+
+    /**
+     * Resolve the project lead user for an externally organized meeting.
+     * Checks matching Project first, then Client, then falls back to internal attendee user.
+     */
+    protected function resolveProjectLead(?int $clientId, string $summary, array $internalAttendees): ?User
+    {
+        // 1. Check matching Project for client
+        if ($clientId) {
+            $projects = Project::where('client_id', $clientId)->get();
+            if ($projects->isNotEmpty()) {
+                $matchedProject = null;
+                foreach ($projects as $proj) {
+                    if (! empty($proj->code) && stripos($summary, $proj->code) !== false) {
+                        $matchedProject = $proj;
+                        break;
+                    }
+                    if (! empty($proj->jira_project_key) && stripos($summary, $proj->jira_project_key) !== false) {
+                        $matchedProject = $proj;
+                        break;
+                    }
+                }
+                $matchedProject = $matchedProject ?? $projects->first();
+                $leadId = $matchedProject->project_lead_id ?? $matchedProject->owner_id;
+                if ($leadId) {
+                    $u = User::find($leadId);
+                    if ($u) {
+                        return $u;
+                    }
+                }
+            }
+
+            // 2. Check Client project lead
+            $client = Client::find($clientId);
+            if ($client && $client->project_lead_id) {
+                $u = User::find($client->project_lead_id);
+                if ($u) {
+                    return $u;
+                }
+            }
+        }
+
+        // 3. Fallback: check internal attendees for an internal User without hardcoding
+        foreach ($internalAttendees as $intAtt) {
+            if (! empty($intAtt['email'])) {
+                $u = User::whereRaw('LOWER(email) = ?', [strtolower(trim($intAtt['email']))])->first();
+                if ($u) {
+                    return $u;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine if an email belongs to an external third party or client.
+     */
+    protected function isExternalEmail(?string $email): bool
+    {
+        if (empty($email)) {
+            return false;
+        }
+
+        $clean = strtolower(trim($email));
+        $companyDomains = config('meeting_agent.calendar.company_domains', ['technopath.co', 'technopath.com.au']);
+        $companyDomains[] = 'technopath.ai';
+
+        $domain = substr(strrchr($clean, '@'), 1);
+        if ($domain && in_array(strtolower($domain), array_map('strtolower', $companyDomains), true)) {
+            return false;
+        }
+
+        if (str_ends_with($clean, '@group.calendar.google.com')) {
+            return false;
+        }
+
+        return true;
     }
 }

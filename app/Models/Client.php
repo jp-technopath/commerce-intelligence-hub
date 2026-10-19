@@ -3,11 +3,12 @@
 namespace App\Models;
 
 use App\Enums\ClientStatus;
-use App\Models\Integration;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Client extends Model
 {
@@ -22,6 +23,7 @@ class Client extends Model
         'currency',
         'monthly_allocated_hours',
         'status',
+        'project_lead_id',
         'notes',
         'business_context',
         'monitoring_config',
@@ -29,9 +31,9 @@ class Client extends Model
     ];
 
     protected $casts = [
-        'status'                  => ClientStatus::class,
+        'status' => ClientStatus::class,
         'monthly_allocated_hours' => 'integer',
-        'monitoring_config'        => 'array',
+        'monitoring_config' => 'array',
     ];
 
     // ── Monitoring config helpers ────────────────────────────────────────
@@ -163,7 +165,7 @@ class Client extends Model
         return $this->hasMany(ClientHealthScore::class);
     }
 
-    public function latestHealthScore(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function latestHealthScore(): HasOne
     {
         return $this->hasOne(ClientHealthScore::class)->latestOfMany('date');
     }
@@ -198,9 +200,44 @@ class Client extends Model
         return $this->hasMany(ClientFindingConfiguration::class);
     }
 
-    public function activeFindingConfiguration(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function activeFindingConfiguration(): HasOne
     {
         return $this->hasOne(ClientFindingConfiguration::class)->where('status', ClientFindingConfiguration::STATUS_ACTIVE);
+    }
+
+    public function projectLead(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'project_lead_id');
+    }
+
+    protected static function booted(): void
+    {
+        static::saved(function (Client $client) {
+            if ($client->wasChanged('project_lead_id') && $client->project_lead_id) {
+                $client->reattributeExternalMeetingsToLead();
+            }
+        });
+    }
+
+    /**
+     * Re-attribute any meetings for this client organized by external clients to the project lead.
+     */
+    public function reattributeExternalMeetingsToLead(): int
+    {
+        if (! $this->project_lead_id) {
+            return 0;
+        }
+
+        $count = 0;
+        $meetings = $this->clientMeetings()->get();
+        foreach ($meetings as $meeting) {
+            if ($meeting->isOrganizedByExternalParty()) {
+                $meeting->update(['internal_owner_id' => $this->project_lead_id]);
+                $count++;
+            }
+        }
+
+        return $count;
     }
 
     /**
@@ -219,4 +256,3 @@ class Client extends Model
         return ! empty($this->jira_project_key);
     }
 }
-

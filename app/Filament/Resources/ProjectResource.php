@@ -14,22 +14,28 @@ use Filament\Resources\Pages\Page;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 
 class ProjectResource extends Resource
 {
     protected static ?string $model = Project::class;
+
     protected static ?string $navigationIcon = 'heroicon-o-folder-open';
+
     protected static ?string $navigationGroup = 'Clients';
+
     protected static ?int $navigationSort = 2;
+
     protected static ?string $recordTitleAttribute = 'name';
 
     protected static SubNavigationPosition $subNavigationPosition = SubNavigationPosition::Top;
 
-    public static function getEloquentQuery(): \Illuminate\Database\Eloquent\Builder
+    public static function getEloquentQuery(): Builder
     {
         $query = parent::getEloquentQuery();
         /** @var \App\Models\User|null $currentUser */
-        $currentUser = \Illuminate\Support\Facades\Auth::user();
+        $currentUser = Auth::user();
 
         if (! $currentUser || $currentUser->isSuperAdmin()) {
             return $query;
@@ -69,9 +75,9 @@ class ProjectResource extends Resource
                         ->default(ProjectStatus::Active->value)
                         ->required(),
 
-                    Forms\Components\Select::make('owner_id')
-                        ->label('Project Lead / Owner')
-                        ->relationship('owner', 'name')
+                    Forms\Components\Select::make('project_lead_id')
+                        ->label('Project Lead')
+                        ->relationship('projectLead', 'name')
                         ->searchable()
                         ->preload()
                         ->nullable(),
@@ -122,7 +128,7 @@ class ProjectResource extends Resource
                     ->formatStateUsing(fn ($state) => $state instanceof ProjectStatus ? $state->label() : $state)
                     ->color(fn ($state) => $state instanceof ProjectStatus ? $state->color() : 'gray'),
 
-                Tables\Columns\TextColumn::make('owner.name')
+                Tables\Columns\TextColumn::make('projectLead.name')
                     ->label('Project Lead')
                     ->placeholder('Unassigned')
                     ->toggleable(),
@@ -136,8 +142,10 @@ class ProjectResource extends Resource
                 Tables\Filters\SelectFilter::make('client_id')
                     ->relationship('client', 'name', function ($query) {
                         /** @var User|null $user */
-                        $user = \Illuminate\Support\Facades\Auth::user();
-                        if (! $user) return $query;
+                        $user = Auth::user();
+                        if (! $user) {
+                            return $query;
+                        }
 
                         if (! $user->isSuperAdmin()) {
                             $assignedClientIds = $user->getAssignedClientIds();
@@ -145,6 +153,7 @@ class ProjectResource extends Resource
                                 $query->whereIn('id', $assignedClientIds);
                             }
                         }
+
                         return $query;
                     })
                     ->label('Client')
@@ -219,15 +228,15 @@ class ProjectResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index'        => Pages\ListProjects::route('/'),
-            'create'       => Pages\CreateProject::route('/create'),
-            'view'         => Pages\ViewProject::route('/{record}'),
+            'index' => Pages\ListProjects::route('/'),
+            'create' => Pages\CreateProject::route('/create'),
+            'view' => Pages\ViewProject::route('/{record}'),
             'requirements' => Pages\ProjectRequirements::route('/{record}/requirements'),
-            'agent-tasks'  => Pages\ProjectAgentTasks::route('/{record}/agent-tasks'),
-            'code-prs'     => Pages\ProjectCodePrs::route('/{record}/code-prs'),
-            'deployments'  => Pages\ProjectDeployments::route('/{record}/deployments'),
-            'settings'     => Pages\ProjectSettings::route('/{record}/settings'),
-            'edit'         => Pages\EditProject::route('/{record}/edit'),
+            'agent-tasks' => Pages\ProjectAgentTasks::route('/{record}/agent-tasks'),
+            'code-prs' => Pages\ProjectCodePrs::route('/{record}/code-prs'),
+            'deployments' => Pages\ProjectDeployments::route('/{record}/deployments'),
+            'settings' => Pages\ProjectSettings::route('/{record}/settings'),
+            'edit' => Pages\EditProject::route('/{record}/edit'),
         ];
     }
 }
