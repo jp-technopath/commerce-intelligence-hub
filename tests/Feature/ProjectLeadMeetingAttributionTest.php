@@ -203,4 +203,63 @@ class ProjectLeadMeetingAttributionTest extends TestCase
         $externalMeeting->refresh();
         $this->assertEquals($this->userDonia->id, $externalMeeting->internal_owner_id);
     }
+
+    public function test_client_saving_reattributes_group_calendar_meetings_to_project_lead(): void
+    {
+        // Meeting created on Google Group calendar with Donia as creator, but scanned/owned by Nour
+        $groupMeeting = ClientMeeting::create([
+            'client_id' => $this->client->id,
+            'title' => 'GoldKamp Weekly meeting',
+            'meeting_start_at' => now()->addDays(1),
+            'meeting_end_at' => now()->addDays(1)->addHour(),
+            'internal_owner_id' => $this->userNour->id,
+            'status' => MeetingStatus::Detected,
+            'metadata' => [
+                'organizer_email' => 'c_48d5d4b99b373949e3644e9db0d80439cf0eb3ce1543fe6774d3b65d52885531@group.calendar.google.com',
+                'creator_email' => 'donia@technopath.co',
+            ],
+            'external_attendees' => [
+                ['name' => 'Brian Goldkamp', 'email' => 'brian@tgoldkamp.com'],
+            ],
+        ]);
+
+        // When client project lead is set to Donia
+        $this->client->update(['project_lead_id' => $this->userDonia->id]);
+
+        $groupMeeting->refresh();
+        $this->assertEquals($this->userDonia->id, $groupMeeting->internal_owner_id);
+
+        // Donia sees the meeting, Nour does not
+        $doniaMeetings = ClientMeeting::ownedOrCreatedBy($this->userDonia)->get();
+        $this->assertTrue($doniaMeetings->contains('id', $groupMeeting->id));
+
+        $nourMeetings = ClientMeeting::ownedOrCreatedBy($this->userNour)->get();
+        $this->assertFalse($nourMeetings->contains('id', $groupMeeting->id));
+    }
+
+    public function test_meeting_attributed_to_project_lead_is_excluded_from_non_lead_even_if_non_lead_is_in_metadata(): void
+    {
+        // Meeting scheduled with client where Nour created the calendar invite, but Donia is Project Lead and assigned owner
+        $clientMeeting = ClientMeeting::create([
+            'client_id' => $this->client->id,
+            'title' => 'Cambro/Technopath',
+            'meeting_start_at' => now()->addDays(1),
+            'meeting_end_at' => now()->addDays(1)->addHour(),
+            'internal_owner_id' => $this->userDonia->id,
+            'status' => MeetingStatus::Detected,
+            'metadata' => [
+                'organizer_email' => 'nour@technopath.co',
+                'creator_email' => 'nour@technopath.co',
+            ],
+            'external_attendees' => [
+                ['name' => 'Client', 'email' => 'client@cambro.com'],
+            ],
+        ]);
+
+        $doniaMeetings = ClientMeeting::ownedOrCreatedBy($this->userDonia)->get();
+        $this->assertTrue($doniaMeetings->contains('id', $clientMeeting->id));
+
+        $nourMeetings = ClientMeeting::ownedOrCreatedBy($this->userNour)->get();
+        $this->assertFalse($nourMeetings->contains('id', $clientMeeting->id));
+    }
 }

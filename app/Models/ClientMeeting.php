@@ -114,26 +114,35 @@ class ClientMeeting extends Model
     public function isOrganizedByExternalParty(): bool
     {
         $organizerEmail = strtolower(trim($this->metadata['organizer_email'] ?? ''));
-        if (empty($organizerEmail)) {
+        $creatorEmail = strtolower(trim($this->metadata['creator_email'] ?? ''));
+
+        // If organizer is a group/resource calendar, determine the real organizer from creator
+        if (str_ends_with($organizerEmail, '@group.calendar.google.com') || str_ends_with($organizerEmail, '@resource.calendar.google.com')) {
+            $effectiveEmail = $creatorEmail;
+        } else {
+            $effectiveEmail = $organizerEmail ?: $creatorEmail;
+        }
+
+        if (empty($effectiveEmail)) {
             return false;
         }
 
-        // If organizer matches any internal user
-        $isInternalUser = User::whereRaw('LOWER(email) = ?', [$organizerEmail])->exists();
+        // If effective organizer matches any internal user
+        $isInternalUser = User::whereRaw('LOWER(email) = ?', [$effectiveEmail])->exists();
         if ($isInternalUser) {
             return false;
         }
 
-        // If organizer has company domain
+        // If effective organizer has company domain
         $companyDomains = config('meeting_agent.calendar.company_domains', ['technopath.co', 'technopath.com.au']);
         $companyDomains[] = 'technopath.ai';
-        $domain = substr(strrchr($organizerEmail, '@'), 1);
+        $domain = substr(strrchr($effectiveEmail, '@'), 1);
         if ($domain && in_array(strtolower($domain), array_map('strtolower', $companyDomains), true)) {
             return false;
         }
 
         // Google calendar group resources are internal room/calendar artifacts
-        if (str_ends_with($organizerEmail, '@group.calendar.google.com')) {
+        if (str_ends_with($effectiveEmail, '@group.calendar.google.com') || str_ends_with($effectiveEmail, '@resource.calendar.google.com')) {
             return false;
         }
 
@@ -143,7 +152,8 @@ class ClientMeeting extends Model
     /**
      * Scope query to meetings where the user is either the owner or the creator/organizer.
      * Strictly excludes meetings where the user is merely an invited attendee.
-     * For meetings organized by external clients, ownership is attributed strictly to the internal_owner_id (Project Lead).
+     * For meetings organized by external clients or assigned to a Project Lead,
+     * ownership is attributed strictly to the internal_owner_id.
      */
     public function scopeOwnedOrCreatedBy(Builder $query, User $user): Builder
     {
@@ -175,35 +185,45 @@ class ClientMeeting extends Model
             // 1. User is the assigned internal owner (e.g. Project Lead)
             $q->whereIn('internal_owner_id', $userIds);
 
-            // 2. User is the organizer of the meeting
-            foreach ($userEmails as $email) {
-                if (! empty($email)) {
-                    $emailLower = strtolower(trim($email));
-                    $q->orWhere('metadata->organizer_email', $emailLower)
-                        ->orWhere('metadata->organizer_email', $email);
-                }
-            }
-
-            // 3. User is creator, PROVIDED the meeting was NOT organized by an external client
-            foreach ($userEmails as $email) {
-                if (! empty($email)) {
-                    $emailLower = strtolower(trim($email));
-                    $q->orWhere(function (Builder $sub) use ($emailLower, $email) {
-                        $sub->where(function (Builder $creatorMatch) use ($emailLower, $email) {
-                            $creatorMatch->where('metadata->creator_email', $emailLower)
-                                ->orWhere('metadata->creator_email', $email);
-                        })->where(function (Builder $notExternal) {
-                            $notExternal->whereNull('metadata->organizer_email')
-                                ->orWhere('metadata->organizer_email', '')
-                                ->orWhere('metadata->is_external_organizer', false)
-                                ->orWhere('metadata->organizer_email', 'like', '%@technopath.co')
-                                ->orWhere('metadata->organizer_email', 'like', '%@technopath.ai')
-                                ->orWhere('metadata->organizer_email', 'like', '%@technopath.com.au')
-                                ->orWhere('metadata->organizer_email', 'like', '%@group.calendar.google.com');
-                        });
+            // 2. User is the organizer or creator of the meeting,
+            // PROVIDED the meeting does NOT have an assigned internal owner belonging to another user
+            // and was NOT organized by an external client
+            $q->orWhere(function (Builder $sub) use ($userEmails, $userIds) {
+                $sub->where(function (Builder $ownerCheck) use ($userIds) {
+                    $ownerCheck->whereNull('internal_owner_id')
+                        ->orWhereIn('internal_owner_id', $userIds);
+                })->where(function (Builder $matchRole) use ($userEmails) {
+                    $matchRole->where(function (Builder $organizerMatch) use ($userEmails) {
+                        foreach ($userEmails as $email) {
+                            if (! empty($email)) {
+                                $emailLower = strtolower(trim($email));
+                                $organizerMatch->orWhere('metadata->organizer_email', $emailLower)
+                                    ->orWhere('metadata->organizer_email', $email);
+                            }
+                        }
+                    })->orWhere(function (Builder $creatorMatch) use ($userEmails) {
+                        foreach ($userEmails as $email) {
+                            if (! empty($email)) {
+                                $emailLower = strtolower(trim($email));
+                                $creatorMatch->orWhere(function (Builder $cSub) use ($emailLower, $email) {
+                                    $cSub->where(function (Builder $emailCheck) use ($emailLower, $email) {
+                                        $emailCheck->where('metadata->creator_email', $emailLower)
+                                            ->orWhere('metadata->creator_email', $email);
+                                    })->where(function (Builder $notExternal) {
+                                        $notExternal->whereNull('metadata->organizer_email')
+                                            ->orWhere('metadata->organizer_email', '')
+                                            ->orWhere('metadata->is_external_organizer', false)
+                                            ->orWhere('metadata->organizer_email', 'like', '%@technopath.co')
+                                            ->orWhere('metadata->organizer_email', 'like', '%@technopath.ai')
+                                            ->orWhere('metadata->organizer_email', 'like', '%@technopath.com.au')
+                                            ->orWhere('metadata->organizer_email', 'like', '%@group.calendar.google.com');
+                                    });
+                                });
+                            }
+                        }
                     });
-                }
-            }
+                });
+            });
         });
     }
 

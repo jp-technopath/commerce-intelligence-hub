@@ -148,4 +148,39 @@ class IdentityResolverService
             $account->update(['external_account_id' => $externalAccountId]);
         }
     }
+
+    /**
+     * Get all known email aliases for a user.
+     */
+    public static function getUserEmails(User $user): array
+    {
+        $emails = [$user->email];
+        $cleanEmail = strtolower(trim($user->email ?? ''));
+        $cleanName = strtolower(trim($user->name ?? ''));
+
+        if (str_contains($cleanEmail, 'nour') || str_contains($cleanName, 'nour')) {
+            $emails = array_merge($emails, [
+                'nour@technopath.co',
+                'nour@technopath.ai',
+                'nour.ayman91@gmail.com',
+                'nour@the-raisin.com',
+            ]);
+        }
+
+        if (str_contains($cleanEmail, 'donia') || str_contains($cleanName, 'donia')) {
+            $emails = array_merge($emails, [
+                'donia@technopath.co',
+                'doniaakhaled@gmail.com',
+            ]);
+        }
+
+        if (str_contains($cleanEmail, 'jp') || str_contains($cleanEmail, 'jeanpaul') || str_contains($cleanName, 'jean paul')) {
+            $emails = array_merge($emails, [
+                'jp@technopath.co',
+                'jeanpaulhanna@gmail.com',
+            ]);
+        }
+
+        return array_values(array_unique(array_map('strtolower', array_filter($emails))));
+    }
 }

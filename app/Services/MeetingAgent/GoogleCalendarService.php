@@ -336,10 +336,26 @@ class GoogleCalendarService
         }
 
         // Resolve event organizer and internal owner
-        $organizerEmail = $event->getOrganizer()?->getEmail() ?? $event->getCreator()?->getEmail();
+        $organizerEmail = $event->getOrganizer()?->getEmail();
+        $creatorEmail = $event->getCreator()?->getEmail();
+
+        // If organizer is a group/resource calendar, determine the true human organizer from creator
+        $isGroupCalendar = false;
+        if ($organizerEmail && (str_ends_with(strtolower($organizerEmail), '@group.calendar.google.com') || str_ends_with(strtolower($organizerEmail), '@resource.calendar.google.com'))) {
+            $isGroupCalendar = true;
+            $effectiveOrganizerEmail = $creatorEmail ?: $organizerEmail;
+        } else {
+            $effectiveOrganizerEmail = $organizerEmail ?: $creatorEmail;
+        }
+
         $organizerUser = null;
-        if ($organizerEmail) {
-            $organizerUser = User::whereRaw('LOWER(email) = ?', [strtolower(trim($organizerEmail))])->first();
+        if ($effectiveOrganizerEmail) {
+            $organizerUser = User::whereRaw('LOWER(email) = ?', [strtolower(trim($effectiveOrganizerEmail))])->first();
+        }
+
+        // If not found, also check creatorEmail directly
+        if (! $organizerUser && $creatorEmail) {
+            $organizerUser = User::whereRaw('LOWER(email) = ?', [strtolower(trim($creatorEmail))])->first();
         }
 
         $isExternalOrganizer = false;
@@ -349,17 +365,27 @@ class GoogleCalendarService
             $ownerId = $organizerUser->id;
         } else {
             // Organizer is not an internal user. Check if organizer is external or internal domain
-            $isExternalOrganizer = $this->isExternalEmail($organizerEmail);
+            $isExternalOrganizer = $this->isExternalEmail($effectiveOrganizerEmail);
             $projectLeadUser = $this->resolveProjectLead($clientId, $summary, $internalAttendees);
             $ownerId = $projectLeadUser ? $projectLeadUser->id : $this->user->id;
+        }
+
+        // If client has a designated Project Lead and meeting has external attendees, is external, or is on a group calendar
+        if ($clientId) {
+            $clientModel = Client::find($clientId);
+            if ($clientModel && $clientModel->project_lead_id) {
+                if ($isExternalOrganizer || $isGroupCalendar || ! empty($externalAttendees) || ($organizerUser && $organizerUser->id === $clientModel->project_lead_id)) {
+                    $ownerId = $clientModel->project_lead_id;
+                }
+            }
         }
 
         // Extract meeting links and organizer metadata
         $meetLink = $event->getHangoutLink() ?? $event->getConferenceData()?->getEntryPoints()[0]?->getUri();
         $htmlLink = $event->getHtmlLink();
         $eventMeta = array_filter([
-            'organizer_email' => $organizerEmail,
-            'creator_email' => $event->getCreator()?->getEmail(),
+            'organizer_email' => $organizerEmail ?: $creatorEmail,
+            'creator_email' => $creatorEmail,
             'meet_link' => $meetLink,
             'html_link' => $htmlLink,
             'is_external_organizer' => $isExternalOrganizer,
@@ -380,10 +406,17 @@ class GoogleCalendarService
                 }
             }
 
-            // Update owner_id: internal organizer takes precedence, then resolved project lead for external meetings, then existing/fallback owner
-            $finalOwnerId = $organizerUser
-                ? $organizerUser->id
-                : ($projectLeadUser ? $projectLeadUser->id : ($existingMeeting->internal_owner_id ?? $ownerId));
+            // Update owner_id:
+            // 1. If client has a Project Lead and meeting is external, group calendar, or has external attendees, Project Lead takes precedence.
+            // 2. Otherwise internal organizer takes precedence, then resolved project lead, then existing/fallback owner
+            $targetClient = $targetClientId ? Client::find($targetClientId) : null;
+            if ($targetClient && $targetClient->project_lead_id && ($isExternalOrganizer || $isGroupCalendar || ! empty($mergedExternal) || ($organizerUser && $organizerUser->id === $targetClient->project_lead_id))) {
+                $finalOwnerId = $targetClient->project_lead_id;
+            } elseif ($organizerUser) {
+                $finalOwnerId = $organizerUser->id;
+            } else {
+                $finalOwnerId = $projectLeadUser ? $projectLeadUser->id : ($existingMeeting->internal_owner_id ?? $ownerId);
+            }
             $mergedMeta = array_merge($existingMeeting->metadata ?? [], $eventMeta);
 
             $existingMeeting->update([
