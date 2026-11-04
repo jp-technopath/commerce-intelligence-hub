@@ -157,7 +157,7 @@ class FindingResource extends Resource
                         $user = \Illuminate\Support\Facades\Auth::user();
                         if (! $user) return [];
 
-                        $query = Client::query();
+                        $query = Client::external();
                         if (! $user->isSuperAdmin()) {
                             $assignedClientIds = $user->getAssignedClientIds();
                             if (! in_array('*', $assignedClientIds)) {
@@ -361,6 +361,10 @@ class FindingResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         $query = parent::getEloquentQuery()->with(['client', 'recommendations.outcome']);
+
+        // Findings resource tracks external client intelligence; exclude internal agency entities
+        $query->whereHas('client', fn ($q) => $q->external());
+
         /** @var User|null $currentUser */
         $currentUser = \Illuminate\Support\Facades\Auth::user();
 

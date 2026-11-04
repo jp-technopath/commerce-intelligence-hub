@@ -29,12 +29,14 @@ class Client extends Model
         'business_context',
         'monitoring_config',
         'findings_comparison_period',
+        'is_internal',
     ];
 
     protected $casts = [
         'status' => ClientStatus::class,
         'monthly_allocated_hours' => 'integer',
         'monitoring_config' => 'array',
+        'is_internal' => 'boolean',
     ];
 
     // ── Monitoring config helpers ────────────────────────────────────────
@@ -326,4 +328,49 @@ class Client extends Model
     {
         return ! empty($this->jira_project_key);
     }
+
+    /**
+     * Check if this client represents an internal agency workspace or tracking project.
+     */
+    public function isInternal(): bool
+    {
+        if (isset($this->attributes['is_internal'])) {
+            return (bool) $this->attributes['is_internal'];
+        }
+
+        return str_contains(strtolower($this->name ?? ''), 'technopath internal')
+            || in_array($this->jira_project_key, ['TEC', 'AGENCY'], true);
+    }
+
+    /**
+     * Scope query to only real external clients (excluding internal agency entities).
+     */
+    public function scopeExternal(Builder $query): Builder
+    {
+        return $query->where(function ($q) {
+            $q->where('is_internal', false)
+              ->orWhereNull('is_internal');
+        })
+        ->where(function ($q) {
+            $q->whereNull('name')
+              ->orWhere('name', 'NOT LIKE', '%Technopath Internal%');
+        })
+        ->where(function ($q) {
+            $q->whereNull('jira_project_key')
+              ->orWhereNotIn('jira_project_key', ['TEC', 'AGENCY']);
+        });
+    }
+
+    /**
+     * Scope query to internal agency entities only.
+     */
+    public function scopeInternal(Builder $query): Builder
+    {
+        return $query->where(function ($q) {
+            $q->where('is_internal', true)
+              ->orWhere('name', 'LIKE', '%Technopath Internal%')
+              ->orWhereIn('jira_project_key', ['TEC', 'AGENCY']);
+        });
+    }
 }
+

@@ -33,6 +33,7 @@ class RecentFindingsWidget extends BaseWidget
         return $table
             ->query(
                 Finding::with('client')
+                    ->whereHas('client', fn ($q) => $q->external())
                     ->whereIn('status', [
                         FindingStatus::New->value,
                         FindingStatus::Investigating->value,

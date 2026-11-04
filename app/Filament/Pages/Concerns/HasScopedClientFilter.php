@@ -23,7 +23,7 @@ trait HasScopedClientFilter
     protected function scopedClientsQuery(): Builder
     {
         $user = auth()->user();
-        $query = Client::query();
+        $query = Client::external();
 
         if ($user && ! $user->isSuperAdmin()) {
             $query->whereIn('id', $user->getAssignedClientIds());

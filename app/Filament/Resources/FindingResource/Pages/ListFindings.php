@@ -26,7 +26,7 @@ class ListFindings extends ListRecords
                 ->form([
                     Forms\Components\Select::make('client_id')
                         ->label('Client')
-                        ->options(Client::where('status', 'active')->pluck('name', 'id'))
+                        ->options(Client::where('status', 'active')->external()->pluck('name', 'id'))
                         ->required()
                         ->searchable()
                         ->helperText('Select a client to run change detection and AI analysis for.'),
@@ -112,7 +112,7 @@ class ListFindings extends ListRecords
                 ->modalDescription('This will run change detection across all active clients to find signals and anomalies in the synced data. This may take a few minutes.')
                 ->modalSubmitActionLabel('Refresh All')
                 ->action(function (): void {
-                    $clients = Client::where('status', 'active')->get();
+                    $clients = Client::where('status', 'active')->external()->get();
                     $engine  = new ChangeDetectionEngine();
                     $total   = 0;
 

@@ -98,17 +98,31 @@
 
         .dashboard-select {
             border: none;
-            background: transparent;
+            background-color: transparent !important;
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E") !important;
+            background-repeat: no-repeat !important;
+            background-position: right 0.25rem center !important;
+            background-size: 1.25rem 1.25rem !important;
             font-size: 0.875rem;
             font-weight: 700;
             cursor: pointer;
-            padding-right: 2rem;
+            padding-top: 0.25rem;
+            padding-bottom: 0.25rem;
+            padding-left: 0;
+            padding-right: 1.75rem;
             outline: none;
             color: #0f172a;
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            -moz-appearance: none !important;
+        }
+        .dashboard-select::-ms-expand {
+            display: none;
         }
         .dark .dashboard-select {
             color: #f8fafc !important;
             background-color: transparent !important;
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E") !important;
         }
         .dark .dashboard-select option {
             background-color: rgb(30, 41, 59) !important;

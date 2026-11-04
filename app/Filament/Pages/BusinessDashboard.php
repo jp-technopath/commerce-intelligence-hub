@@ -79,7 +79,7 @@ class BusinessDashboard extends Page
     {
         /** @var \App\Models\User|null $user */
         $user = auth()->user();
-        $query = Client::orderBy('name');
+        $query = Client::external()->orderBy('name');
 
         if ($user && ! $user->isSuperAdmin()) {
             $assignedClientIds = $user->getAssignedClientIds();

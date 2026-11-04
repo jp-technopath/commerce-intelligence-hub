@@ -16,25 +16,27 @@ class StatsOverviewWidget extends BaseWidget
     protected static ?int $sort = 1;
     protected function getStats(): array
     {
-        $totalClients = Client::count();
+        $totalClients = Client::external()->count();
 
-        $clientsNeedingAttention = Client::whereHas('findings', function ($q) {
+        $clientsNeedingAttention = Client::external()->whereHas('findings', function ($q) {
             $q->whereIn('status', [FindingStatus::New->value, FindingStatus::Investigating->value]);
         })->count();
 
-        $openFindings = Finding::whereIn('status', [
-            FindingStatus::New->value,
-            FindingStatus::Investigating->value,
-            FindingStatus::Accepted->value,
-        ])->count();
+        $openFindings = Finding::whereHas('client', fn ($q) => $q->external())
+            ->whereIn('status', [
+                FindingStatus::New->value,
+                FindingStatus::Investigating->value,
+                FindingStatus::Accepted->value,
+            ])->count();
 
-        $highSeverityFindings = Finding::whereIn('status', [
-            FindingStatus::New->value,
-            FindingStatus::Investigating->value,
-        ])->whereIn('severity', [
-            FindingSeverity::High->value,
-            FindingSeverity::Critical->value,
-        ])->count();
+        $highSeverityFindings = Finding::whereHas('client', fn ($q) => $q->external())
+            ->whereIn('status', [
+                FindingStatus::New->value,
+                FindingStatus::Investigating->value,
+            ])->whereIn('severity', [
+                FindingSeverity::High->value,
+                FindingSeverity::Critical->value,
+            ])->count();
 
         $recentSyncs = SyncLog::where('created_at', '>=', now()->subHours(24))->count();
         $failedSyncs = SyncLog::where('created_at', '>=', now()->subHours(24))

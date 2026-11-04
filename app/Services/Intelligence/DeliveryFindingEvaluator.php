@@ -20,7 +20,7 @@ class DeliveryFindingEvaluator
     public function evaluateAll(): int
     {
         $total = 0;
-        foreach (Client::withJiraProjectKey()->where('status', 'active')->get() as $client) {
+        foreach (Client::withJiraProjectKey()->external()->where('status', 'active')->get() as $client) {
             $total += $this->evaluateClientFindings($client);
         }
         return $total;
@@ -31,7 +31,7 @@ class DeliveryFindingEvaluator
      */
     public function evaluateClientFindings(Client $client): int
     {
-        if (empty($client->jira_project_key)) {
+        if ($client->isInternal() || empty($client->jira_project_key)) {
             return 0;
         }
 
@@ -86,6 +86,7 @@ class DeliveryFindingEvaluator
 
         // 2. Evaluate Overdue Tasks
         $overdueItems = PmWorkItem::where('client_id', $client->id)
+            ->forCustomerSpacesWithJiraCode($client->id)
             ->excludeBacklogAndOnHold()
             ->where('normalized_delivery_status', '!=', 'completed')
             ->whereNotNull('target_due_date')
@@ -127,6 +128,7 @@ class DeliveryFindingEvaluator
 
         // 3. Evaluate QA Rework Tasks
         $reworkItems = PmWorkItem::where('client_id', $client->id)
+            ->forCustomerSpacesWithJiraCode($client->id)
             ->excludeBacklogAndOnHold()
             ->where('normalized_delivery_status', '!=', 'completed')
             ->where(function ($q) {
