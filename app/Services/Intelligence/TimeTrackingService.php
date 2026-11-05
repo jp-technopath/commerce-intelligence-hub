@@ -77,14 +77,23 @@ class TimeTrackingService
             ->where('updated_at', '>=', $startOfMonth)
             ->get(['id', 'external_item_key', 'summary', 'normalized_delivery_status']);
 
-        // Capacity calculation if configured on user
-        $capacityValidated = false;
-        $workingCapacityHours = null;
-        if (isset($user->daily_capacity_hours) && $user->daily_capacity_hours > 0) {
-            $capacityValidated = true;
-            // Approximate working days in month up to current date or whole month
-            $workingCapacityHours = round($user->daily_capacity_hours * 21.5, 1);
+        // Capacity calculation: dynamically compute standard working days in the target month (TPF-47)
+        // Standard working schedule excludes weekend days (Friday & Saturday in Egypt).
+        $workingDays = 0;
+        $dayCursor = $startOfMonth->copy();
+        while ($dayCursor->lte($endOfMonth)) {
+            if (! in_array($dayCursor->dayOfWeek, [\Carbon\Carbon::FRIDAY, \Carbon\Carbon::SATURDAY])) {
+                $workingDays++;
+            }
+            $dayCursor->addDay();
         }
+
+        $dailyCapacity = ($user->daily_capacity_hours && $user->daily_capacity_hours > 0)
+            ? (float) $user->daily_capacity_hours
+            : 8.0;
+
+        $capacityValidated = true;
+        $workingCapacityHours = round($workingDays * $dailyCapacity, 1);
 
         return [
             'period_label'            => $startOfMonth->format('M 1') . ' - ' . $endOfMonth->format('M j, Y'),

@@ -137,20 +137,10 @@ class WorkPrioritizationEngine
                 continue;
             }
 
-            // Waiting on customer response or client input
+            // Waiting on customer response or client input:
+            // These tickets are waiting on the customer, not the engineer, so they do NOT require
+            // engineer response and should not appear in "Needs My Attention" (TPF-47).
             if ($item->normalized_delivery_status === 'customer_review' || str_contains(strtolower($item->external_status ?? ''), 'waiting')) {
-                $needsAttention[] = [
-                    'item_id'             => $item->id,
-                    'key'                 => $item->external_item_key,
-                    'title'               => $item->summary,
-                    'client_name'         => $item->client?->name ?? 'Internal',
-                    'reason'              => 'Waiting on customer input in Jira',
-                    'priority'            => $item->priority,
-                    'target_due_date'     => $item->target_due_date?->format('M j, Y'),
-                    'action_label'        => 'Follow Up',
-                    'delivery_status'     => $item->normalized_delivery_status,
-                    'jira_url'            => $item->jira_url,
-                ];
                 continue;
             }
 

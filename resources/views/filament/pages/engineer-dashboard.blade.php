@@ -6,6 +6,7 @@
         $hoursData = $this->getMyHoursData($targetUser);
         $upcomingMeetings = $this->getUpcomingMeetingsData($targetUser);
         $projectHealthItems = $this->getProjectHealthItems($targetUser);
+        $readyForDeploymentItems = $this->getReadyForDeploymentItems($targetUser);
         $aiInsightText = $this->getAiInsightText($targetUser, $workPlanItems, $upcomingMeetings);
         $userOptions = $this->getUserOptions();
         $lastSyncedAt = $this->getLastSyncedAt();
@@ -164,11 +165,16 @@
         }
         .compact-cmd-chips {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 0.5rem;
             margin-top: 0.5rem;
         }
-        @media (max-width: 640px) {
+        @media (max-width: 820px) {
+            .compact-cmd-chips {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        @media (max-width: 540px) {
             .compact-cmd-chips {
                 grid-template-columns: repeat(2, 1fr);
             }
@@ -364,6 +370,10 @@
             background-color: #ecfdf5 !important;
             border-color: #a7f3d0 !important;
         }
+        .chip-overview-deployment {
+            background-color: #f5f3ff !important;
+            border-color: #ddd6fe !important;
+        }
 
         .dark .chip-overview-workplan {
             background-color: rgba(30, 58, 138, 0.25) !important;
@@ -388,6 +398,10 @@
         .dark .chip-overview-hours {
             background-color: rgba(2, 44, 34, 0.3) !important;
             border-color: rgba(4, 120, 87, 0.4) !important;
+        }
+        .dark .chip-overview-deployment {
+            background-color: rgba(88, 28, 135, 0.3) !important;
+            border-color: rgba(147, 51, 234, 0.45) !important;
         }
 
         /* Section 3: My Hours styling */
@@ -575,6 +589,22 @@
                     </div>
                     <span class="text-[11px] text-emerald-500">&darr;</span>
                 </button>
+
+                <button 
+                    type="button" 
+                    onclick="jumpToSection('section-ready-for-deployment')"
+                    class="compact-cmd-chip chip-overview-deployment"
+                    title="Jump to Ready for Deployment"
+                >
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-1">
+                            <x-heroicon-m-rocket-launch class="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
+                            <span class="text-[10px] uppercase font-bold text-purple-600 dark:text-purple-400 tracking-wider leading-none">Deployment</span>
+                        </div>
+                        <div class="text-sm font-extrabold text-purple-800 dark:text-purple-200 leading-tight mt-0.5">{{ count($readyForDeploymentItems) }}</div>
+                    </div>
+                    <span class="text-[11px] text-purple-500">&darr;</span>
+                </button>
             </div>
         </div>
 
@@ -724,17 +754,58 @@
 
     {{-- SECTION 1: My Recommended Work Plan --}}
     <div id="section-work-plan" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
-        <div class="flex items-center gap-3 mb-4">
-            <div class="flex items-center gap-2">
-                <span class="w-2 h-5 rounded-full bg-indigo-600 dark:bg-indigo-500 inline-block"></span>
-                <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                    1. My Recommended Work Plan
-                </h2>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-5 rounded-full bg-indigo-600 dark:bg-indigo-500 inline-block"></span>
+                    <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                        1. My Recommended Work Plan
+                    </h2>
+                </div>
+                <span class="bg-purple-100 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 font-semibold text-xs px-3 py-1 rounded-full flex items-center gap-1.5 border border-purple-200/80 dark:border-purple-800/80 shadow-2xs">
+                    <x-heroicon-m-sparkles class="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                    <span>AI prioritized for today</span>
+                </span>
             </div>
-            <span class="bg-purple-100 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 font-semibold text-xs px-3 py-1 rounded-full flex items-center gap-1.5 border border-purple-200/80 dark:border-purple-800/80 shadow-2xs">
-                <x-heroicon-m-sparkles class="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-                <span>AI prioritized for today</span>
-            </span>
+
+            {{-- Status Filter for Work Plan (TPF-47) --}}
+            <div class="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200/60 dark:border-slate-700/60 overflow-x-auto self-start sm:self-auto">
+                <button
+                    type="button"
+                    wire:click="setWorkPlanStatusFilter('all')"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'all' ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    All Statuses
+                </button>
+                <button
+                    type="button"
+                    wire:click="setWorkPlanStatusFilter('in_progress')"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'in_progress' ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    In Progress
+                </button>
+                <button
+                    type="button"
+                    wire:click="setWorkPlanStatusFilter('ready_for_dev')"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'ready_for_dev' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    Ready for Dev
+                </button>
+                <button
+                    type="button"
+                    wire:click="setWorkPlanStatusFilter('ready_for_deployment')"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'ready_for_deployment' ? 'bg-white dark:bg-slate-700 text-purple-700 dark:text-purple-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    Ready for Deployment
+                </button>
+                <button
+                    type="button"
+                    wire:click="setWorkPlanStatusFilter('review_qa')"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'review_qa' ? 'bg-white dark:bg-slate-700 text-amber-700 dark:text-amber-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    In Review
+                </button>
+            </div>
         </div>
 
         <div class="overflow-x-auto -mx-6 px-6">
@@ -745,6 +816,7 @@
                         <th class="py-2.5 px-3">Task</th>
                         <th class="py-2.5 px-3">Project</th>
                         <th class="py-2.5 px-3">Priority</th>
+                        <th class="py-2.5 px-3">Status</th>
                         <th class="py-2.5 px-3">Est. time</th>
                         <th class="py-2.5 px-3">Why this matters</th>
                         <th class="py-2.5 px-3 text-right"></th>
@@ -827,6 +899,16 @@
                                 </span>
                             </td>
 
+                            {{-- Status Badge (TPF-47) --}}
+                            <td class="py-3 px-3 align-middle">
+                                <span 
+                                    class="text-xs font-bold px-2.5 py-0.5 rounded-full border whitespace-nowrap {{ $item['status_class'] ?? '' }}"
+                                    style="background-color: {{ $item['status_style']['hex_bg'] ?? '#f1f5f9' }} !important; color: {{ $item['status_style']['hex_text'] ?? '#334155' }} !important; border-color: {{ $item['status_style']['hex_border'] ?? '#cbd5e1' }} !important;"
+                                >
+                                    {{ $item['status'] ?? 'Ready for Dev' }}
+                                </span>
+                            </td>
+
                             {{-- Est. Time --}}
                             <td class="py-3 px-3 align-middle">
                                 <span class="inline-flex items-center gap-1 text-xs font-mono font-medium text-slate-700 dark:text-slate-300 bg-slate-100/90 dark:bg-slate-800/80 px-2 py-0.5 rounded border border-slate-200/60 dark:border-slate-700/60 whitespace-nowrap">
@@ -860,7 +942,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="7" class="py-10 text-center">
+                            <td colspan="8" class="py-10 text-center">
                                 <div class="flex flex-col items-center justify-center text-slate-400">
                                     <div class="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-2">
                                         <x-heroicon-m-check class="w-5 h-5" />
@@ -872,6 +954,148 @@
                                         No active tasks currently require your attention in the work plan.
                                     </div>
                                 </div>
+                            </td>
+                        </tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {{-- SECTION: Ready for Deployment (TPF-47) --}}
+    <div id="section-ready-for-deployment" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <div class="flex items-center gap-2.5">
+                <span class="w-2 h-5 rounded-full bg-purple-600 dark:bg-purple-500 inline-block"></span>
+                <h2 class="text-base md:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2">
+                    <x-heroicon-m-rocket-launch class="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                    <span>Ready for Deployment</span>
+                </h2>
+                <span class="bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 font-bold text-xs px-2.5 py-0.5 rounded-full border border-purple-200/80 dark:border-purple-800/80 shadow-2xs">
+                    {{ count($readyForDeploymentItems) }} {{ count($readyForDeploymentItems) === 1 ? 'task' : 'tasks' }}
+                </span>
+            </div>
+
+            {{-- Scope filter: Team Tasks vs My Tasks --}}
+            <div class="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200/60 dark:border-slate-700/60 self-start sm:self-auto">
+                <button
+                    type="button"
+                    wire:click="setDeploymentScope('team')"
+                    class="px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer {{ $this->deploymentScope === 'team' ? 'bg-white dark:bg-slate-700 text-purple-700 dark:text-purple-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    Team Tasks (All)
+                </button>
+                <button
+                    type="button"
+                    wire:click="setDeploymentScope('my')"
+                    class="px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer {{ $this->deploymentScope === 'my' ? 'bg-white dark:bg-slate-700 text-purple-700 dark:text-purple-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                >
+                    My Tasks
+                </button>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto -mx-6 px-6">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                        <th class="py-2.5 px-3 w-12 font-bold text-slate-500 dark:text-slate-400">#</th>
+                        <th class="py-2.5 px-3">Task</th>
+                        <th class="py-2.5 px-3">Project</th>
+                        <th class="py-2.5 px-3">Assignee</th>
+                        <th class="py-2.5 px-3">Priority</th>
+                        <th class="py-2.5 px-3">Status</th>
+                        <th class="py-2.5 px-3">Est. Time</th>
+                        <th class="py-2.5 px-3 text-right"></th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-50 dark:divide-slate-800/60">
+                    @forelse ($readyForDeploymentItems as $item)
+                        <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
+                            {{-- Order --}}
+                            <td class="py-3 px-3 align-middle font-mono text-xs text-slate-400 font-semibold">
+                                {{ $item['order'] }}
+                            </td>
+
+                            {{-- Task Key & Title --}}
+                            <td class="py-3 px-3 align-middle">
+                                <div>
+                                    <div class="font-bold text-xs md:text-sm text-slate-900 dark:text-slate-100 leading-snug">
+                                        {{ $item['title'] }}
+                                    </div>
+                                    @if (! empty($item['key']))
+                                        <a 
+                                            href="{{ $item['jira_url'] }}" 
+                                            target="_blank" 
+                                            rel="noopener noreferrer" 
+                                            class="text-[11px] font-mono font-bold color-badge-blue px-1.5 py-0.5 rounded mt-1 inline-block transition"
+                                        >
+                                            {{ $item['key'] }}
+                                        </a>
+                                    @endif
+                                </div>
+                            </td>
+
+                            {{-- Project --}}
+                            <td class="py-3 px-3 align-middle">
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200/80 dark:border-blue-900/80 whitespace-nowrap">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    {{ $item['project'] }}
+                                </span>
+                            </td>
+
+                            {{-- Assignee --}}
+                            <td class="py-3 px-3 align-middle">
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
+                                    <x-heroicon-m-user class="w-3.5 h-3.5 text-slate-400" />
+                                    {{ $item['assignee'] }}
+                                </span>
+                            </td>
+
+                            {{-- Priority --}}
+                            <td class="py-3 px-3 align-middle">
+                                <span 
+                                    class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}"
+                                    style="background-color: {{ $item['priority_style']['hex_bg'] ?? '#f8fafc' }} !important; color: {{ $item['priority_style']['hex_text'] ?? '#475569' }} !important; border-color: {{ $item['priority_style']['hex_border'] ?? '#e2e8f0' }} !important;"
+                                >
+                                    {{ $item['priority'] }}
+                                </span>
+                            </td>
+
+                            {{-- Status Badge --}}
+                            <td class="py-3 px-3 align-middle">
+                                <span class="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full border bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800 whitespace-nowrap">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                                    Ready for Deployment
+                                </span>
+                            </td>
+
+                            {{-- Est Time --}}
+                            <td class="py-3 px-3 align-middle">
+                                <span class="inline-flex items-center gap-1 text-xs font-mono font-medium text-slate-700 dark:text-slate-300 bg-slate-100/90 dark:bg-slate-800/80 px-2 py-0.5 rounded border border-slate-200/60 dark:border-slate-700/60 whitespace-nowrap">
+                                    <x-heroicon-m-clock class="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    {{ $item['est_time'] }}
+                                </span>
+                            </td>
+
+                            {{-- Action --}}
+                            <td class="py-3 px-3 align-middle text-right">
+                                <a 
+                                    href="{{ $item['jira_url'] }}" 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    class="btn-action-primary font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-2xs hover:shadow-xs transition inline-flex items-center gap-1 whitespace-nowrap"
+                                >
+                                    <span>Open in Jira</span>
+                                    <span class="text-[10px]">&rarr;</span>
+                                </a>
+                            </td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="8" class="py-8 text-center text-slate-400 text-xs">
+                                <x-heroicon-o-check-badge class="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                                No tasks currently waiting for deployment {{ $this->deploymentScope === 'my' ? 'assigned to you' : '' }}.
                             </td>
                         </tr>
                     @endforelse

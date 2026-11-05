@@ -410,7 +410,12 @@ class JiraProvider implements ProjectManagementProvider
                 $authorAccountId = $wl['author']['accountId'] ?? null;
                 $authorEmail     = $wl['author']['emailAddress'] ?? null;
                 $authorName      = $wl['author']['displayName'] ?? null;
-                $userId          = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $authorAccountId, $authorEmail, $authorName) ?? $workItem->user_id;
+                $resolvedUserId  = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $authorAccountId, $authorEmail, $authorName);
+
+                // Preserve existing user_id if already attributed; do NOT fall back to $workItem->user_id
+                // as that falsely reattributes previous engineers' time logs when tickets are reassigned (TPF-47).
+                $existingLog = PmWorklog::where('external_worklog_id', (string) $wl['id'])->first();
+                $userId      = $resolvedUserId ?? $existingLog?->user_id;
 
                 $worklogModel = PmWorklog::updateOrCreate(
                     [

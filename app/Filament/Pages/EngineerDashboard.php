@@ -37,6 +37,8 @@ class EngineerDashboard extends Page implements HasForms
 
     public ?int $selected_user_id = null;
     public bool $showAiInsight = true;
+    public string $workPlanStatusFilter = 'all';
+    public string $deploymentScope = 'team';
 
     public function mount(): void
     {
@@ -104,6 +106,16 @@ class EngineerDashboard extends Page implements HasForms
     public function dismissAiInsight(): void
     {
         $this->showAiInsight = false;
+    }
+
+    public function setWorkPlanStatusFilter(string $status): void
+    {
+        $this->workPlanStatusFilter = $status;
+    }
+
+    public function setDeploymentScope(string $scope): void
+    {
+        $this->deploymentScope = in_array($scope, ['team', 'my'], true) ? $scope : 'team';
     }
 
     public function getLastSyncedAt(): ?Carbon
@@ -385,8 +397,21 @@ class EngineerDashboard extends Page implements HasForms
                 5 => ['bg' => 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800', 'num' => 5, 'hex_bg' => '#f5f3ff', 'hex_text' => '#6d28d9', 'hex_border' => '#ddd6fe', 'hex_bar' => '#8b5cf6'],
             ];
 
+            if ($this->workPlanStatusFilter !== 'all') {
+                $recommended = array_values(array_filter($recommended, function ($item) {
+                    $st = strtolower($item['delivery_status'] ?? '');
+                    return match ($this->workPlanStatusFilter) {
+                        'in_progress'          => str_contains($st, 'progress'),
+                        'ready_for_dev'        => str_contains($st, 'dev') || str_contains($st, 'backlog'),
+                        'ready_for_deployment' => str_contains($st, 'deploy'),
+                        'review_qa'            => str_contains($st, 'review') || str_contains($st, 'qa'),
+                        default                => true,
+                    };
+                }));
+            }
+
             $mapped = [];
-            foreach (array_slice($recommended, 0, 5) as $index => $item) {
+            foreach (array_slice($recommended, 0, 8) as $index => $item) {
                 $pos = $index + 1;
                 $priority = $item['priority'] ?: 'Medium';
                 $priorityStyle = match (strtolower($priority)) {
@@ -423,6 +448,7 @@ class EngineerDashboard extends Page implements HasForms
                 }
 
                 $estTime = ($item['estimated_hours'] ?? 0) > 0 ? "{$item['estimated_hours']}h" : '2h';
+                $statusStyle = $this->getDeliveryStatusStyle($item['delivery_status'] ?? 'Ready for Dev');
 
                 $mapped[] = [
                     'order'          => $pos,
@@ -434,9 +460,127 @@ class EngineerDashboard extends Page implements HasForms
                     'priority'       => ucfirst(strtolower($priority)),
                     'priority_class' => $priorityStyle['class'],
                     'priority_style' => $priorityStyle,
+                    'status'         => $statusStyle['label'],
+                    'status_class'   => $statusStyle['class'],
+                    'status_style'   => $statusStyle,
                     'est_time'       => $estTime,
                     'why_matters'    => $item['reasoning'] ?? 'Keep project aligned for upcoming milestone.',
                     'jira_url'       => $item['jira_url'] ?: (! empty($item['key']) ? 'https://technopath.atlassian.net/browse/' . $item['key'] : null),
+                ];
+            }
+
+            return $mapped;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    public function getDeliveryStatusStyle(?string $status): array
+    {
+        $statusKey = strtolower(trim($status ?? ''));
+        return match (true) {
+            str_contains($statusKey, 'deploy') => [
+                'label'      => 'Ready for Deployment',
+                'class'      => 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800',
+                'hex_bg'     => '#f5f3ff',
+                'hex_text'   => '#6d28d9',
+                'hex_border' => '#ddd6fe',
+            ],
+            str_contains($statusKey, 'progress') || (str_contains($statusKey, 'dev') && str_contains($statusKey, 'in')) => [
+                'label'      => 'In Progress',
+                'class'      => 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800',
+                'hex_bg'     => '#eff6ff',
+                'hex_text'   => '#1d4ed8',
+                'hex_border' => '#bfdbfe',
+            ],
+            str_contains($statusKey, 'qa') || str_contains($statusKey, 'review') => [
+                'label'      => 'In Review',
+                'class'      => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+                'hex_bg'     => '#fef3c7',
+                'hex_text'   => '#b45309',
+                'hex_border' => '#fde68a',
+            ],
+            str_contains($statusKey, 'block') => [
+                'label'      => 'Blocked',
+                'class'      => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
+                'hex_bg'     => '#fff1f2',
+                'hex_text'   => '#be123c',
+                'hex_border' => '#fecdd3',
+            ],
+            str_contains($statusKey, 'complete') || str_contains($statusKey, 'done') => [
+                'label'      => 'Completed',
+                'class'      => 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+                'hex_bg'     => '#ecfdf5',
+                'hex_text'   => '#047857',
+                'hex_border' => '#a7f3d0',
+            ],
+            default => [
+                'label'      => ! empty($status) ? $status : 'Ready for Dev',
+                'class'      => 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+                'hex_bg'     => '#f1f5f9',
+                'hex_text'   => '#334155',
+                'hex_border' => '#cbd5e1',
+            ],
+        };
+    }
+
+    public function getReadyForDeploymentItems(?User $targetUser): array
+    {
+        try {
+            $query = PmWorkItem::with(['client', 'user', 'project'])
+                ->forCustomerSpacesWithJiraCode()
+                ->where('normalized_delivery_status', 'ready_for_deployment');
+
+            if ($this->deploymentScope === 'my' && $targetUser) {
+                $query->where('user_id', $targetUser->id);
+            }
+
+            $items = $query->orderBy('target_due_date')
+                ->orderBy('created_at', 'desc')
+                ->take(25)
+                ->get();
+
+            $mapped = [];
+            foreach ($items as $index => $item) {
+                $pos = $index + 1;
+                $priority = $item->priority ?: 'Medium';
+                $priorityStyle = match (strtolower($priority)) {
+                    'highest', 'critical', 'high' => [
+                        'class'      => 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
+                        'hex_bg'     => '#fff1f2',
+                        'hex_text'   => '#be123c',
+                        'hex_border' => '#fecdd3',
+                    ],
+                    'medium' => [
+                        'class'      => 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+                        'hex_bg'     => '#fef3c7',
+                        'hex_text'   => '#b45309',
+                        'hex_border' => '#fde68a',
+                    ],
+                    default => [
+                        'class'      => 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+                        'hex_bg'     => '#ecfdf5',
+                        'hex_text'   => '#047857',
+                        'hex_border' => '#a7f3d0',
+                    ],
+                };
+
+                $estTime = $item->estimated_hours > 0 ? "{$item->estimated_hours}h" : '-';
+                $timeSpent = $item->time_spent_hours > 0 ? "{$item->time_spent_hours}h" : '-';
+
+                $mapped[] = [
+                    'order'          => $pos,
+                    'key'            => $item->external_item_key,
+                    'title'          => $item->summary,
+                    'project'        => $item->client?->name ?? 'Internal',
+                    'assignee'       => $item->assignee_name ?? $item->user?->name ?? 'Unassigned',
+                    'priority'       => ucfirst(strtolower($priority)),
+                    'priority_class' => $priorityStyle['class'],
+                    'priority_style' => $priorityStyle,
+                    'est_time'       => $estTime,
+                    'time_spent'     => $timeSpent,
+                    'due_date'       => $item->target_due_date?->format('M j, Y'),
+                    'jira_url'       => $item->jira_url ?: 'https://technopath.atlassian.net/browse/' . $item->external_item_key,
                 ];
             }
 
