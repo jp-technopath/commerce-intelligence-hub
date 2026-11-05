@@ -173,7 +173,9 @@ class BusinessDashboard extends Page
         $client = $this->getSelectedClientProperty();
         if (! $client) return ['total' => 0, 'critical' => 0, 'open' => 0, 'resolved' => 0, 'recent' => collect()];
 
-        $allFindings  = Finding::where('client_id', $client->id)->get();
+        $allFindings  = Finding::where('client_id', $client->id)
+            ->customerVisible()
+            ->get();
 
         /** @var \App\Models\User|null $user */
         $user = auth()->user();

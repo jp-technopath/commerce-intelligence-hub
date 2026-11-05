@@ -5,6 +5,8 @@ namespace App\Models;
 use App\Enums\FindingCategory;
 use App\Enums\FindingSeverity;
 use App\Enums\FindingStatus;
+use App\Services\VisibilityService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -140,6 +142,81 @@ class Finding extends Model
             'dismissed_at'     => now(),
             'dismissed_reason' => $reason,
         ]);
+    }
+
+    public function scopeCustomerVisible(Builder $query): Builder
+    {
+        return $query->where('is_customer_visible', true)
+            ->where(function (Builder $q) {
+                $q->whereNull('visibility_classification')
+                  ->orWhere('visibility_classification', '!=', VisibilityService::CLASSIFICATION_INTERNAL);
+            })
+            ->whereNotIn('finding_type', ['task_overdue', 'qa_rework', 'missing_estimates', 'blocked_items'])
+            ->where(function (Builder $q) {
+                $q->whereNull('finding_category')
+                  ->orWhereNotIn('finding_category', [
+                      FindingCategory::WorkPriority->value,
+                      FindingCategory::WorkflowDelay->value,
+                      FindingCategory::ResponseTime->value,
+                      FindingCategory::ProjectRisk->value,
+                      FindingCategory::TimeTracking->value,
+                      FindingCategory::MeetingPreparation->value,
+                      FindingCategory::MeetingFollowUp->value,
+                  ]);
+            });
+    }
+
+    public function scopeInternal(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q) {
+            $q->where('is_customer_visible', false)
+              ->orWhere('visibility_classification', VisibilityService::CLASSIFICATION_INTERNAL)
+              ->orWhereIn('finding_type', ['task_overdue', 'qa_rework', 'missing_estimates', 'blocked_items'])
+              ->orWhereIn('finding_category', [
+                  FindingCategory::WorkPriority->value,
+                  FindingCategory::WorkflowDelay->value,
+                  FindingCategory::ResponseTime->value,
+                  FindingCategory::ProjectRisk->value,
+                  FindingCategory::TimeTracking->value,
+                  FindingCategory::MeetingPreparation->value,
+                  FindingCategory::MeetingFollowUp->value,
+              ]);
+        });
+    }
+
+    public function isCustomerVisible(): bool
+    {
+        if (! $this->is_customer_visible) {
+            return false;
+        }
+
+        if ($this->visibility_classification === VisibilityService::CLASSIFICATION_INTERNAL) {
+            return false;
+        }
+
+        if (in_array($this->finding_type, ['task_overdue', 'qa_rework', 'missing_estimates', 'blocked_items'], true)) {
+            return false;
+        }
+
+        $category = $this->finding_category instanceof FindingCategory ? $this->finding_category->value : (string) $this->finding_category;
+        if (in_array($category, [
+            FindingCategory::WorkPriority->value,
+            FindingCategory::WorkflowDelay->value,
+            FindingCategory::ResponseTime->value,
+            FindingCategory::ProjectRisk->value,
+            FindingCategory::TimeTracking->value,
+            FindingCategory::MeetingPreparation->value,
+            FindingCategory::MeetingFollowUp->value,
+        ], true)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public function isInternal(): bool
+    {
+        return ! $this->isCustomerVisible();
     }
 
     public function getJiraUrlAttribute(): ?string

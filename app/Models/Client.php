@@ -158,6 +158,16 @@ class Client extends Model
         return $this->hasMany(Finding::class);
     }
 
+    public function customerVisibleFindings(): HasMany
+    {
+        return $this->hasMany(Finding::class)->customerVisible();
+    }
+
+    public function internalFindings(): HasMany
+    {
+        return $this->hasMany(Finding::class)->internal();
+    }
+
     public function deployments(): HasMany
     {
         return $this->hasMany(Deployment::class);

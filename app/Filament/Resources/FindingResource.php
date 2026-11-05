@@ -187,6 +187,14 @@ class FindingResource extends Resource
                     ))
                     ->multiple()
                     ->default([FindingStatus::New->value, FindingStatus::Investigating->value]),
+
+                Tables\Filters\SelectFilter::make('visibility_classification')
+                    ->label('Visibility')
+                    ->options([
+                        'customer_visible' => 'Customer Visible',
+                        'internal'         => 'Internal Only',
+                    ])
+                    ->visible(fn () => ! auth()->user()?->isClientOnly()),
             ])
             ->actions([
                 Tables\Actions\Action::make('mark_investigating')
@@ -378,10 +386,11 @@ class FindingResource extends Resource
         // Filter by visibility classification if customer role
         if ($currentUser->hasRole([\App\Models\Role::ROLE_CUSTOMER_ADMIN, \App\Models\Role::ROLE_CLIENT_USER])
             && ! $currentUser->hasRole([\App\Models\Role::ROLE_PRODUCT_OWNER, \App\Models\Role::ROLE_ANALYST, \App\Models\Role::ROLE_ENGINEER])) {
-            $query->whereNotIn('visibility_classification', [
-                \App\Services\VisibilityService::CLASSIFICATION_RESTRICTED_TECHNICAL,
-                \App\Services\VisibilityService::CLASSIFICATION_RESTRICTED_FINANCIAL,
-            ]);
+            $query->customerVisible()
+                ->whereNotIn('visibility_classification', [
+                    \App\Services\VisibilityService::CLASSIFICATION_RESTRICTED_TECHNICAL,
+                    \App\Services\VisibilityService::CLASSIFICATION_RESTRICTED_FINANCIAL,
+                ]);
         }
 
         return $query;
