@@ -18,8 +18,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Mockery;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Tests\TestCase;
 
+#[RunTestsInSeparateProcesses]
 class GenerateAIAnalysisJobTest extends TestCase
 {
     use RefreshDatabase;

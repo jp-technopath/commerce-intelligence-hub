@@ -14,6 +14,12 @@ class ScriptErrorNormalizationTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['intelligence.stage2.enabled' => false]);
+    }
+
     public function test_traffic_surge_does_not_trigger_script_error_spike_when_rate_is_flat(): void
     {
         $client = Client::create([

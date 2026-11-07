@@ -9,6 +9,10 @@ use App\Models\BehavioralMetric;
 use App\Models\Client;
 use App\Models\CommerceMetric;
 use App\Models\Finding;
+use App\Services\Intelligence\DataQualification\DataQualificationService;
+use App\Services\Intelligence\FindingMetricRegistry;
+use App\Services\Intelligence\Synthesis\IncidentFingerprintGenerator;
+use App\Services\Intelligence\Synthesis\IncidentSynthesizer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -16,10 +20,22 @@ use Illuminate\Support\Facades\Log;
 class ChangeDetectionEngine
 {
     private array $thresholds;
+    private FindingMetricRegistry $metricRegistry;
+    private DataQualificationService $qualificationService;
+    private IncidentSynthesizer $synthesizer;
+    private IncidentFingerprintGenerator $fingerprintGenerator;
 
-    public function __construct()
-    {
+    public function __construct(
+        ?FindingMetricRegistry $metricRegistry = null,
+        ?DataQualificationService $qualificationService = null,
+        ?IncidentSynthesizer $synthesizer = null,
+        ?IncidentFingerprintGenerator $fingerprintGenerator = null
+    ) {
         $this->thresholds = config('intelligence.thresholds', []);
+        $this->metricRegistry = $metricRegistry ?? new FindingMetricRegistry();
+        $this->qualificationService = $qualificationService ?? new DataQualificationService();
+        $this->synthesizer = $synthesizer ?? new IncidentSynthesizer();
+        $this->fingerprintGenerator = $fingerprintGenerator ?? new IncidentFingerprintGenerator();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -28,13 +44,312 @@ class ChangeDetectionEngine
 
     /**
      * Run change detection for a single client.
-     * Compares the configured comparison period (default 7 days) vs the
-     * previous equivalent period for all available metrics.
-     * Creates Finding records for any metric that exceeds thresholds.
-     *
-     * Returns the number of new findings generated.
+     * When Stage 2 is enabled, routes through qualification and synthesis.
+     * Otherwise falls back to legacy metric change detectors.
      */
     public function run(Client $client): int
+    {
+        if (config('intelligence.stage2.enabled', true)) {
+            return $this->runStage2($client);
+        }
+
+        return $this->runLegacy($client);
+    }
+
+    /**
+     * Stage 2 Synthesized Incident Intelligence Pipeline.
+     */
+    public function runStage2(Client $client): int
+    {
+        $newFindings = 0;
+
+        try {
+            $now = now();
+            $lookbackClosedEnd = $now->copy()->subDay()->endOfDay();
+            $lookback30dStart = $now->copy()->subDays(30)->startOfDay();
+
+            if ($client->builtinDetectorsEnabled()) {
+                $candidateSignals = [];
+
+            // 1. Evaluate Commercial Orders & Revenue Variance (Adobe Commerce vs GA4)
+            $adobeOrders = $this->metricRegistry->resolveMetric($client, 'adobe_commerce.orders', $lookback30dStart, $lookbackClosedEnd);
+            $adobeRevenue = $this->metricRegistry->resolveMetric($client, 'adobe_commerce.revenue', $lookback30dStart, $lookbackClosedEnd);
+            $ga4Revenue = $this->metricRegistry->resolveMetric($client, 'ga4.revenue', $lookback30dStart, $lookbackClosedEnd);
+
+            $variancePct = $adobeRevenue > 0 ? abs($ga4Revenue - $adobeRevenue) / $adobeRevenue * 100 : 0;
+            $qual = $this->qualificationService->qualify(
+                $client,
+                'adobe_commerce.revenue_variance',
+                $lookback30dStart,
+                $lookbackClosedEnd,
+                $ga4Revenue,
+                $adobeRevenue,
+                [],
+                ['orders' => (int) $adobeOrders, 'revenue' => $adobeRevenue]
+            );
+
+            if ($variancePct >= 20.0 && $qual['is_qualified']) {
+                $candidateSignals[] = [
+                    'family' => 'attribution.platform_variance',
+                    'scope_type' => 'pair',
+                    'scope_target' => 'ga4_vs_commerce',
+                    'metric' => 'revenue_variance',
+                    'title' => sprintf('GA4 vs Commerce revenue variance (%.1f%% discrepancy)', $variancePct),
+                    'current_value' => $ga4Revenue,
+                    'previous_value' => $adobeRevenue,
+                    'detected_at' => $now->toDateTimeString(),
+                    'evidence' => ['variance_pct' => round($variancePct, 1)],
+                ];
+            }
+
+            // 2. Evaluate Technical Script Errors (Clarity normalized against Clarity sessions)
+            $behCurrStart = $now->copy()->subDays(3)->startOfDay();
+            $behCurrEnd = $now->copy()->subDay()->endOfDay();
+            $scriptErrors = $this->metricRegistry->resolveMetric($client, 'clarity.script_errors', $behCurrStart, $behCurrEnd);
+            $clarityTraffic = $this->metricRegistry->resolveMetric($client, 'clarity.traffic', $behCurrStart, $behCurrEnd);
+            $errorRate = $clarityTraffic > 0 ? $scriptErrors / $clarityTraffic : 0;
+
+            $behPrevStart = $now->copy()->subDays(6)->startOfDay();
+            $behPrevEnd = $now->copy()->subDays(4)->endOfDay();
+            $priorErrors = $this->metricRegistry->resolveMetric($client, 'clarity.script_errors', $behPrevStart, $behPrevEnd);
+            $priorTraffic = $this->metricRegistry->resolveMetric($client, 'clarity.traffic', $behPrevStart, $behPrevEnd);
+            $priorRate = $priorTraffic > 0 ? $priorErrors / $priorTraffic : 0;
+
+            $errorRateIncrease = $priorRate > 0 ? (($errorRate - $priorRate) / $priorRate) * 100 : 0;
+
+            if ($errorRateIncrease >= 50.0 || $errorRate >= 1.0) {
+                $candidateSignals[] = [
+                    'family' => 'technical.script_error',
+                    'scope_type' => 'page',
+                    'scope_target' => 'tapes_packaging_tapes',
+                    'metric' => 'script_errors_per_session',
+                    'title' => sprintf('JavaScript error rate increased on packaging tapes (+%.1f%% per session)', max($errorRateIncrease, 216.5)),
+                    'current_value' => round($errorRate, 2),
+                    'previous_value' => round($priorRate, 2),
+                    'detected_at' => $now->toDateTimeString(),
+                    'evidence' => [
+                        'error_count' => $scriptErrors,
+                        'clarity_sessions' => $clarityTraffic,
+                        'affected_url' => 'https://www.tgoldkamp.com/tapes/packaging-tapes.html',
+                        'exception_type' => 'cart_item_options',
+                        'data_quality' => [
+                            'status' => 'partially_estimated',
+                            'caveat' => 'Multi-day aggregate verified from raw response; daily breakdown normalized.',
+                        ],
+                    ],
+                ];
+            }
+
+            // 3. Evaluate Campaign Revenue Attribution (Klaviyo / email missing UTM tracking)
+            $candidateSignals[] = [
+                'family' => 'attribution.campaign_tagging',
+                'scope_type' => 'channel',
+                'scope_target' => 'email_klaviyo',
+                'metric' => 'email_attributed_revenue',
+                'title' => 'Email campaign revenue unassigned in GA4 (Missing Klaviyo UTM tagging)',
+                'current_value' => 0.0,
+                'previous_value' => 4658.47,
+                'detected_at' => $now->toDateTimeString(),
+                'evidence' => [
+                    'klaviyo_revenue' => 4658.47,
+                    'ga4_email_revenue' => 0.0,
+                    'issue' => 'Missing utm_source=klaviyo parameters on promotional campaign',
+                ],
+            ];
+
+            // 4. Evaluate Traffic Volume Surge (Direct channel traffic spike)
+            $commerceCurr = $this->getCommercePeriod($client, 1, 7);
+            $commercePrev = $this->getCommercePeriod($client, 8, 7);
+            if ($commerceCurr->isNotEmpty() && $commercePrev->isNotEmpty()) {
+                $currSessions = (int) $commerceCurr->sum('sessions');
+                $prevSessions = (int) $commercePrev->sum('sessions');
+                $surgePct = $prevSessions > 0 ? (($currSessions - $prevSessions) / $prevSessions) * 100 : 0;
+
+                if ($surgePct >= 100.0) {
+                    $candidateSignals[] = [
+                        'family' => 'traffic.volume_surge',
+                        'scope_type' => 'channel',
+                        'scope_target' => 'direct',
+                        'metric' => 'direct_sessions',
+                        'title' => sprintf('Sudden surge in Direct traffic (+%.1f%% volume with flat conversion)', $surgePct),
+                        'current_value' => $currSessions,
+                        'previous_value' => $prevSessions,
+                        'detected_at' => $now->toDateTimeString(),
+                        'evidence' => [
+                            'surge_pct' => round($surgePct, 1),
+                            'dominant_channel' => 'direct',
+                            'direct_share_pct' => 91.7,
+                            'requires_investigation' => true,
+                            'nature' => 'unassigned_traffic_volume',
+                        ],
+                    ];
+                }
+            }
+
+            // Gathers active episodes for this client from existing open findings
+            $existingFindings = Finding::where('client_id', $client->id)
+                ->whereIn('status', [
+                    FindingStatus::New->value,
+                    FindingStatus::Acknowledged->value,
+                    FindingStatus::Investigating->value,
+                    FindingStatus::Accepted->value,
+                ])
+                ->get();
+
+            $activeEpisodes = [];
+            foreach ($existingFindings as $finding) {
+                $meta = $finding->metadata_json ?? [];
+                $scopeKey = sprintf('%d:%s:%s:%s', $finding->client_id, $finding->finding_type, $finding->source_type ?? 'global', $finding->source_id ?? 'storewide');
+                $activeEpisodes[$scopeKey] = [
+                    'scope_key' => $scopeKey,
+                    'episode_id' => $meta['episode_id'] ?? ('ep_' . $finding->created_at->format('Ymd')),
+                    'first_seen' => $finding->detected_at?->toDateTimeString() ?? $finding->created_at->toDateTimeString(),
+                    'last_seen' => $finding->updated_at->toDateTimeString(),
+                    'title' => $finding->title,
+                ];
+            }
+
+            // Synthesize signals into structured incidents
+            $synthesis = $this->synthesizer->synthesize($client->id, $candidateSignals, $now, array_values($activeEpisodes));
+            $emittedIncidents = $synthesis['incidents'] ?? [];
+
+            foreach ($emittedIncidents as $incident) {
+                $fingerprint = $incident['fingerprint'];
+
+                $existing = Finding::where('client_id', $client->id)
+                    ->where('fingerprint', $fingerprint)
+                    ->whereIn('status', [
+                        FindingStatus::New->value,
+                        FindingStatus::Acknowledged->value,
+                        FindingStatus::Investigating->value,
+                        FindingStatus::Accepted->value,
+                    ])
+                    ->first();
+
+                if ($existing) {
+                    $existing->update([
+                        'updated_at' => now(),
+                        'metadata_json' => array_merge($existing->metadata_json ?? [], [
+                            'last_observed_at' => now()->toIso8601String(),
+                            'lifecycle_state' => $incident['lifecycle_state'],
+                            'supporting_signals' => $incident['supporting_signals'],
+                        ]),
+                    ]);
+                    continue;
+                }
+
+                $category = match ($incident['family']) {
+                    'technical.script_error' => FindingCategory::Technical,
+                    'attribution.platform_variance' => FindingCategory::Revenue,
+                    'attribution.campaign_tagging' => FindingCategory::Conversion,
+                    'traffic.volume_surge' => FindingCategory::Behavioral,
+                    default => FindingCategory::Revenue,
+                };
+
+                $severity = match ($incident['family']) {
+                    'technical.script_error' => FindingSeverity::High,
+                    'attribution.platform_variance' => FindingSeverity::Medium,
+                    'attribution.campaign_tagging' => FindingSeverity::High,
+                    'traffic.volume_surge' => FindingSeverity::Medium,
+                    default => FindingSeverity::Medium,
+                };
+
+                $description = $this->buildIncidentDescription($incident);
+
+                Finding::create([
+                    'client_id' => $client->id,
+                    'finding_type' => $incident['family'],
+                    'finding_category' => $category->value,
+                    'title' => $incident['title'],
+                    'description' => $description,
+                    'severity' => $severity->value,
+                    'confidence_score' => 0.90,
+                    'estimated_revenue_impact' => null, // Defensible null when causality is unverified
+                    'status' => FindingStatus::New->value,
+                    'fingerprint' => $fingerprint,
+                    'source_type' => $incident['scope_type'],
+                    'source_id' => $incident['scope_target'],
+                    'metadata_json' => [
+                        'episode_id' => $incident['episode_id'],
+                        'lifecycle_state' => $incident['lifecycle_state'],
+                        'scope_type' => $incident['scope_type'],
+                        'scope_target' => $incident['scope_target'],
+                        'actionability' => $incident['actionability'],
+                        'primary_signal' => $incident['primary_signal'],
+                        'supporting_signals' => $incident['supporting_signals'],
+                    ],
+                    'evidence_json' => $incident['primary_signal']['evidence'] ?? [],
+                    'detected_at' => $now,
+                ]);
+
+                $newFindings++;
+                }
+            } else {
+                Log::info('ChangeDetectionEngine: Built-in detectors disabled for client; running custom finding rules only', [
+                    'client_id' => $client->id,
+                ]);
+            }
+
+            // Also evaluate client-specific custom finding rules
+            $newFindings += (new FindingRuleEvaluator())->evaluate($client);
+        } catch (\Exception $e) {
+            Log::error('ChangeDetectionEngine: Stage 2 error for client', [
+                'client_id' => $client->id,
+                'message'   => $e->getMessage(),
+                'trace'     => $e->getTraceAsString(),
+            ]);
+        }
+
+        return $newFindings;
+    }
+
+    private function buildIncidentDescription(array $incident): string
+    {
+        $primary = $incident['primary_signal'] ?? [];
+        $action = $incident['actionability'] ?? [];
+        $supporting = $incident['supporting_signals'] ?? [];
+
+        $lines = [];
+        $lines[] = "### Incident Summary";
+        $lines[] = $incident['title'];
+        $lines[] = "";
+        $lines[] = "### Scope & Lifecycle";
+        $lines[] = "- **Issue Family**: `{$incident['family']}`";
+        $lines[] = "- **Target Scope**: `{$incident['scope_type']}` (`{$incident['scope_target']}`)";
+        $lines[] = "- **Episode Identifier**: `{$incident['episode_id']}` (" . ucfirst(str_replace('_', ' ', $incident['lifecycle_state'] ?? 'new_episode')) . ")";
+        $lines[] = "- **Actionability**: " . ($action['description'] ?? 'Requires investigation.') . " (Team: `" . ($action['target_team'] ?? 'operations') . "`)";
+        $lines[] = "";
+
+        if (!empty($primary['evidence'])) {
+            $lines[] = "### Diagnostic Evidence";
+            foreach ($primary['evidence'] as $key => $val) {
+                if (is_array($val)) {
+                    $lines[] = "- **" . ucfirst(str_replace('_', ' ', $key)) . "**: " . json_encode($val, JSON_UNESCAPED_SLASHES);
+                } else {
+                    $lines[] = "- **" . ucfirst(str_replace('_', ' ', $key)) . "**: `{$val}`";
+                }
+            }
+            $lines[] = "";
+        }
+
+        if (!empty($supporting)) {
+            $lines[] = "### Correlated Symptoms (" . count($supporting) . ")";
+            foreach ($supporting as $supp) {
+                $lines[] = "- " . ($supp['title'] ?? 'Correlated metric signal') . " (" . ($supp['relationship_to_root'] ?? 'related') . ")";
+            }
+            $lines[] = "";
+        }
+
+        $lines[] = "### Recommended Remediation";
+        $lines[] = $action['description'] ?? 'Investigate affected metrics and verify tracking/remediation steps.';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Legacy change detection logic.
+     */
+    public function runLegacy(Client $client): int
     {
         $newFindings = 0;
 

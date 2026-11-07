@@ -163,6 +163,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Stage 2 Findings Engine Live Activation
+    |--------------------------------------------------------------------------
+    | When enabled, ChangeDetectionEngine routes candidate signals through
+    | DataQualificationService and IncidentSynthesizer to emit structured,
+    | qualified, deduplicated incidents into the findings table.
+    */
+    'stage2' => [
+        'enabled' => env('STAGE2_FINDINGS_ENGINE_ENABLED', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Stage 2 Shadow Mode Live Parallel Evaluation Configuration
     |--------------------------------------------------------------------------
     | Parallel evaluation configuration to observe Stage 2 engine alongside
@@ -174,7 +186,7 @@ return [
     | guarantees the business day has fully closed and integration syncs have completed.
     */
     'shadow_mode' => [
-        'enabled'          => env('STAGE2_SHADOW_MODE_ENABLED', true),
+        'enabled'          => env('STAGE2_SHADOW_MODE_ENABLED', false),
         'clients'          => [5], // Goldkamp
         'observation_days' => 14,
         'schedule_time'    => env('STAGE2_SHADOW_RUN_TIME', '06:00'),
@@ -182,3 +194,4 @@ return [
     ],
 
 ];
+
