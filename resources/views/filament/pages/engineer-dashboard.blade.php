@@ -26,7 +26,7 @@
 
         <div class="flex items-center flex-wrap gap-2.5">
             {{-- Last Synced Pill with Refresh Button --}}
-            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-3 pr-1.5 py-1 shadow-2xs flex items-center gap-2">
+            <div class="header-widget-card rounded-lg pl-3 pr-1.5 py-1 flex items-center gap-2">
                 <div class="flex items-center gap-1.5" title="{{ $lastSyncedAt ? 'Last synced: ' . $lastSyncedAt->format('M j, Y g:i A') : 'No sync recorded yet' }}">
                     @if ($lastSyncedAt)
                         <span class="relative flex h-2 w-2">
@@ -36,16 +36,16 @@
                     @else
                         <span class="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></span>
                     @endif
-                    <span class="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                    <span class="text-xs font-medium header-widget-text whitespace-nowrap">
                         Synced {{ $lastSyncedAt ? $lastSyncedAt->diffForHumans() : 'Never' }}
                     </span>
                 </div>
-                <div class="h-3.5 w-px bg-slate-200 dark:bg-slate-700"></div>
+                <div class="h-3.5 w-px header-widget-divider"></div>
                 <button
                     type="button"
                     wire:click="refreshDashboardData"
                     wire:loading.attr="disabled"
-                    class="text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-slate-700 font-semibold text-xs flex items-center gap-1 px-2 py-0.5 rounded transition cursor-pointer disabled:opacity-50"
+                    class="header-sync-btn disabled:opacity-50"
                     title="Refresh data from Jira & Calendar"
                 >
                     <x-heroicon-m-arrow-path class="w-3.5 h-3.5 shrink-0" wire:loading.class="animate-spin" wire:target="refreshDashboardData" />
@@ -55,9 +55,9 @@
             </div>
 
             {{-- Current Date Display --}}
-            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 shadow-2xs flex items-center gap-1.5" title="Today's Date">
+            <div class="header-widget-card rounded-lg px-3 py-1.5 flex items-center gap-1.5" title="Today's Date">
                 <x-heroicon-m-calendar-days class="w-3.5 h-3.5 text-blue-500 dark:text-blue-400 shrink-0" />
-                <span class="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <span class="text-xs font-semibold header-date-text whitespace-nowrap">
                     {{ now()->format('D, M j, Y') }}
                 </span>
             </div>
@@ -70,14 +70,14 @@
             >
                 <div 
                     @click="open = !open"
-                    class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 rounded-xl px-2.5 py-1.5 shadow-xs flex items-center gap-2.5 cursor-pointer transition select-none"
+                    class="header-user-card rounded-xl px-2.5 py-1.5 flex items-center gap-2.5 cursor-pointer select-none"
                     title="Switch engineer view"
                 >
-                    <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-indigo-200 dark:border-indigo-800 bg-gradient-to-tr from-indigo-500 via-indigo-600 to-purple-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
+                    <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-indigo-200 dark:border-indigo-700 bg-gradient-to-tr from-indigo-500 via-indigo-600 to-purple-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
                         {{ substr($targetUser?->name ?? 'Alex Chen', 0, 2) }}
                     </div>
                     <div class="text-left pr-1">
-                        <div class="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight truncate max-w-[120px]">
+                        <div class="text-xs font-bold header-user-name leading-tight truncate max-w-[120px]">
                             {{ $targetUser?->name ?? 'Alex Chen' }}
                         </div>
                         <div class="text-[10px] text-slate-400 font-medium leading-tight">
@@ -97,9 +97,9 @@
                     x-transition:leave="transition ease-in duration-75"
                     x-transition:leave-start="transform opacity-100 scale-100"
                     x-transition:leave-end="transform opacity-0 scale-95"
-                    class="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-2 z-50 text-xs"
+                    class="absolute right-0 mt-2 w-64 header-user-dropdown rounded-xl py-2 z-50 text-xs"
                 >
-                    <div class="px-3 py-1.5 border-b border-slate-100 dark:border-slate-700/60 font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
+                    <div class="px-3 py-1.5 header-user-dropdown-title font-semibold uppercase tracking-wider text-[10px]">
                         Switch Team Member
                     </div>
                     <div class="max-h-56 overflow-y-auto py-1">
@@ -108,23 +108,23 @@
                                 type="button"
                                 wire:click="selectEngineer({{ $uId }})"
                                 @click="open = false"
-                                class="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center justify-between text-slate-700 dark:text-slate-200 {{ $targetUser?->id == $uId ? 'font-bold bg-primary-50/50 dark:bg-primary-950/40 text-primary-600' : '' }}"
+                                class="w-full text-left px-3 py-2 flex items-center justify-between header-user-item {{ $targetUser?->id == $uId ? 'header-user-item-active' : '' }}"
                             >
                                 <span class="truncate">{{ $uName }}</span>
                                 @if ($targetUser?->id == $uId)
-                                    <x-heroicon-m-check class="w-4 h-4 text-primary-600" />
+                                    <x-heroicon-m-check class="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                                 @endif
                             </button>
                         @endforeach
                     </div>
 
                     @if ($this->selected_user_id && $this->selected_user_id !== auth()->id())
-                        <div class="p-2 border-t border-slate-100 dark:border-slate-700">
+                        <div class="p-2 border-t border-slate-100 dark:border-slate-700/80">
                             <button
                                 type="button"
                                 wire:click="resetToMe"
                                 @click="open = false"
-                                class="w-full px-3 py-1.5 text-center text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 rounded-lg transition"
+                                class="w-full px-3 py-1.5 text-center text-xs font-semibold header-user-reset-btn rounded-lg transition"
                             >
                                 Reset to My View
                             </button>
@@ -576,6 +576,153 @@
 
         .filter-btn-text-amber { color: #b45309 !important; }
         .dark .filter-btn-text-amber { color: #fcd34d !important; }
+
+        /* Top Header Widgets (Sync Pill, Date Pill, Engineer Switcher) */
+        .header-widget-card {
+            background-color: #ffffff;
+            border: 1px solid rgba(226, 232, 240, 0.9);
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+            color: #475569;
+            transition: all 0.15s ease;
+        }
+        .dark .header-widget-card {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.25) !important;
+            color: #cbd5e1 !important;
+        }
+
+        .header-widget-text {
+            color: #475569;
+        }
+        .dark .header-widget-text {
+            color: #cbd5e1 !important;
+        }
+
+        .header-widget-divider {
+            background-color: #e2e8f0;
+        }
+        .dark .header-widget-divider {
+            background-color: #334155 !important;
+        }
+
+        .header-sync-btn {
+            color: #2563eb !important;
+            background-color: transparent !important;
+            font-weight: 600;
+            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.15s ease;
+        }
+        .header-sync-btn:hover {
+            color: #1d4ed8 !important;
+            background-color: #eff6ff !important;
+        }
+        .dark .header-sync-btn {
+            color: #60a5fa !important;
+            background-color: transparent !important;
+        }
+        .dark .header-sync-btn:hover {
+            color: #93c5fd !important;
+            background-color: rgba(51, 65, 85, 0.7) !important;
+        }
+
+        .header-date-text {
+            color: #1e293b;
+        }
+        .dark .header-date-text {
+            color: #f1f5f9 !important;
+        }
+
+        .header-user-card {
+            background-color: #ffffff;
+            border: 1px solid rgba(226, 232, 240, 0.9);
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+            transition: all 0.15s ease;
+        }
+        .header-user-card:hover {
+            border-color: #cbd5e1;
+        }
+        .dark .header-user-card {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.25) !important;
+        }
+        .dark .header-user-card:hover {
+            border-color: #475569 !important;
+        }
+
+        .header-user-name {
+            color: #0f172a;
+        }
+        .dark .header-user-name {
+            color: #f8fafc !important;
+        }
+
+        .header-user-dropdown {
+            background-color: #ffffff;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .dark .header-user-dropdown {
+            background-color: #1e293b !important;
+            border-color: #334155 !important;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5) !important;
+        }
+
+        .header-user-dropdown-title {
+            color: #64748b;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .dark .header-user-dropdown-title {
+            color: #94a3b8 !important;
+            border-bottom: 1px solid #334155 !important;
+        }
+
+        .header-user-item {
+            color: #334155;
+            transition: background-color 0.1s ease;
+        }
+        .header-user-item:hover {
+            background-color: #f8fafc;
+        }
+        .dark .header-user-item {
+            color: #e2e8f0 !important;
+        }
+        .dark .header-user-item:hover {
+            background-color: #334155 !important;
+        }
+
+        .header-user-item-active {
+            background-color: #eef2ff !important;
+            color: #4338ca !important;
+            font-weight: 700;
+        }
+        .dark .header-user-item-active {
+            background-color: rgba(99, 102, 241, 0.2) !important;
+            color: #a5b4fc !important;
+        }
+
+        .header-user-reset-btn {
+            background-color: #f1f5f9;
+            color: #334155;
+        }
+        .header-user-reset-btn:hover {
+            background-color: #e2e8f0;
+        }
+        .dark .header-user-reset-btn {
+            background-color: #334155 !important;
+            color: #e2e8f0 !important;
+        }
+        .dark .header-user-reset-btn:hover {
+            background-color: #475569 !important;
+        }
     </style>
 
     {{-- TOP DASHBOARD SUMMARY & NEXT DUE ITEM COMMAND BAR --}}
