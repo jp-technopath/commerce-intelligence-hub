@@ -492,6 +492,90 @@
             opacity: 0.85 !important;
             border-color: #2563eb !important;
         }
+
+        /* Dashboard Section Cards */
+        .dashboard-section-card {
+            background-color: #ffffff;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            color: #0f172a;
+        }
+        .dark .dashboard-section-card {
+            background-color: #0f172a !important;
+            border-color: #1e293b !important;
+            color: #f8fafc !important;
+        }
+
+        /* Filter Toolbar */
+        .filter-toolbar {
+            background-color: #f1f5f9;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            border-radius: 0.75rem;
+            padding: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .dark .filter-toolbar {
+            background-color: rgba(30, 41, 59, 0.8) !important;
+            border-color: rgba(51, 65, 85, 0.8) !important;
+        }
+
+        /* Filter Pill Buttons */
+        .filter-pill-btn {
+            padding: 0.25rem 0.65rem;
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            line-height: 1rem;
+            font-weight: 600;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: all 0.15s ease-in-out;
+            border: 1px solid transparent;
+        }
+        .filter-pill-btn-inactive {
+            color: #64748b !important;
+            background-color: transparent !important;
+        }
+        .filter-pill-btn-inactive:hover {
+            color: #0f172a !important;
+            background-color: rgba(255, 255, 255, 0.6) !important;
+        }
+        .dark .filter-pill-btn-inactive {
+            color: #94a3b8 !important;
+            background-color: transparent !important;
+        }
+        .dark .filter-pill-btn-inactive:hover {
+            color: #f8fafc !important;
+            background-color: rgba(255, 255, 255, 0.08) !important;
+        }
+
+        /* Active filter button states */
+        .filter-pill-btn-active {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+        }
+        .dark .filter-pill-btn-active {
+            background-color: #334155 !important;
+            border-color: #475569 !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.3) !important;
+        }
+
+        /* Active Filter Text Colors */
+        .filter-btn-text-indigo { color: #4338ca !important; }
+        .dark .filter-btn-text-indigo { color: #a5b4fc !important; }
+
+        .filter-btn-text-blue { color: #1d4ed8 !important; }
+        .dark .filter-btn-text-blue { color: #93c5fd !important; }
+
+        .filter-btn-text-slate { color: #0f172a !important; }
+        .dark .filter-btn-text-slate { color: #f1f5f9 !important; }
+
+        .filter-btn-text-purple { color: #6d28d9 !important; }
+        .dark .filter-btn-text-purple { color: #d8b4fe !important; }
+
+        .filter-btn-text-amber { color: #b45309 !important; }
+        .dark .filter-btn-text-amber { color: #fcd34d !important; }
     </style>
 
     {{-- TOP DASHBOARD SUMMARY & NEXT DUE ITEM COMMAND BAR --}}
@@ -753,7 +837,7 @@
     </div>
 
     {{-- SECTION 1: My Recommended Work Plan --}}
-    <div id="section-work-plan" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
+    <div id="section-work-plan" class="scroll-mt-6 dashboard-section-card rounded-2xl p-6 shadow-xs">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div class="flex flex-wrap items-center gap-3">
                 <div class="flex items-center gap-2">
@@ -769,39 +853,39 @@
             </div>
 
             {{-- Status Filter for Work Plan (TPF-47) --}}
-            <div class="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200/60 dark:border-slate-700/60 overflow-x-auto self-start sm:self-auto">
+            <div class="filter-toolbar overflow-x-auto self-start sm:self-auto">
                 <button
                     type="button"
                     wire:click="setWorkPlanStatusFilter('all')"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'all' ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->workPlanStatusFilter === 'all' ? 'filter-pill-btn-active filter-btn-text-indigo' : 'filter-pill-btn-inactive' }}"
                 >
                     All Statuses
                 </button>
                 <button
                     type="button"
                     wire:click="setWorkPlanStatusFilter('in_progress')"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'in_progress' ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->workPlanStatusFilter === 'in_progress' ? 'filter-pill-btn-active filter-btn-text-blue' : 'filter-pill-btn-inactive' }}"
                 >
                     In Progress
                 </button>
                 <button
                     type="button"
                     wire:click="setWorkPlanStatusFilter('ready_for_dev')"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'ready_for_dev' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->workPlanStatusFilter === 'ready_for_dev' ? 'filter-pill-btn-active filter-btn-text-slate' : 'filter-pill-btn-inactive' }}"
                 >
                     Ready for Dev
                 </button>
                 <button
                     type="button"
                     wire:click="setWorkPlanStatusFilter('ready_for_deployment')"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'ready_for_deployment' ? 'bg-white dark:bg-slate-700 text-purple-700 dark:text-purple-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->workPlanStatusFilter === 'ready_for_deployment' ? 'filter-pill-btn-active filter-btn-text-purple' : 'filter-pill-btn-inactive' }}"
                 >
                     Ready for Deployment
                 </button>
                 <button
                     type="button"
                     wire:click="setWorkPlanStatusFilter('review_qa')"
-                    class="px-2.5 py-1 rounded-lg text-xs font-semibold transition whitespace-nowrap cursor-pointer {{ $this->workPlanStatusFilter === 'review_qa' ? 'bg-white dark:bg-slate-700 text-amber-700 dark:text-amber-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->workPlanStatusFilter === 'review_qa' ? 'filter-pill-btn-active filter-btn-text-amber' : 'filter-pill-btn-inactive' }}"
                 >
                     In Review
                 </button>
@@ -836,10 +920,7 @@
                         <tr class="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                             {{-- Order Number Badge --}}
                             <td class="py-3 px-3 align-middle">
-                                <div 
-                                    class="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs border order-badge-{{ $item['order'] }}"
-                                    style="background-color: {{ $item['order_style']['hex_bg'] ?? '#eff6ff' }} !important; color: {{ $item['order_style']['hex_text'] ?? '#1d4ed8' }} !important; border-color: {{ $item['order_style']['hex_border'] ?? '#bfdbfe' }} !important;"
-                                >
+                                <div class="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs border order-badge-{{ $item['order'] }}">
                                     {{ $item['order'] }}
                                 </div>
                             </td>
@@ -847,10 +928,7 @@
                             {{-- Task Icon & Title & Key --}}
                             <td class="py-3 px-3 align-middle">
                                 <div class="flex items-center gap-3">
-                                    <div 
-                                        class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $iconBg }}"
-                                        style="background-color: {{ $item['order_style']['hex_bg'] ?? '#eff6ff' }} !important; color: {{ $item['order_style']['hex_text'] ?? '#1d4ed8' }} !important; border: 1px solid {{ $item['order_style']['hex_border'] ?? '#bfdbfe' }} !important;"
-                                    >
+                                    <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs {{ $iconBg }}">
                                         @if ($item['icon_type'] === 'pr')
                                             <x-heroicon-m-arrows-right-left class="w-4 h-4" />
                                         @elseif ($item['icon_type'] === 'doc')
@@ -891,20 +969,14 @@
 
                             {{-- Priority Pill --}}
                             <td class="py-3 px-3 align-middle">
-                                <span 
-                                    class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}"
-                                    style="background-color: {{ $item['priority_style']['hex_bg'] ?? '#f8fafc' }} !important; color: {{ $item['priority_style']['hex_text'] ?? '#475569' }} !important; border-color: {{ $item['priority_style']['hex_border'] ?? '#e2e8f0' }} !important;"
-                                >
+                                <span class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}">
                                     {{ $item['priority'] }}
                                 </span>
                             </td>
 
                             {{-- Status Badge (TPF-47) --}}
                             <td class="py-3 px-3 align-middle">
-                                <span 
-                                    class="text-xs font-bold px-2.5 py-0.5 rounded-full border whitespace-nowrap {{ $item['status_class'] ?? '' }}"
-                                    style="background-color: {{ $item['status_style']['hex_bg'] ?? '#f1f5f9' }} !important; color: {{ $item['status_style']['hex_text'] ?? '#334155' }} !important; border-color: {{ $item['status_style']['hex_border'] ?? '#cbd5e1' }} !important;"
-                                >
+                                <span class="text-xs font-bold px-2.5 py-0.5 rounded-full border whitespace-nowrap {{ $item['status_class'] ?? '' }}">
                                     {{ $item['status'] ?? 'Ready for Dev' }}
                                 </span>
                             </td>
@@ -963,7 +1035,7 @@
     </div>
 
     {{-- SECTION: Ready for Deployment (TPF-47) --}}
-    <div id="section-ready-for-deployment" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
+    <div id="section-ready-for-deployment" class="scroll-mt-6 dashboard-section-card rounded-2xl p-6 shadow-xs">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
             <div class="flex items-center gap-2.5">
                 <span class="w-2 h-5 rounded-full bg-purple-600 dark:bg-purple-500 inline-block"></span>
@@ -977,18 +1049,18 @@
             </div>
 
             {{-- Scope filter: Team Tasks vs My Tasks --}}
-            <div class="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200/60 dark:border-slate-700/60 self-start sm:self-auto">
+            <div class="filter-toolbar self-start sm:self-auto">
                 <button
                     type="button"
                     wire:click="setDeploymentScope('team')"
-                    class="px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer {{ $this->deploymentScope === 'team' ? 'bg-white dark:bg-slate-700 text-purple-700 dark:text-purple-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->deploymentScope === 'team' ? 'filter-pill-btn-active filter-btn-text-purple' : 'filter-pill-btn-inactive' }}"
                 >
                     Team Tasks (All)
                 </button>
                 <button
                     type="button"
                     wire:click="setDeploymentScope('my')"
-                    class="px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer {{ $this->deploymentScope === 'my' ? 'bg-white dark:bg-slate-700 text-purple-700 dark:text-purple-300 shadow-2xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200' }}"
+                    class="filter-pill-btn {{ $this->deploymentScope === 'my' ? 'filter-pill-btn-active filter-btn-text-purple' : 'filter-pill-btn-inactive' }}"
                 >
                     My Tasks
                 </button>
@@ -1054,10 +1126,7 @@
 
                             {{-- Priority --}}
                             <td class="py-3 px-3 align-middle">
-                                <span 
-                                    class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}"
-                                    style="background-color: {{ $item['priority_style']['hex_bg'] ?? '#f8fafc' }} !important; color: {{ $item['priority_style']['hex_text'] ?? '#475569' }} !important; border-color: {{ $item['priority_style']['hex_border'] ?? '#e2e8f0' }} !important;"
-                                >
+                                <span class="text-xs font-bold px-2.5 py-0.5 rounded-full border {{ $item['priority_class'] }}">
                                     {{ $item['priority'] }}
                                 </span>
                             </td>
@@ -1107,7 +1176,7 @@
     {{-- MIDDLE GRID: Needs My Attention & My Hours This Month --}}
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {{-- SECTION 2: Needs My Attention --}}
-        <div id="section-needs-attention" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
+        <div id="section-needs-attention" class="scroll-mt-6 dashboard-section-card rounded-2xl p-6 shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center gap-2">
@@ -1197,7 +1266,7 @@
         </div>
 
         {{-- SECTION 3: My Hours This Month --}}
-        <div id="section-hours" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl hours-card shadow-xs flex flex-col justify-between">
+        <div id="section-hours" class="scroll-mt-6 dashboard-section-card rounded-2xl hours-card shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-5">
                     <div class="flex items-center gap-2.5">
@@ -1206,10 +1275,7 @@
                             3. My Hours This Month
                         </h2>
                     </div>
-                    <span 
-                        class="text-xs font-semibold px-2.5 py-1 rounded-md border"
-                        style="background-color: #f8fafc !important; color: #475569 !important; border: 1px solid #e2e8f0 !important;"
-                    >
+                    <span class="text-xs font-semibold px-2.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {{ now()->format('F Y') }}
                     </span>
                 </div>
@@ -1225,10 +1291,7 @@
                                 of {{ $hoursData['allocated_hours'] }}h allocation
                             </span>
                         </div>
-                        <span 
-                            class="text-xs font-bold px-2.5 py-0.5 rounded-md border shadow-2xs"
-                            style="background-color: {{ $hoursData['progress_pct'] >= 80 ? '#ecfdf5' : '#eff6ff' }} !important; color: {{ $hoursData['progress_pct'] >= 80 ? '#047857' : '#1d4ed8' }} !important; border-color: {{ $hoursData['progress_pct'] >= 80 ? '#a7f3d0' : '#bfdbfe' }} !important;"
-                        >
+                        <span class="text-xs font-bold px-2.5 py-0.5 rounded-md border shadow-2xs {{ $hoursData['progress_pct'] >= 80 ? 'color-badge-emerald' : 'color-badge-blue' }}">
                             {{ $hoursData['progress_pct'] }}%
                         </span>
                     </div>
@@ -1342,11 +1405,8 @@
                     @endif
                 </div>
             @else
-                <div 
-                    class="rounded-xl flex items-center gap-2.5 mt-5 text-xs font-medium"
-                    style="background-color: #ecfdf5 !important; border: 1px solid #a7f3d0 !important; color: #065f46 !important; padding: 12px 16px !important;"
-                >
-                    <x-heroicon-m-check-circle class="w-5 h-5 shrink-0" style="color: #059669 !important;" />
+                <div class="rounded-xl flex items-center gap-2.5 mt-5 text-xs font-medium px-4 py-3 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                    <x-heroicon-m-check-circle class="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                     <span>All completed tasks have time entries logged.</span>
                 </div>
             @endif
@@ -1356,7 +1416,7 @@
     {{-- LOWER GRID: Upcoming Meetings & My Project Health --}}
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {{-- SECTION 4: Upcoming Meetings --}}
-        <div id="section-upcoming-meetings" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
+        <div id="section-upcoming-meetings" class="scroll-mt-6 dashboard-section-card rounded-2xl p-6 shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center gap-2">
@@ -1444,7 +1504,7 @@
         </div>
 
         {{-- SECTION 5: My Project Health --}}
-        <div id="section-project-health" class="scroll-mt-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col justify-between">
+        <div id="section-project-health" class="scroll-mt-6 dashboard-section-card rounded-2xl p-6 shadow-xs flex flex-col justify-between">
             <div>
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center gap-2">
@@ -1483,18 +1543,15 @@
                                     </td>
                                     @php
                                         $hStatus = strtolower($p['health'] ?? '');
-                                        $hStyle = match ($hStatus) {
-                                            'healthy' => ['bg' => '#ecfdf5', 'text' => '#047857', 'border' => '#a7f3d0', 'dot' => '#10b981'],
-                                            'watch'   => ['bg' => '#fffbeb', 'text' => '#b45309', 'border' => '#fde68a', 'dot' => '#f59e0b'],
-                                            default   => ['bg' => '#fff1f2', 'text' => '#be123c', 'border' => '#fecdd3', 'dot' => '#f43f5e'],
+                                        $dotClass = match ($hStatus) {
+                                            'healthy' => 'bg-emerald-500',
+                                            'watch'   => 'bg-amber-500',
+                                            default   => 'bg-rose-500',
                                         };
                                     @endphp
                                     <td class="py-3 px-3">
-                                        <span 
-                                            class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border shadow-2xs {{ $p['health_class'] }}"
-                                            style="background-color: {{ $hStyle['bg'] }} !important; color: {{ $hStyle['text'] }} !important; border-color: {{ $hStyle['border'] }} !important;"
-                                        >
-                                            <span class="w-1.5 h-1.5 rounded-full inline-block" style="background-color: {{ $hStyle['dot'] }} !important;"></span>
+                                        <span class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full border shadow-2xs {{ $p['health_class'] }}">
+                                            <span class="w-1.5 h-1.5 rounded-full inline-block {{ $dotClass }}"></span>
                                             <span>{{ $p['health'] }}</span>
                                         </span>
                                     </td>

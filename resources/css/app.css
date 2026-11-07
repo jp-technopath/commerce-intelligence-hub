@@ -1,7 +1,11 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:is(.dark, .dark *));
+
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
+@source '../views';
+@source '../../app';
 @source '../**/*.blade.php';
 @source '../**/*.js';
 
