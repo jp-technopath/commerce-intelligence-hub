@@ -43,20 +43,27 @@ class GenerateAIAnalysis implements ShouldQueue
             'model'      => $this->model,
         ]);
 
+        // Ensure pending status is marked in finding metadata
+        $meta = $this->finding->fresh()?->metadata_json ?? $this->finding->metadata_json ?? [];
+        $meta['ai_analysis_status'] = 'pending';
+        $meta['ai_analysis_started_at'] = $meta['ai_analysis_started_at'] ?? now()->toIso8601String();
+        unset($meta['ai_analysis_error']);
+        $this->finding->update(['metadata_json' => $meta]);
+
         // 1. Gather full context (auto-fetches missing data from connectors)
         $contextGatherer = new DataContextGatherer();
         $context = $contextGatherer->gatherContext($this->finding);
 
         Log::info('GenerateAIAnalysis: context gathered', [
-            'finding_id'      => $this->finding->id,
-            'commerce_sources' => array_keys($context['commerce']),
-            'behavioral_days' => count($context['behavioral']),
+            'finding_id'          => $this->finding->id,
+            'commerce_sources'    => array_keys($context['commerce']),
+            'behavioral_days'     => count($context['behavioral']),
             'performance_sources' => array_keys($context['performance']),
-            'email_types'     => array_keys($context['email_marketing']),
-            'deployments'     => count($context['deployments']),
-            'server_logs'     => count($context['server_logs']['logs'] ?? []),
-            'server_errors'   => $context['server_logs']['total_errors'] ?? 0,
-            'data_sources'    => $context['data_sources'],
+            'email_types'         => array_keys($context['email_marketing']),
+            'deployments'         => count($context['deployments']),
+            'server_logs'         => count($context['server_logs']['logs'] ?? []),
+            'server_errors'       => $context['server_logs']['total_errors'] ?? 0,
+            'data_sources'        => $context['data_sources'],
         ]);
 
         // 2. Run AI analysis with full context and the requested model
@@ -64,19 +71,43 @@ class GenerateAIAnalysis implements ShouldQueue
         $recommendation = $analyst->analyseWithContext($this->finding, $context, $this->model);
 
         if ($recommendation) {
+            $freshMeta = $this->finding->fresh()?->metadata_json ?? [];
+            unset($freshMeta['ai_analysis_status'], $freshMeta['ai_analysis_started_at'], $freshMeta['ai_analysis_error']);
+
+            $updates = ['metadata_json' => $freshMeta];
             // 3. Update finding status to Investigating if it was New
             if ($this->finding->status === FindingStatus::New) {
-                $this->finding->update(['status' => FindingStatus::Investigating]);
+                $updates['status'] = FindingStatus::Investigating;
             }
 
+            $this->finding->update($updates);
+
             Log::info('GenerateAIAnalysis: completed', [
-                'finding_id'       => $this->finding->id,
+                'finding_id'        => $this->finding->id,
                 'recommendation_id' => $recommendation->id,
             ]);
         } else {
+            $freshMeta = $this->finding->fresh()?->metadata_json ?? [];
+            $freshMeta['ai_analysis_status'] = 'failed';
+            $freshMeta['ai_analysis_error'] = 'AI analysis did not return any recommendations. Please check AI provider configuration or retry.';
+            $this->finding->update(['metadata_json' => $freshMeta]);
+
             Log::warning('GenerateAIAnalysis: AI analysis returned null', [
                 'finding_id' => $this->finding->id,
             ]);
         }
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        Log::error('GenerateAIAnalysis: job failed', [
+            'finding_id' => $this->finding->id,
+            'error'      => $exception->getMessage(),
+        ]);
+
+        $meta = $this->finding->fresh()?->metadata_json ?? [];
+        $meta['ai_analysis_status'] = 'failed';
+        $meta['ai_analysis_error']  = $exception->getMessage();
+        $this->finding->update(['metadata_json' => $meta]);
     }
 }

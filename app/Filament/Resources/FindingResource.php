@@ -264,6 +264,10 @@ class FindingResource extends Resource
     public static function infolist(Infolist $infolist): Infolist
     {
         return $infolist->schema([
+            Infolists\Components\ViewEntry::make('ai_polling_indicator')
+                ->view('filament.resources.finding-resource.entries.polling-indicator')
+                ->columnSpanFull(),
+
             Infolists\Components\Section::make('Finding Details')
                 ->columns(3)
                 ->schema([

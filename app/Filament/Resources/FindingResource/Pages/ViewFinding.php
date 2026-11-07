@@ -9,12 +9,21 @@ use App\Models\InvestigationNote;
 use App\Services\Intelligence\AIInvestigator;
 use Filament\Actions;
 use Filament\Forms;
+use Filament\Infolists\Infolist;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ViewRecord;
 
 class ViewFinding extends ViewRecord
 {
     protected static string $resource = FindingResource::class;
+
+    public function infolist(Infolist $infolist): Infolist
+    {
+        $this->getRecord()->refresh();
+        $this->getRecord()->load(['recommendations']);
+
+        return FindingResource::infolist($infolist);
+    }
 
     protected function getHeaderActions(): array
     {
@@ -124,10 +133,23 @@ class ViewFinding extends ViewRecord
                 }),
 
             Actions\Action::make('generate_ai')
-                ->label('Generate AI Analysis')
+                ->label(fn () => ($this->record->metadata_json['ai_analysis_status'] ?? null) === 'failed' ? 'Retry AI Analysis' : 'Generate AI Analysis')
                 ->icon('heroicon-o-sparkles')
                 ->color('warning')
-                ->visible(fn () => ! auth()->user()?->isClientOnly() && ! $this->record->recommendations()->exists())
+                ->visible(function () {
+                    if (auth()->user()?->isClientOnly()) {
+                        return false;
+                    }
+                    if ($this->record->recommendations()->exists()) {
+                        return false;
+                    }
+                    $status = $this->record->metadata_json['ai_analysis_status'] ?? null;
+                    $startedAt = $this->record->metadata_json['ai_analysis_started_at'] ?? null;
+                    if ($status === 'pending' && $startedAt && now()->parse($startedAt)->diffInMinutes() < 10) {
+                        return false;
+                    }
+                    return true;
+                })
                 ->form(fn () => [
                     Forms\Components\Select::make('model')
                         ->label('AI Model')
@@ -157,29 +179,26 @@ class ViewFinding extends ViewRecord
                         ->required(fn () => config('meeting_agent.ai.provider') === 'openrouter'),
                 ])
                 ->modalHeading('🧠 Generate AI Analysis')
-                ->modalDescription('This will gather live data from all connected integrations (GA4, Adobe Commerce, Clarity, New Relic, Klaviyo), cross-reference the data, and generate a comprehensive AI analysis. This may take 30-60 seconds.')
+                ->modalDescription('This will gather live data from all connected integrations (GA4, Adobe Commerce, Clarity, New Relic, Klaviyo), cross-reference the data, and generate a comprehensive AI analysis in the background.')
                 ->modalSubmitActionLabel('Start Analysis')
                 ->action(function (array $data): void {
-                    \App\Jobs\Intelligence\GenerateAIAnalysis::dispatchSync(
+                    $meta = $this->record->metadata_json ?? [];
+                    $meta['ai_analysis_status'] = 'pending';
+                    $meta['ai_analysis_started_at'] = now()->toIso8601String();
+                    unset($meta['ai_analysis_error']);
+                    $this->record->update(['metadata_json' => $meta]);
+
+                    \App\Jobs\Intelligence\GenerateAIAnalysis::dispatch(
                         finding: $this->record,
                         model: $data['model'] ?? null
                     );
 
-                    if ($this->record->fresh()->recommendations()->exists()) {
-                        Notification::make()
-                            ->title('AI analysis generated')
-                            ->body('Live data from all integrations was cross-referenced to produce the analysis. Check the AI Recommendations section below.')
-                            ->success()
-                            ->duration(8000)
-                            ->send();
-                        $this->redirect(FindingResource::getUrl('view', ['record' => $this->record]));
-                    } else {
-                        Notification::make()
-                            ->title('AI analysis failed')
-                            ->body('Check that your AI provider API key is configured correctly and integrations are connected.')
-                            ->warning()
-                            ->send();
-                    }
+                    Notification::make()
+                        ->title('AI analysis started')
+                        ->body('Live data is being gathered and cross-referenced in the background. This page will update automatically when complete.')
+                        ->info()
+                        ->duration(8000)
+                        ->send();
                 }),
 
             Actions\Action::make('ignore')
