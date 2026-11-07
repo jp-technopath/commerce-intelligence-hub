@@ -161,4 +161,24 @@ return [
         'month'  => 30,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Stage 2 Shadow Mode Live Parallel Evaluation Configuration
+    |--------------------------------------------------------------------------
+    | Parallel evaluation configuration to observe Stage 2 engine alongside
+    | the production engine on newly arriving data for 14 consecutive days.
+    | Guarantees zero writes to findings, zero status changes, zero notifications.
+    |
+    | Schedule Time: 06:00 UTC (01:00 AM EST). Aligns with Goldkamp's reporting
+    | timezone (America/New_York, UTC-5). Midnight EST is 05:00 UTC; 06:00 UTC
+    | guarantees the business day has fully closed and integration syncs have completed.
+    */
+    'shadow_mode' => [
+        'enabled'          => env('STAGE2_SHADOW_MODE_ENABLED', true),
+        'clients'          => [5], // Goldkamp
+        'observation_days' => 14,
+        'schedule_time'    => env('STAGE2_SHADOW_RUN_TIME', '06:00'),
+        'storage_path'     => 'reports/shadow_mode',
+    ],
+
 ];

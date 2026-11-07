@@ -211,26 +211,48 @@ class ChangeDetectionEngine
 
             if ($prevVal <= 0) continue;
 
-            $change = ($currVal - $prevVal) / $prevVal;
+            // Normalize count metrics by traffic so traffic surges do not generate false rate spikes
+            $isCountMetric = in_array($metric, ['script_errors', 'rage_clicks', 'dead_clicks', 'quick_backs', 'error_clicks'], true);
+            $currTraffic   = max(1, (int) ($curr['traffic'] ?? 1));
+            $prevTraffic   = max(1, (int) ($prev['traffic'] ?? 1));
+
+            if ($isCountMetric) {
+                $currRate = (float) $currVal / $currTraffic;
+                $prevRate = (float) $prevVal / $prevTraffic;
+                if ($prevRate <= 0) continue;
+                $change = ($currRate - $prevRate) / $prevRate;
+            } else {
+                $change = ($currVal - $prevVal) / $prevVal;
+            }
+
             $threshold = $client->getThreshold($thresholdKey);
 
             if ($change >= $threshold) {
                 $pct  = round($change * 100, 1);
+                $desc = $isCountMetric
+                    ? sprintf("Clarity behavioral signals indicate: %s rate increased from %.2f to %.2f per session (%.1f%% change) over the past %d days. Total volume: %.0f across %d sessions vs prior %.0f across %d sessions.",
+                        str_replace('_', ' ', $metric), $prevRate, $currRate, $pct, $days, $currVal, $currTraffic, $prevVal, $prevTraffic)
+                    : 'Clarity behavioral signals indicate: ' . sprintf($descTemplate, round($prevVal, 1), round($currVal, 1), $pct);
+
                 $findings += $this->createFinding(
                     client:      $client,
                     findingType: $metric . '_increase',
                     category:    $category,
                     title:       sprintf($titleTemplate, $pct),
-                    description: 'Clarity behavioral signals indicate: ' . sprintf($descTemplate, round($prevVal, 1), round($currVal, 1), $pct),
+                    description: $desc,
                     severity:    $this->behavioralSeverity($metric, $change),
                     confidence:  $this->confidence($change, $threshold),
                     metadata:    [
-                        'metric'       => $metric,
-                        'current'      => $currVal,
-                        'previous'     => $prevVal,
-                        'change_pct'   => $pct,
-                        'period_days'  => $days,
-                        'source'       => 'clarity',
+                        'metric'           => $metric,
+                        'current'          => $currVal,
+                        'previous'         => $prevVal,
+                        'current_rate'     => $isCountMetric ? round($currRate, 4) : null,
+                        'previous_rate'    => $isCountMetric ? round($prevRate, 4) : null,
+                        'current_traffic'  => $currTraffic,
+                        'previous_traffic' => $prevTraffic,
+                        'change_pct'       => $pct,
+                        'period_days'      => $days,
+                        'source'           => 'clarity',
                     ],
                 );
             }
@@ -641,7 +663,7 @@ class ChangeDetectionEngine
         $start = $end->copy()->subDays($periodDays - 1);
 
         return CommerceMetric::where('client_id', $client->id)
-            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->whereBetween('date', [$start->copy()->startOfDay()->toDateTimeString(), $end->copy()->endOfDay()->toDateTimeString()])
             ->get();
     }
 
@@ -651,7 +673,7 @@ class ChangeDetectionEngine
         $start = $end->copy()->subDays($periodDays - 1);
 
         return BehavioralMetric::where('client_id', $client->id)
-            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->whereBetween('date', [$start->copy()->startOfDay()->toDateTimeString(), $end->copy()->endOfDay()->toDateTimeString()])
             ->get();
     }
 
@@ -870,7 +892,7 @@ class ChangeDetectionEngine
                 ),
                 changes:     $changes,
                 sources:     ['adobe_commerce', 'clarity'],
-                revenueImpact: round($comm['curr']['revenue'] - $comm['prev']['revenue'], 2),
+                revenueImpact: round(max(0.0, $comm['prev']['revenue'] - $comm['curr']['revenue']), 2),
             );
         }
 
@@ -1047,13 +1069,13 @@ class ChangeDetectionEngine
             'aov'             => $pctChange($comm['curr']['aov'], $comm['prev']['aov']),
             'new_customers'   => $pctChange($comm['curr']['new_customers'], $comm['prev']['new_customers']),
             'conversion_rate' => $pctChange($comm['curr']['conversion_rate'], $comm['prev']['conversion_rate']),
-            // Behavioral
-            'rage_clicks'     => $pctChange($beh['curr']['rage_clicks'], $beh['prev']['rage_clicks']),
-            'dead_clicks'     => $pctChange($beh['curr']['dead_clicks'], $beh['prev']['dead_clicks']),
-            'quick_backs'     => $pctChange($beh['curr']['quick_backs'], $beh['prev']['quick_backs']),
-            'script_errors'   => $pctChange($beh['curr']['script_errors'], $beh['prev']['script_errors']),
+            // Behavioral (normalized by traffic for count metrics)
+            'rage_clicks'     => $pctChange(($beh['curr']['rage_clicks'] ?? 0) / max(1, $beh['curr']['traffic'] ?? 1), ($beh['prev']['rage_clicks'] ?? 0) / max(1, $beh['prev']['traffic'] ?? 1)),
+            'dead_clicks'     => $pctChange(($beh['curr']['dead_clicks'] ?? 0) / max(1, $beh['curr']['traffic'] ?? 1), ($beh['prev']['dead_clicks'] ?? 0) / max(1, $beh['prev']['traffic'] ?? 1)),
+            'quick_backs'     => $pctChange(($beh['curr']['quick_backs'] ?? 0) / max(1, $beh['curr']['traffic'] ?? 1), ($beh['prev']['quick_backs'] ?? 0) / max(1, $beh['prev']['traffic'] ?? 1)),
+            'script_errors'   => $pctChange(($beh['curr']['script_errors'] ?? 0) / max(1, $beh['curr']['traffic'] ?? 1), ($beh['prev']['script_errors'] ?? 0) / max(1, $beh['prev']['traffic'] ?? 1)),
             'friction_score'  => $pctChange($beh['curr']['friction_score'], $beh['prev']['friction_score']),
-            'error_clicks'    => $pctChange($beh['curr']['error_clicks'] ?? 0, $beh['prev']['error_clicks'] ?? 0),
+            'error_clicks'    => $pctChange(($beh['curr']['error_clicks'] ?? 0) / max(1, $beh['curr']['traffic'] ?? 1), ($beh['prev']['error_clicks'] ?? 0) / max(1, $beh['prev']['traffic'] ?? 1)),
         ];
     }
 

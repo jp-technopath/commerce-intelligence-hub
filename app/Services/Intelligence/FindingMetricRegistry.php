@@ -2,6 +2,7 @@
 
 namespace App\Services\Intelligence;
 
+use App\Models\BehavioralMetric;
 use App\Models\Client;
 use App\Models\CommerceMetric;
 use App\Models\EmailMarketingMetric;
@@ -9,6 +10,16 @@ use Carbon\Carbon;
 
 class FindingMetricRegistry
 {
+    /**
+     * Build date range boundaries inclusive of start and end of day.
+     *
+     * @return array{0: string, 1: string}
+     */
+    public static function dateRange(Carbon $from, Carbon $to): array
+    {
+        return [$from->copy()->startOfDay()->toDateTimeString(), $to->copy()->endOfDay()->toDateTimeString()];
+    }
+
     /**
      * Get all registered metric definitions.
      *
@@ -26,7 +37,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'ga4')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('revenue');
                 },
             ],
@@ -38,7 +49,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     $metrics = CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'ga4')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->get();
 
                     $total = 0.0;
@@ -64,7 +75,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'ga4')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('sessions');
                 },
             ],
@@ -76,7 +87,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'ga4')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('active_users');
                 },
             ],
@@ -88,7 +99,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     $row = CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'ga4')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->selectRaw('COALESCE(SUM(sessions), 0) as s, COALESCE(SUM(orders), 0) as o')
                         ->first();
 
@@ -106,7 +117,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     $row = CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'ga4')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->selectRaw('COALESCE(SUM(revenue), 0) as r, COALESCE(SUM(orders), 0) as o')
                         ->first();
 
@@ -125,7 +136,7 @@ class FindingMetricRegistry
                 'availability' => fn (Client $c) => self::hasSource($c, 'klaviyo', EmailMarketingMetric::class),
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) EmailMarketingMetric::where('client_id', $c->id)
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('revenue');
                 },
             ],
@@ -137,7 +148,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) EmailMarketingMetric::where('client_id', $c->id)
                         ->where('type', 'campaign')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('revenue');
                 },
             ],
@@ -149,7 +160,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) EmailMarketingMetric::where('client_id', $c->id)
                         ->where('type', 'flow')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('revenue');
                 },
             ],
@@ -163,7 +174,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'shopify')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('revenue');
                 },
             ],
@@ -175,7 +186,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'shopify')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('orders');
                 },
             ],
@@ -187,7 +198,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     $row = CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'shopify')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->selectRaw('COALESCE(SUM(revenue), 0) as r, COALESCE(SUM(orders), 0) as o')
                         ->first();
 
@@ -207,7 +218,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'adobe_commerce')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('revenue');
                 },
             ],
@@ -219,7 +230,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     return (float) CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'adobe_commerce')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->sum('orders');
                 },
             ],
@@ -231,7 +242,7 @@ class FindingMetricRegistry
                 'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
                     $row = CommerceMetric::where('client_id', $c->id)
                         ->where('source', 'adobe_commerce')
-                        ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                        ->whereBetween('date', self::dateRange($from, $to))
                         ->selectRaw('COALESCE(SUM(revenue), 0) as r, COALESCE(SUM(orders), 0) as o')
                         ->first();
 
@@ -239,6 +250,41 @@ class FindingMetricRegistry
                     $orders  = (int) ($row->o ?? 0);
 
                     return $orders > 0 ? round($revenue / $orders, 2) : 0.0;
+                },
+            ],
+
+            // ─── Clarity Behavioral Metrics ─────────────────────────────────────
+            'clarity.script_errors' => [
+                'label'        => 'Clarity Script Errors',
+                'source'       => 'clarity',
+                'type'         => 'number',
+                'availability' => fn (Client $c) => self::hasSource($c, 'clarity', BehavioralMetric::class),
+                'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
+                    return (float) BehavioralMetric::where('client_id', $c->id)
+                        ->whereBetween('date', self::dateRange($from, $to))
+                        ->sum('script_errors');
+                },
+            ],
+            'clarity.traffic' => [
+                'label'        => 'Clarity Sessions',
+                'source'       => 'clarity',
+                'type'         => 'number',
+                'availability' => fn (Client $c) => self::hasSource($c, 'clarity', BehavioralMetric::class),
+                'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
+                    return (float) BehavioralMetric::where('client_id', $c->id)
+                        ->whereBetween('date', self::dateRange($from, $to))
+                        ->sum('traffic');
+                },
+            ],
+            'clarity.friction_score' => [
+                'label'        => 'Clarity Friction Score',
+                'source'       => 'clarity',
+                'type'         => 'number',
+                'availability' => fn (Client $c) => self::hasSource($c, 'clarity', BehavioralMetric::class),
+                'resolver'     => function (Client $c, Carbon $from, Carbon $to): float {
+                    return (float) (BehavioralMetric::where('client_id', $c->id)
+                        ->whereBetween('date', self::dateRange($from, $to))
+                        ->avg('friction_score') ?? 0.0);
                 },
             ],
         ];
@@ -320,6 +366,10 @@ class FindingMetricRegistry
 
         if ($modelClass === EmailMarketingMetric::class) {
             return EmailMarketingMetric::where('client_id', $client->id)->exists();
+        }
+
+        if ($modelClass === BehavioralMetric::class) {
+            return BehavioralMetric::where('client_id', $client->id)->exists();
         }
 
         return false;

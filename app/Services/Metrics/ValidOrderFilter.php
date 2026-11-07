@@ -97,4 +97,12 @@ class ValidOrderFilter
 
         return null;
     }
+
+    /**
+     * Calculate net revenue ensuring non-negative value after refunds.
+     */
+    public function calculateNetRevenue(float $grossRevenue, float $refundedRevenue = 0.0): float
+    {
+        return max(0.0, round($grossRevenue - $refundedRevenue, 2));
+    }
 }

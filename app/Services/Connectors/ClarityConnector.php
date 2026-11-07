@@ -53,7 +53,7 @@ class ClarityConnector
     private string $baseUrl;
     private int    $dailyLimit;
 
-    public function __construct(private readonly Integration $integration)
+    public function __construct(private readonly ?Integration $integration = null)
     {
         $config           = config('intelligence.clarity');
         $this->baseUrl    = rtrim($config['base_url'], '/');
@@ -252,6 +252,19 @@ class ClarityConnector
             //   daysBack 2             → numOfDays 3
             $numOfDays = $daysBack + 1;
 
+            $existing = BehavioralMetric::where('client_id', $this->integration->client_id)
+                ->where('date', $from->startOfDay()->toDateTimeString())
+                ->first();
+
+            // Idempotency: if a true single-day record already exists, do not overwrite with multi-day estimate
+            if ($existing && ($existing->metadata_json['num_of_days'] ?? 1) === 1 && empty($existing->metadata_json['is_rolling_aggregate'])) {
+                Log::info('ClarityConnector::fetchForDateRange: valid single-day record already exists, preserving.', [
+                    'integration_id' => $this->integration->id,
+                    'date'           => $from->toDateString(),
+                ]);
+                return 1;
+            }
+
             if (! $this->checkRateLimit(1)) {
                 Log::warning('ClarityConnector::fetchForDateRange: Daily rate limit reached.', [
                     'integration_id' => $this->integration->id,
@@ -262,8 +275,31 @@ class ClarityConnector
             $raw = $this->fetchMetrics($projectId, $token, $numOfDays);
             $this->incrementRateLimit();
 
-            $parsed        = $this->parseResponse($raw);
-            $aggregated    = $this->aggregateMetrics($parsed);
+            $parsed     = $this->parseResponse($raw);
+            $aggregated = $this->aggregateMetrics($parsed);
+
+            $metadata = $this->buildMetadata($parsed, $numOfDays);
+
+            // Disaggregate multi-day rolling windows so multi-day totals are not stored as single-day records
+            if ($numOfDays > 1) {
+                $downstreamMetrics = BehavioralMetric::where('client_id', $this->integration->client_id)
+                    ->where('date', '>', $from->startOfDay()->toDateTimeString())
+                    ->where('date', '<=', now()->startOfDay()->toDateTimeString())
+                    ->get();
+
+                if ($downstreamMetrics->isNotEmpty()) {
+                    $aggregated = $this->subtractDownstreamMetrics($aggregated, $downstreamMetrics);
+                    $metadata['disaggregation_method'] = 'subtracted_downstream_window';
+                    $metadata['source_window_days']     = $numOfDays;
+                    $metadata['num_of_days']            = 1;
+                } else {
+                    $aggregated = $this->averageMetricsOverDays($aggregated, $numOfDays);
+                    $metadata['is_rolling_aggregate']   = true;
+                    $metadata['disaggregation_method']  = 'distributed_daily_average';
+                    $metadata['source_window_days']     = $numOfDays;
+                }
+            }
+
             $frictionScore = FrictionScoreCalculator::calculate($aggregated);
 
             BehavioralMetric::updateOrCreate(
@@ -273,7 +309,7 @@ class ClarityConnector
                 ],
                 array_merge($aggregated, [
                     'friction_score' => $frictionScore,
-                    'metadata_json'  => $this->buildMetadata($parsed, $numOfDays),
+                    'metadata_json'  => $metadata,
                 ])
             );
 
@@ -533,6 +569,50 @@ class ClarityConnector
     // ─────────────────────────────────────────────────────────────────────────
     // Private: Security
     // ─────────────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private: Disaggregation helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Subtract downstream known metrics from a cumulative multi-day aggregate.
+     */
+    public function subtractDownstreamMetrics(array $aggregated, $downstreamMetrics): array
+    {
+        $result = $aggregated;
+        $countKeys = ['traffic', 'rage_clicks', 'dead_clicks', 'quick_backs', 'excessive_scrolling', 'script_errors', 'error_clicks'];
+
+        foreach ($downstreamMetrics as $metric) {
+            foreach ($countKeys as $key) {
+                if (isset($result[$key]) && isset($metric->$key)) {
+                    $result[$key] = max(0, (int) $result[$key] - (int) $metric->$key);
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Divide cumulative multi-day counts evenly across days when subtraction is not possible.
+     */
+    public function averageMetricsOverDays(array $aggregated, int $numOfDays): array
+    {
+        if ($numOfDays <= 1) {
+            return $aggregated;
+        }
+
+        $result = $aggregated;
+        $countKeys = ['traffic', 'rage_clicks', 'dead_clicks', 'quick_backs', 'excessive_scrolling', 'script_errors', 'error_clicks'];
+
+        foreach ($countKeys as $key) {
+            if (isset($result[$key])) {
+                $result[$key] = (int) round((float) $result[$key] / $numOfDays);
+            }
+        }
+
+        return $result;
+    }
 
     private function sanitiseErrorMessage(string $message, string $token): string
     {

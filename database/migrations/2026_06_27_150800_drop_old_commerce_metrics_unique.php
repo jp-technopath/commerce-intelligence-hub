@@ -8,9 +8,17 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // SQLite (used by the feature-test suite) does not expose MySQL's
-        // information_schema. The constraint cleanup is only needed for the
-        // MySQL deployment path, so leave the SQLite schema as created.
+        if (Schema::getConnection()->getDriverName() === 'sqlite') {
+            try {
+                Schema::table('commerce_metrics', function (Blueprint $table) {
+                    $table->dropUnique('commerce_metrics_client_id_date_unique');
+                });
+            } catch (\Throwable $e) {
+                // Ignore if already dropped
+            }
+            return;
+        }
+
         if (Schema::getConnection()->getDriverName() !== 'mysql') {
             return;
         }

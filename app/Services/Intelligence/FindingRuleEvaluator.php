@@ -7,6 +7,7 @@ use App\Enums\FindingSeverity;
 use App\Enums\FindingStatus;
 use App\Models\Client;
 use App\Models\ClientFindingConfiguration;
+use App\Models\CommerceMetric;
 use App\Models\Finding;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -56,7 +57,7 @@ class FindingRuleEvaluator
     /**
      * Evaluate a single rule deterministically.
      */
-    protected function evaluateRule(Client $client, array $rule): bool
+    public function evaluateRule(Client $client, array $rule): bool
     {
         $periodDays = (int) ($rule['period_days'] ?? 30);
         $now        = now();
@@ -292,6 +293,105 @@ class FindingRuleEvaluator
             );
         }
 
+        // ── Calculate Defensible Revenue Impact & Dynamic Confidence ──────────
+        $confidenceScore = round(min(0.95, max(0.60, 0.75 + (($diffPct - abs($threshold)) / max(1.0, abs($threshold))) * 0.15)), 2);
+
+        $estimatedRevenueImpact = null;
+        $impactCalculation = [
+            'modeled'     => false,
+            'amount'      => null,
+            'assumptions' => null,
+            'reason'      => null,
+        ];
+
+        if ($operator === 'percentage_difference') {
+            // Cross-platform attribution or tracking discrepancies are reporting variances, not lost revenue.
+            $impactCalculation['reason'] = 'Cross-platform attribution and tracking variance represents reporting alignment differences, not lost revenue.';
+        } elseif ($operator === 'percentage_change') {
+            $isRevenueMetric = str_contains($metricAKey, 'revenue');
+            $isOrderMetric   = str_contains($metricAKey, 'orders');
+            $isCvrMetric     = str_contains($metricAKey, 'conversion_rate');
+
+            if ($isRevenueMetric) {
+                // Direct revenue drop
+                if ($valPrev > $valA) {
+                    $estimatedRevenueImpact = round((float) $valPrev - (float) $valA, 2);
+                    $impactCalculation = [
+                        'modeled'     => false,
+                        'amount'      => $estimatedRevenueImpact,
+                        'formula'     => 'val_prev - val_current',
+                        'assumptions' => 'Observed period-over-period direct revenue delta.',
+                    ];
+                }
+            } elseif ($isOrderMetric && $valPrev > $valA) {
+                // Modeled lost orders * baseline AOV
+                $orderDrop = (float) $valPrev - (float) $valA;
+                $baselineAov = CommerceMetric::where('client_id', $client->id)
+                    ->whereBetween('date', [$fromPrev, $toPrev])
+                    ->where('orders', '>', 0)
+                    ->avg('aov');
+
+                if ($baselineAov && $baselineAov > 0) {
+                    $estimatedRevenueImpact = round($orderDrop * $baselineAov, 2);
+                    $impactCalculation = [
+                        'modeled'      => true,
+                        'amount'       => $estimatedRevenueImpact,
+                        'formula'      => 'lost_orders * baseline_aov',
+                        'baseline_aov' => round($baselineAov, 2),
+                        'assumptions'  => sprintf('Modeled estimate: %.0f lost orders multiplied by prior period AOV of $%.2f.', $orderDrop, $baselineAov),
+                    ];
+                } else {
+                    $impactCalculation['reason'] = 'Baseline AOV could not be determined defensibly.';
+                }
+            } elseif ($isCvrMetric && $valPrev > $valA) {
+                // Check if traffic conditions are stable before dollarizing conversion changes
+                $source = str_contains($metricAKey, 'ga4') ? 'ga4' : 'adobe_commerce';
+                $curSessions = (int) CommerceMetric::where('client_id', $client->id)
+                    ->where('source', $source)
+                    ->whereBetween('date', [$from, $to])
+                    ->sum('sessions');
+
+                $prevSessions = (int) CommerceMetric::where('client_id', $client->id)
+                    ->where('source', $source)
+                    ->whereBetween('date', [$fromPrev, $toPrev])
+                    ->sum('sessions');
+
+                $sessionChangePct = $prevSessions > 0 ? abs(($curSessions - $prevSessions) / $prevSessions) * 100 : 100;
+
+                if ($sessionChangePct > 50.0 || $prevSessions < 100) {
+                    $impactCalculation['reason'] = sprintf(
+                        'Conversion rate change occurred during volatile traffic conditions (sessions changed by %.1f%%). Cannot defensibly dollarize without distorting estimates.',
+                        $sessionChangePct
+                    );
+                } else {
+                    $baselineAov = CommerceMetric::where('client_id', $client->id)
+                        ->whereBetween('date', [$fromPrev, $toPrev])
+                        ->where('orders', '>', 0)
+                        ->avg('aov');
+
+                    if ($baselineAov && $baselineAov > 0) {
+                        $cvrDelta = ($valPrev - $valA) / 100.0;
+                        $estimatedRevenueImpact = round($cvrDelta * $curSessions * $baselineAov, 2);
+                        $impactCalculation = [
+                            'modeled'      => true,
+                            'amount'       => $estimatedRevenueImpact,
+                            'formula'      => '(cvr_prev - cvr_current) * current_sessions * prior_aov',
+                            'baseline_aov' => round($baselineAov, 2),
+                            'assumptions'  => sprintf('Modeled estimate under stable traffic (+/-%.1f%%): lost conversions (%.4f) * %d sessions * $%.2f baseline AOV.', $sessionChangePct, $cvrDelta, $curSessions, $baselineAov),
+                        ];
+                    } else {
+                        $impactCalculation['reason'] = 'Baseline AOV unavailable for conversion loss modeling.';
+                    }
+                }
+            } else {
+                $impactCalculation['reason'] = 'Metric does not represent a direct revenue shortfall.';
+            }
+        } else {
+            $impactCalculation['reason'] = 'Threshold rule operator does not support defensible revenue loss estimation.';
+        }
+
+        $evidence['revenue_impact_calculation'] = $impactCalculation;
+
         // ── Create Deterministic Finding ───────────────────────────────────────
         Finding::create([
             'client_id'                => $client->id,
@@ -300,8 +400,8 @@ class FindingRuleEvaluator
             'title'                    => $title,
             'description'              => $description,
             'severity'                 => $severity->value,
-            'confidence_score'         => 0.95,
-            'estimated_revenue_impact' => in_array($operator, ['percentage_difference', 'percentage_change'], true) ? $diffAmount : null,
+            'confidence_score'         => $confidenceScore,
+            'estimated_revenue_impact' => $estimatedRevenueImpact,
             'status'                   => FindingStatus::New->value,
             'metadata_json'            => $evidence,
             'detected_at'              => now(),

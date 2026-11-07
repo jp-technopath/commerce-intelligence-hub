@@ -51,7 +51,11 @@ class DataContextGatherer
         $detectedAt = $finding->detected_at ?? $finding->created_at;
         $clientId   = $finding->client_id;
 
-        $rangeStart = $detectedAt->copy()->subDays($this->lookbackDays)->startOfDay();
+        // Dynamic lookback: ensure window covers baseline period for multi-day findings (e.g. 30d/60d rules)
+        $periodDays = $finding->metadata_json['period_days'] ?? null;
+        $effectiveLookback = $periodDays ? max($this->lookbackDays, ((int) $periodDays * 2) + 7) : $this->lookbackDays;
+
+        $rangeStart = $detectedAt->copy()->subDays($effectiveLookback)->startOfDay();
         $rangeEnd   = $detectedAt->copy()->addDays($this->lookaheadDays)->endOfDay();
 
         // ── On-demand data fetching: fill gaps before querying ───────────
@@ -72,17 +76,34 @@ class DataContextGatherer
         }
 
         // ── Query all local data ─────────────────────────────────────────
+        $commerceData   = $this->queryCommerceData($clientId, $rangeStart, $rangeEnd);
+        $behavioralData = $this->queryBehavioralData($clientId, $rangeStart, $rangeEnd);
+
+        $totalDaysExpected        = (int) $rangeStart->diffInDays($rangeEnd) + 1;
+        $commerceDatesAvailable   = collect($commerceData)->flatten(1)->pluck('date')->unique()->count();
+        $behavioralDatesAvailable = collect($behavioralData)->pluck('date')->unique()->count();
+
         $context = [
-            'commerce'        => $this->queryCommerceData($clientId, $rangeStart, $rangeEnd),
-            'behavioral'      => $this->queryBehavioralData($clientId, $rangeStart, $rangeEnd),
-            'performance'     => $this->queryPerformanceData($clientId, $rangeStart, $rangeEnd),
-            'email_marketing' => $this->queryEmailData($clientId, $rangeStart, $rangeEnd),
-            'deployments'     => $this->queryDeployments($clientId, $rangeStart, $rangeEnd),
-            'server_logs'     => $this->queryNewRelicLogs($clientId, $rangeStart, $rangeEnd),
-            'recommendations' => $this->queryRecommendations($finding),
-            'notes'           => $this->queryNotes($finding),
-            'similar_past'    => $this->querySimilarPatterns($finding),
-            'data_sources'    => $this->identifyDataSources($clientId, $fetchedSources),
+            'commerce'         => $commerceData,
+            'behavioral'       => $behavioralData,
+            'performance'      => $this->queryPerformanceData($clientId, $rangeStart, $rangeEnd),
+            'email_marketing'  => $this->queryEmailData($clientId, $rangeStart, $rangeEnd),
+            'deployments'      => $this->queryDeployments($clientId, $rangeStart, $rangeEnd),
+            'server_logs'      => $this->queryNewRelicLogs($clientId, $rangeStart, $rangeEnd),
+            'recommendations'  => $this->queryRecommendations($finding),
+            'notes'            => $this->queryNotes($finding),
+            'similar_past'     => $this->querySimilarPatterns($finding),
+            'data_sources'     => $this->identifyDataSources($clientId, $fetchedSources),
+            'coverage_summary' => [
+                'lookback_days_requested'    => $effectiveLookback,
+                'range_start'                => $rangeStart->toDateString(),
+                'range_end'                  => $rangeEnd->toDateString(),
+                'total_days_requested'       => $totalDaysExpected,
+                'commerce_days_available'   => $commerceDatesAvailable,
+                'behavioral_days_available' => $behavioralDatesAvailable,
+                'is_coverage_complete'       => ($commerceDatesAvailable >= ($effectiveLookback * 0.8)),
+                'coverage_status'            => ($commerceDatesAvailable >= ($effectiveLookback * 0.8)) ? 'complete' : 'insufficient_coverage',
+            ],
         ];
 
         return $context;

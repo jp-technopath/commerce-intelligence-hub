@@ -33,6 +33,13 @@ Schedule::job(new RunNightlyAnalysis())
     ->name('nightly-intelligence-analysis')
     ->withoutOverlapping(60);
 
+// Stage 2 Shadow Parallel Evaluation — 14-day live observation alongside production
+// Scheduled at 06:00 UTC (01:00 AM EST) after America/New_York day close (05:00 UTC) and daily syncs
+Schedule::command('forge:shadow-daily --client=5')
+    ->dailyAt(config('intelligence.shadow_mode.schedule_time', '06:00'))
+    ->name('forge-stage2-shadow-daily-observation')
+    ->withoutOverlapping(30);
+
 // Customer meeting calendar scan — checks connected Google Calendars for upcoming meetings
 Schedule::command('customer-meetings:scan-upcoming')
     ->hourly()
