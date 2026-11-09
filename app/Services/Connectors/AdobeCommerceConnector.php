@@ -152,6 +152,10 @@ class AdobeCommerceConnector
             $createdAt  = Carbon::parse($order['created_at'] ?? now());
             $custEmail  = $order['customer_email'] ?? null;
             $custId     = isset($order['customer_id']) ? (string) $order['customer_id'] : null;
+            $company    = $order['billing_address']['company'] ?? $order['shipping_address']['company'] ?? null;
+            $personName = trim(($order['customer_firstname'] ?? '') . ' ' . ($order['customer_lastname'] ?? ''));
+            $custName   = $personName !== '' ? $personName : null;
+            $companyName = ! empty($company) ? trim($company) : null;
 
             $identityHash = $this->identityHasher->hashCustomerIdentity($client, $custId, $custEmail);
 
@@ -175,6 +179,9 @@ class AdobeCommerceConnector
                 'order_status'              => $status,
                 'customer_identity_hash'    => $identityHash,
                 'registered_customer_id'    => $custId,
+                'customer_email'            => $custEmail,
+                'customer_name'             => $custName,
+                'company_name'              => $companyName,
                 'order_date'                => $createdAt->toDateTimeString(),
                 'refund_date'               => $totalRef > 0 ? $nowStr : null,
                 'gross_revenue'             => $grandTotal,
@@ -205,6 +212,9 @@ class AdobeCommerceConnector
                         'client_id'                  => $client->id,
                         'customer_identity_hash'     => $identityHash,
                         'customer_id'                => $custId,
+                        'customer_email'             => $custEmail,
+                        'customer_name'              => $custName,
+                        'company_name'               => $companyName,
                         'first_valid_order_at'       => $createdAt,
                         'latest_valid_order_at'      => $createdAt,
                         'lifetime_valid_order_count' => 1,
@@ -220,6 +230,19 @@ class AdobeCommerceConnector
                     }
                     $factsMap[$identityHash]['lifetime_valid_order_count']++;
                     $factsMap[$identityHash]['lifetime_net_revenue'] += $netRevenue;
+                    if (! empty($custEmail)) {
+                        $factsMap[$identityHash]['customer_email'] = $custEmail;
+                    }
+                    if (! empty($custName)) {
+                        $factsMap[$identityHash]['customer_name'] = $custName;
+                    }
+                    if (! empty($companyName)) {
+                        $factsMap[$identityHash]['company_name'] = $companyName;
+                    }
+                    if (! empty($custId)) {
+                        $factsMap[$identityHash]['customer_id'] = $custId;
+                        $factsMap[$identityHash]['is_registered_customer'] = 1;
+                    }
                 }
             }
         }
@@ -231,6 +254,7 @@ class AdobeCommerceConnector
                 ['client_id', 'integration_id', 'source', 'source_order_id'],
                 [
                     'source_increment_id', 'order_status', 'customer_identity_hash', 'registered_customer_id',
+                    'customer_email', 'customer_name', 'company_name',
                     'order_date', 'refund_date', 'gross_revenue', 'refunded_revenue', 'net_revenue',
                     'tax_amount', 'shipping_amount', 'discount_amount', 'currency', 'base_currency',
                     'reporting_currency', 'exchange_rate', 'is_valid', 'exclusion_reason',
@@ -246,6 +270,9 @@ class AdobeCommerceConnector
                 'client_id'                  => $fact['client_id'],
                 'customer_identity_hash'     => $fact['customer_identity_hash'],
                 'customer_id'                => $fact['customer_id'],
+                'customer_email'             => $fact['customer_email'] ?? null,
+                'customer_name'              => $fact['customer_name'] ?? null,
+                'company_name'               => $fact['company_name'] ?? null,
                 'first_valid_order_at'       => $fact['first_valid_order_at']->toDateTimeString(),
                 'latest_valid_order_at'      => $fact['latest_valid_order_at']->toDateTimeString(),
                 'lifetime_valid_order_count' => $fact['lifetime_valid_order_count'],
@@ -261,7 +288,7 @@ class AdobeCommerceConnector
             CommerceCustomerPurchaseFact::upsert(
                 $chunk,
                 ['client_id', 'customer_identity_hash'],
-                ['customer_id', 'first_valid_order_at', 'latest_valid_order_at', 'lifetime_valid_order_count', 'lifetime_net_revenue', 'is_registered_customer', 'refreshed_at', 'updated_at']
+                ['customer_id', 'customer_email', 'customer_name', 'company_name', 'first_valid_order_at', 'latest_valid_order_at', 'lifetime_valid_order_count', 'lifetime_net_revenue', 'is_registered_customer', 'refreshed_at', 'updated_at']
             );
         }
     }

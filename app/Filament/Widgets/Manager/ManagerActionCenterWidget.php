@@ -79,7 +79,15 @@ class ManagerActionCenterWidget extends BaseWidget
                     ->searchable()
                     ->url(fn (Finding $record): ?string => $record->jira_url)
                     ->openUrlInNewTab()
-                    ->color(fn (Finding $record): ?string => $record->jira_url ? 'primary' : null),
+                    ->color(fn (Finding $record): ?string => $record->jira_url ? 'primary' : null)
+                    ->description(function (Finding $record): ?string {
+                        if (!empty($record->account_identity_hash)) {
+                            $display = app(\App\Services\Intelligence\CustomerPurchaseAnalysisService::class)
+                                ->resolveCustomerIdentityDisplay($record->client_id, $record->account_identity_hash);
+                            return $display['account_label'];
+                        }
+                        return null;
+                    }),
 
                 Tables\Columns\TextColumn::make('severity')
                     ->label('Severity')

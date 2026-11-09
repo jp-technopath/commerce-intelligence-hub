@@ -6,6 +6,7 @@ use App\Enums\FindingPillar;
 use App\Enums\FindingStatus;
 use App\Models\Client;
 use App\Models\ClientFindingConfiguration;
+use App\Models\CommerceCustomerPurchaseFact;
 use App\Models\Finding;
 use App\Models\User;
 use App\Services\Security\ClientScopeContext;
@@ -163,8 +164,17 @@ class InitiativeAggregationService
         $uniqueAccounts = $findings->pluck('account_identity_hash')->filter()->unique();
         $accountCount = $uniqueAccounts->isNotEmpty() ? $uniqueAccounts->count() : $findings->count();
 
+        $clientId = $client?->id ?? $first?->client_id;
+        $factsByHash = collect();
+        if ($clientId && $uniqueAccounts->isNotEmpty()) {
+            $factsByHash = CommerceCustomerPurchaseFact::where('client_id', $clientId)
+                ->whereIn('customer_identity_hash', $uniqueAccounts)
+                ->get()
+                ->keyBy('customer_identity_hash');
+        }
+
         // 3. Build Account Drill-Down Records
-        $accounts = $findings->map(function (Finding $f) {
+        $accounts = $findings->map(function (Finding $f) use ($factsByHash) {
             $evidence = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: ($f->metadata_json['evidence'] ?? $f->metadata_json ?? []));
             $cadence = $evidence['cadence_days'] ?? $evidence['cadence'] ?? $evidence['regularity'] ?? 'Variable';
             if (is_numeric($cadence)) {
@@ -180,9 +190,43 @@ class InitiativeAggregationService
             $financialImpact = $isProvisional ? 0.0 : (float) ($f->estimated_revenue_impact ?? 0.0);
             $priorSpend = (float) ($f->estimated_revenue_impact ?? 0.0);
 
+            $rawLabel = $evidence['account_label'] ?? ($f->metadata_json['account_label'] ?? null);
+            $parsedName = null;
+            $parsedId = null;
+            if ($rawLabel && !str_starts_with($rawLabel, 'Account #')) {
+                if (preg_match('/^(.*?)\s*\(ID:\s*(\d+)\)$/', $rawLabel, $matches)) {
+                    $parsedName = trim($matches[1]);
+                    $parsedId = $matches[2];
+                } else {
+                    $parsedName = trim($rawLabel);
+                }
+            }
+
+            $fact = $accHash ? $factsByHash->get($accHash) : null;
+            $customerDisplay = CustomerPurchaseAnalysisService::formatCustomerDisplay(
+                customerIdentityHash: $accHash,
+                customerId: $fact?->customer_id ?? ($evidence['customer_id'] ?? $parsedId),
+                customerEmail: $fact?->customer_email ?? ($evidence['customer_email'] ?? null),
+                customerName: $fact?->customer_name ?? ($evidence['customer_name'] ?? $parsedName),
+                companyName: $fact?->company_name ?? ($evidence['company_name'] ?? null)
+            );
+
+            $accountLabel = ($rawLabel && !str_starts_with($rawLabel, 'Account #'))
+                ? $rawLabel
+                : $customerDisplay['display_label'];
+
             return [
                 'finding_id'                => $f->id,
-                'account_label'             => $evidence['account_label'] ?? ($f->metadata_json['account_label'] ?? ($accHash ? 'Account #' . substr($accHash, 0, 8) : $f->title)),
+                'account_label'             => $accountLabel,
+                'customer_display'          => $customerDisplay,
+                'customer_email'            => $customerDisplay['customer_email'],
+                'customer_name'             => $customerDisplay['customer_name'],
+                'company_name'              => $customerDisplay['company_name'],
+                'primary_name'              => $customerDisplay['primary_name'],
+                'customer_id'               => $customerDisplay['customer_id'],
+                'has_email'                 => $customerDisplay['has_email'],
+                'secondary_badge'           => $customerDisplay['secondary_badge'],
+                'short_hash'                => $customerDisplay['short_hash'],
                 'account_identity_hash'     => $accHash,
                 'account_hash'              => $accHash,
                 'is_provisional'            => $isProvisional,

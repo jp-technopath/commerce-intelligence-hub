@@ -121,6 +121,14 @@ class FindingResource extends Resource
                     ->searchable()
                     ->limit(50)
                     ->tooltip(fn (Finding $record) => $record->title)
+                    ->description(function (Finding $record): ?string {
+                        if (!empty($record->account_identity_hash)) {
+                            $display = app(\App\Services\Intelligence\CustomerPurchaseAnalysisService::class)
+                                ->resolveCustomerIdentityDisplay($record->client_id, $record->account_identity_hash);
+                            return $display['account_label'];
+                        }
+                        return null;
+                    })
                     ->wrap(),
 
                 Tables\Columns\TextColumn::make('finding_category')
@@ -418,6 +426,20 @@ class FindingResource extends Resource
                     Infolists\Components\TextEntry::make('finding_type')
                         ->label('Type')
                         ->fontFamily('mono'),
+
+                    Infolists\Components\TextEntry::make('customer_account_display')
+                        ->label('Customer Account')
+                        ->visible(fn (Finding $record): bool => !empty($record->account_identity_hash))
+                        ->state(function (Finding $record): string {
+                            $display = app(\App\Services\Intelligence\CustomerPurchaseAnalysisService::class)
+                                ->resolveCustomerIdentityDisplay($record->client_id, $record->account_identity_hash);
+                            return $display['account_label'];
+                        })
+                        ->helperText(function (Finding $record): ?string {
+                            $display = app(\App\Services\Intelligence\CustomerPurchaseAnalysisService::class)
+                                ->resolveCustomerIdentityDisplay($record->client_id, $record->account_identity_hash);
+                            return $display['secondary_badge'] ? "Reference: {$display['secondary_badge']}" : null;
+                        }),
                 ]),
 
             Infolists\Components\Section::make('Description')

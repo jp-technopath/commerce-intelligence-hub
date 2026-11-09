@@ -15,6 +15,17 @@ class FindingStatusTransition extends Model
 
     public $timestamps = false;
 
+    protected static function booted(): void
+    {
+        static::updating(function ($transition) {
+            throw new \RuntimeException('FindingStatusTransition audit records are immutable and cannot be modified.');
+        });
+
+        static::deleting(function ($transition) {
+            throw new \RuntimeException('FindingStatusTransition audit records are immutable and cannot be deleted.');
+        });
+    }
+
     protected $fillable = [
         'finding_id',
         'from_status',
