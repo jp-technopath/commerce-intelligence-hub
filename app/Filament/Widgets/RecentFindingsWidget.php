@@ -47,7 +47,15 @@ class RecentFindingsWidget extends BaseWidget
                     ->label('Client'),
 
                 Tables\Columns\TextColumn::make('title')
-                    ->limit(60),
+                    ->limit(60)
+                    ->description(function (Finding $record): ?string {
+                        if (!empty($record->account_identity_hash)) {
+                            $display = app(\App\Services\Intelligence\CustomerPurchaseAnalysisService::class)
+                                ->resolveCustomerIdentityDisplay($record->client_id, $record->account_identity_hash);
+                            return $display['account_label'];
+                        }
+                        return null;
+                    }),
 
                 Tables\Columns\TextColumn::make('severity')
                     ->badge()

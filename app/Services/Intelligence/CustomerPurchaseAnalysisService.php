@@ -151,6 +151,10 @@ class CustomerPurchaseAnalysisService
 
         $this->accountProfileCache[$cacheKey] = [
             'customer_identity_hash' => $customerIdentityHash,
+            'customer_id'            => $fact->customer_id,
+            'customer_email'         => $fact->customer_email,
+            'customer_name'          => $fact->customer_name,
+            'company_name'           => $fact->company_name,
             'is_registered'          => (bool) $fact->is_registered_customer,
             'identity_confidence'    => $identityConfidence,
             'order_count'            => $orderCount,
@@ -165,6 +169,136 @@ class CustomerPurchaseAnalysisService
         ];
 
         return $this->accountProfileCache[$cacheKey];
+    }
+
+    /**
+     * Resolve authentic human-readable customer display attributes for a given client and identity hash.
+     * Prioritizes purchase facts (registered accounts) and falls back to verified orders.
+     * Never generates fictional emails and guarantees safe client segregation.
+     *
+     * @return array{
+     *   customer_identity_hash: ?string,
+     *   short_hash: ?string,
+     *   customer_id: ?string,
+     *   customer_email: ?string,
+     *   customer_name: ?string,
+     *   company_name: ?string,
+     *   primary_name: ?string,
+     *   has_email: bool,
+     *   display_label: string,
+     *   secondary_badge: ?string
+     * }
+     */
+    protected static array $resolvedCustomerDisplayCache = [];
+
+    public function resolveCustomerIdentityDisplay(Client|int $client, ?string $customerIdentityHash): array
+    {
+        if (empty($customerIdentityHash)) {
+            return self::formatCustomerDisplay(null);
+        }
+
+        $clientId = $client instanceof Client ? $client->id : (int) $client;
+        $cacheKey = "{$clientId}:{$customerIdentityHash}";
+
+        if (isset(self::$resolvedCustomerDisplayCache[$cacheKey])) {
+            return self::$resolvedCustomerDisplayCache[$cacheKey];
+        }
+
+        // 1. Check purchase facts (reconciled, verified)
+        $fact = CommerceCustomerPurchaseFact::where('client_id', $clientId)
+            ->where('customer_identity_hash', $customerIdentityHash)
+            ->first();
+
+        $custId = $fact?->customer_id;
+        $custEmail = $fact?->customer_email;
+        $custName = $fact?->customer_name;
+        $companyName = $fact?->company_name;
+
+        // 2. Fallback to latest valid order with contact info if fact is missing details
+        if (empty($custEmail) || (empty($custName) && empty($companyName))) {
+            $latestOrder = CommerceOrder::where('client_id', $clientId)
+                ->where('customer_identity_hash', $customerIdentityHash)
+                ->where('is_valid', true)
+                ->where(function ($query) {
+                    $query->whereNotNull('customer_email')
+                        ->orWhereNotNull('customer_name')
+                        ->orWhereNotNull('company_name');
+                })
+                ->orderBy('order_date', 'desc')
+                ->first();
+
+            if ($latestOrder) {
+                $custId = $custId ?: $latestOrder->registered_customer_id;
+                $custEmail = $custEmail ?: $latestOrder->customer_email;
+                $custName = $custName ?: $latestOrder->customer_name;
+                $companyName = $companyName ?: $latestOrder->company_name;
+            }
+        }
+
+        $formatted = self::formatCustomerDisplay(
+            customerIdentityHash: $customerIdentityHash,
+            customerId: $custId,
+            customerEmail: $custEmail,
+            customerName: $custName,
+            companyName: $companyName
+        );
+
+        return self::$resolvedCustomerDisplayCache[$cacheKey] = $formatted;
+    }
+
+    /**
+     * Canonical formatting of customer display information across Forge.
+     */
+    public static function formatCustomerDisplay(
+        ?string $customerIdentityHash,
+        ?string $customerId = null,
+        ?string $customerEmail = null,
+        ?string $customerName = null,
+        ?string $companyName = null
+    ): array {
+        $shortHash = $customerIdentityHash ? substr($customerIdentityHash, 0, 8) : null;
+        $hasEmail = ! empty($customerEmail);
+        $hasCompany = ! empty($companyName);
+        $hasName = ! empty($customerName);
+        $hasId = ! empty($customerId);
+
+        // Distinguish company name from individual contact name
+        $primaryName = null;
+        if ($hasCompany && $hasName && strcasecmp(trim($companyName), trim($customerName)) !== 0) {
+            $primaryName = trim($companyName) . ' (' . trim($customerName) . ')';
+        } elseif ($hasCompany) {
+            $primaryName = trim($companyName);
+        } elseif ($hasName) {
+            $primaryName = trim($customerName);
+        } elseif ($hasId) {
+            $primaryName = "Customer #{$customerId}";
+        } elseif ($shortHash) {
+            $primaryName = "Account #{$shortHash}";
+        } else {
+            $primaryName = "Customer";
+        }
+
+        if ($hasEmail) {
+            $displayLabel = "{$primaryName} ({$customerEmail})";
+        } else {
+            $displayLabel = "{$primaryName} (Email unavailable)";
+        }
+
+        $secondaryBadge = $hasId ? "CID: #{$customerId}" : ($shortHash ? "#{$shortHash}" : null);
+
+        return [
+            'customer_identity_hash' => $customerIdentityHash,
+            'short_hash'             => $shortHash,
+            'customer_id'            => $customerId,
+            'customer_email'         => $customerEmail,
+            'customer_name'          => $customerName,
+            'company_name'           => $companyName,
+            'primary_name'           => $primaryName,
+            'has_email'              => $hasEmail,
+            'display_label'          => $displayLabel,
+            'account_label'          => $displayLabel,
+            'secondary_badge'        => $secondaryBadge,
+        ];
     }
 
     /**

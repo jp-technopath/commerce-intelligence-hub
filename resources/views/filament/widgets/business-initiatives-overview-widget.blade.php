@@ -278,12 +278,30 @@
                                     <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition">
                                         {{-- Account Identity --}}
                                         <td class="p-3 align-top">
-                                            <div class="font-bold text-gray-900 dark:text-gray-100">
-                                                {{ $acc['account_label'] }}
+                                            <div class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 flex-wrap">
+                                                <span>{{ $acc['primary_name'] ?? $acc['customer_name'] ?? $acc['account_label'] }}</span>
+                                                @if (!empty($acc['customer_id']))
+                                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800" title="Magento Customer ID">
+                                                        CID: #{{ $acc['customer_id'] }}
+                                                    </span>
+                                                @endif
                                             </div>
+
+                                            @if (!empty($acc['customer_email']))
+                                                <div class="text-xs text-primary-600 dark:text-primary-400 flex items-center gap-1 mt-0.5 font-medium">
+                                                    <svg class="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                                                    <span>{{ $acc['customer_email'] }}</span>
+                                                </div>
+                                            @else
+                                                <div class="text-[11px] text-gray-400 italic mt-0.5 flex items-center gap-1">
+                                                    <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+                                                    <span>Email unavailable</span>
+                                                </div>
+                                            @endif
+
                                             @if (!empty($acc['account_hash'] ?? $acc['account_identity_hash'] ?? null))
-                                                <div class="text-[10px] text-gray-400 font-mono mt-0.5">
-                                                    {{ substr($acc['account_hash'] ?? $acc['account_identity_hash'], 0, 16) }}...
+                                                <div class="text-[10px] text-gray-400 font-mono mt-0.5" title="HMAC Customer Identity Hash: {{ $acc['account_hash'] ?? $acc['account_identity_hash'] }}">
+                                                    #{{ substr($acc['account_hash'] ?? $acc['account_identity_hash'], 0, 8) }}
                                                 </div>
                                             @endif
                                             @if (!empty($acc['is_provisional']))
@@ -529,6 +547,26 @@
                 <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Assign Finding to Team Member</h3>
                 <p class="text-xs text-gray-500">Select an authorized Forge team member eligible to work on this customer account.</p>
 
+                @php $modalCust = $this->getActiveFindingCustomerDisplay(); @endphp
+                @if (!empty($modalCust))
+                    <div class="p-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-lg border border-gray-200 dark:border-gray-700/60 flex items-center justify-between text-xs">
+                        <div>
+                            <span class="text-gray-500 font-medium">Customer:</span>
+                            <strong class="text-gray-900 dark:text-gray-100 ml-1">{{ $modalCust['primary_name'] ?? 'Account' }}</strong>
+                            @if ($modalCust['has_email'])
+                                <span class="text-primary-600 dark:text-primary-400 font-normal ml-1">({{ $modalCust['customer_email'] }})</span>
+                            @else
+                                <span class="text-gray-400 italic ml-1">(Email unavailable)</span>
+                            @endif
+                        </div>
+                        @if ($modalCust['secondary_badge'])
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                {{ $modalCust['secondary_badge'] }}
+                            </span>
+                        @endif
+                    </div>
+                @endif
+
                 <div class="space-y-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Assignee</label>
@@ -601,6 +639,26 @@
                     </button>
                 </div>
                 <p class="text-xs text-gray-500">Create an execution ticket in the customer's Jira project with commercial evidence and account context pre-filled.</p>
+
+                @php $modalCust = $this->getActiveFindingCustomerDisplay(); @endphp
+                @if (!empty($modalCust))
+                    <div class="p-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-lg border border-gray-200 dark:border-gray-700/60 flex items-center justify-between text-xs">
+                        <div>
+                            <span class="text-gray-500 font-medium">Customer:</span>
+                            <strong class="text-gray-900 dark:text-gray-100 ml-1">{{ $modalCust['primary_name'] ?? 'Account' }}</strong>
+                            @if ($modalCust['has_email'])
+                                <span class="text-primary-600 dark:text-primary-400 font-normal ml-1">({{ $modalCust['customer_email'] }})</span>
+                            @else
+                                <span class="text-gray-400 italic ml-1">(Email unavailable)</span>
+                            @endif
+                        </div>
+                        @if ($modalCust['secondary_badge'])
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                {{ $modalCust['secondary_badge'] }}
+                            </span>
+                        @endif
+                    </div>
+                @endif
 
                 <div class="space-y-3">
                     <div>
@@ -744,6 +802,26 @@
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
                 <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Complete Commercial Action</h3>
                 <p class="text-xs text-gray-500">Record commercial outreach or technical work completed. Note: Marking an action completed documents representative execution and initiates the 30-day outcome observation window — it does NOT assume or claim recovered revenue.</p>
+
+                @php $modalCust = $this->getActiveFindingCustomerDisplay(); @endphp
+                @if (!empty($modalCust))
+                    <div class="p-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-lg border border-gray-200 dark:border-gray-700/60 flex items-center justify-between text-xs">
+                        <div>
+                            <span class="text-gray-500 font-medium">Customer:</span>
+                            <strong class="text-gray-900 dark:text-gray-100 ml-1">{{ $modalCust['primary_name'] ?? 'Account' }}</strong>
+                            @if ($modalCust['has_email'])
+                                <span class="text-primary-600 dark:text-primary-400 font-normal ml-1">({{ $modalCust['customer_email'] }})</span>
+                            @else
+                                <span class="text-gray-400 italic ml-1">(Email unavailable)</span>
+                            @endif
+                        </div>
+                        @if ($modalCust['secondary_badge'])
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                {{ $modalCust['secondary_badge'] }}
+                            </span>
+                        @endif
+                    </div>
+                @endif
 
                 <div class="space-y-3">
                     <div>
@@ -929,6 +1007,26 @@
                         <x-heroicon-m-x-mark class="w-5 h-5" />
                     </button>
                 </div>
+
+                @php $modalCust = $this->getActiveFindingCustomerDisplay(); @endphp
+                @if (!empty($modalCust))
+                    <div class="p-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-lg border border-gray-200 dark:border-gray-700/60 flex items-center justify-between text-xs">
+                        <div>
+                            <span class="text-gray-500 font-medium">Customer:</span>
+                            <strong class="text-gray-900 dark:text-gray-100 ml-1">{{ $modalCust['primary_name'] ?? 'Account' }}</strong>
+                            @if ($modalCust['has_email'])
+                                <span class="text-primary-600 dark:text-primary-400 font-normal ml-1">({{ $modalCust['customer_email'] }})</span>
+                            @else
+                                <span class="text-gray-400 italic ml-1">(Email unavailable)</span>
+                            @endif
+                        </div>
+                        @if ($modalCust['secondary_badge'])
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                {{ $modalCust['secondary_badge'] }}
+                            </span>
+                        @endif
+                    </div>
+                @endif
 
                 <div class="space-y-3 max-h-80 overflow-y-auto pr-1">
                     @forelse ($auditFinding->status_history_json ?? [] as $entry)

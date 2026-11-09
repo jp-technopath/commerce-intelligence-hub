@@ -11,6 +11,7 @@ use App\Models\Finding;
 use App\Models\PmProject;
 use App\Models\PmWorkItem;
 use App\Models\User;
+use App\Services\Intelligence\CustomerPurchaseAnalysisService;
 use App\Services\Intelligence\InitiativeAggregationService;
 use App\Services\PM\FindingPmSyncService;
 use App\Services\PM\ProjectManagementProvider;
@@ -79,6 +80,32 @@ class BusinessInitiativesOverviewWidget extends Widget
     #[Url]
     public ?int $auditFindingId = null;
 
+    public ?array $activeFindingCustomerDisplay = null;
+
+    public function getActiveFindingCustomerDisplay(): ?array
+    {
+        if ($this->activeFindingCustomerDisplay !== null) {
+            return $this->activeFindingCustomerDisplay;
+        }
+
+        $findingId = $this->assignFindingId
+            ?: ($this->createPmFindingId
+            ?: ($this->resolveFindingId
+            ?: $this->auditFindingId));
+
+        if (! $findingId) {
+            return null;
+        }
+
+        $finding = Finding::find($findingId);
+        if (! $finding || ! $finding->account_identity_hash) {
+            return null;
+        }
+
+        return app(CustomerPurchaseAnalysisService::class)
+            ->resolveCustomerIdentityDisplay($finding->client_id, $finding->account_identity_hash);
+    }
+
     public function mount(): void
     {
         if (request()->has('createPmFindingId')) {
@@ -103,15 +130,13 @@ class BusinessInitiativesOverviewWidget extends Widget
             $this->openBatchApproveModal($this->batchApproveInitiativeId);
         }
         if (request()->has('assignFindingId')) {
-            $this->assignFindingId = (int) request()->query('assignFindingId');
-            $finding = Finding::find($this->assignFindingId);
-            $this->assigneeUserId = $finding?->responsible_user_id ?? Auth::id();
+            $this->openAssignModal((int) request()->query('assignFindingId'));
         }
         if (request()->has('resolveFindingId')) {
-            $this->resolveFindingId = (int) request()->query('resolveFindingId');
+            $this->openResolveModal((int) request()->query('resolveFindingId'));
         }
         if (request()->has('auditFindingId')) {
-            $this->auditFindingId = (int) request()->query('auditFindingId');
+            $this->openAuditModal((int) request()->query('auditFindingId'));
         }
 
         // Default to all clients (or first assigned client if restricted)
@@ -310,6 +335,7 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->assigneeUserId = $finding->responsible_user_id ?? Auth::id();
         $this->assignTargetRole = $finding->target_role ?? 'sales';
         $this->assignNotes = null;
+        $this->activeFindingCustomerDisplay = app(CustomerPurchaseAnalysisService::class)->resolveCustomerIdentityDisplay($finding->client_id, $finding->account_identity_hash);
     }
 
     public function closeAssignModal(): void
@@ -318,6 +344,7 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->assigneeUserId = null;
         $this->assignTargetRole = 'sales';
         $this->assignNotes = null;
+        $this->activeFindingCustomerDisplay = null;
     }
 
     public function confirmAssign(): void
@@ -380,7 +407,9 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->createPmFindingId = $findingId;
         $this->createPmTitle = "[{$finding->client->name}] " . $finding->title;
 
-        $accountLabel = $finding->metadata_json['account_label'] ?? 'Target Account';
+        $display = app(CustomerPurchaseAnalysisService::class)->resolveCustomerIdentityDisplay($finding->client_id, $finding->account_identity_hash);
+        $this->activeFindingCustomerDisplay = $display;
+        $accountLabel = $display['primary_name'] ?? ($display['customer_id'] ? "Customer #{$display['customer_id']}" : ($display['short_hash'] ? "Account #{$display['short_hash']}" : ($finding->metadata_json['account_label'] ?? 'Target Account')));
         $revenue = $finding->estimated_revenue_impact ? '$' . number_format((float) $finding->estimated_revenue_impact, 2) : 'N/A';
 
         $this->createPmDescription = "### Commercial Opportunity Summary\n\n"
@@ -407,6 +436,7 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->createPmProjectId = null;
         $this->createPmTitle = null;
         $this->createPmDescription = null;
+        $this->activeFindingCustomerDisplay = null;
     }
 
     public function confirmCreatePmWorkItem(): void
@@ -541,6 +571,7 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->resolveFindingId = $findingId;
         $this->resolutionNotes = null;
         $this->businessOutcome = 'reorder_secured';
+        $this->activeFindingCustomerDisplay = app(CustomerPurchaseAnalysisService::class)->resolveCustomerIdentityDisplay($finding->client_id, $finding->account_identity_hash);
     }
 
     public function closeResolveModal(): void
@@ -548,6 +579,7 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->resolveFindingId = null;
         $this->resolutionNotes = null;
         $this->businessOutcome = 'reorder_secured';
+        $this->activeFindingCustomerDisplay = null;
     }
 
     public function confirmResolve(): void
@@ -625,11 +657,13 @@ class BusinessInitiativesOverviewWidget extends Widget
         $this->authorizeFindingAccess($finding, 'view');
 
         $this->auditFindingId = $findingId;
+        $this->activeFindingCustomerDisplay = app(CustomerPurchaseAnalysisService::class)->resolveCustomerIdentityDisplay($finding->client_id, $finding->account_identity_hash);
     }
 
     public function closeAuditModal(): void
     {
         $this->auditFindingId = null;
+        $this->activeFindingCustomerDisplay = null;
     }
 
     /**

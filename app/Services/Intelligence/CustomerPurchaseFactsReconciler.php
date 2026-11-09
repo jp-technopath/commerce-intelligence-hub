@@ -62,6 +62,9 @@ class CustomerPurchaseFactsReconciler
                 client_id,
                 customer_identity_hash,
                 MAX(registered_customer_id) as customer_id,
+                MAX(customer_email) as customer_email,
+                MAX(customer_name) as customer_name,
+                MAX(company_name) as company_name,
                 MIN(order_date) as first_valid_order_at,
                 MAX(order_date) as latest_valid_order_at,
                 COUNT(*) as lifetime_valid_order_count,
@@ -149,12 +152,21 @@ class CustomerPurchaseFactsReconciler
             }
 
             // B. Chunked bulk upsert of authoritative derived facts
+            $existingFacts = DB::table('commerce_customer_purchase_facts')
+                ->where('client_id', $clientId)
+                ->get()
+                ->keyBy('customer_identity_hash');
+
             $factUpsertBatch = [];
             foreach ($authoritative as $row) {
+                $existing = $existingFacts->get($row->customer_identity_hash);
                 $factUpsertBatch[] = [
                     'client_id'                  => $clientId,
                     'customer_identity_hash'     => $row->customer_identity_hash,
-                    'customer_id'                => $row->customer_id,
+                    'customer_id'                => $row->customer_id ?? $existing?->customer_id,
+                    'customer_email'             => $row->customer_email ?: ($existing?->customer_email ?: null),
+                    'customer_name'              => $row->customer_name ?: ($existing?->customer_name ?: null),
+                    'company_name'               => $row->company_name ?: ($existing?->company_name ?: null),
                     'first_valid_order_at'       => $row->first_valid_order_at,
                     'latest_valid_order_at'      => $row->latest_valid_order_at,
                     'lifetime_valid_order_count' => $row->lifetime_valid_order_count,
@@ -172,6 +184,9 @@ class CustomerPurchaseFactsReconciler
                     ['client_id', 'customer_identity_hash'],
                     [
                         'customer_id',
+                        'customer_email',
+                        'customer_name',
+                        'company_name',
                         'first_valid_order_at',
                         'latest_valid_order_at',
                         'lifetime_valid_order_count',

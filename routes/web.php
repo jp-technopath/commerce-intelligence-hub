@@ -9,6 +9,21 @@ Route::get('/', fn () => redirect('/admin'));
 
 Route::get('/login', fn () => redirect('/admin/login'))->name('login');
 
+if (app()->environment('local')) {
+    Route::middleware('web')->get('/dev/impersonate/{id}', function ($id) {
+        $user = \App\Models\User::findOrFail($id);
+        auth()->login($user);
+        $redirectUrl = request('redirect', '/admin/findings');
+        $query = request()->query();
+        unset($query['redirect']);
+        $queryString = http_build_query($query);
+        if ($queryString) {
+            $redirectUrl .= (str_contains($redirectUrl, '?') ? '&' : '?') . $queryString;
+        }
+        return redirect($redirectUrl);
+    });
+}
+
 // Google OAuth2 — GA4 authorization flow
 // Protected by Filament's auth: only logged-in panel users can initiate
 Route::middleware(['web', 'auth'])->group(function () {
