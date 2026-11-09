@@ -193,5 +193,89 @@ return [
         'storage_path'     => 'reports/shadow_mode',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Business Opportunity Intelligence MVP 1 Defaults
+    |--------------------------------------------------------------------------
+    | Global baseline configuration for customer opportunity detectors.
+    | Resolves customer-level overrides through ClientFindingConfiguration.
+    */
+    'opportunity_defaults' => [
+        'opportunity.b2b_account_reactivation' => [
+            'key'                  => 'opportunity.b2b_account_reactivation',
+            'name'                 => 'High-Value Customer Reactivation',
+            'enabled'              => true,
+            'evaluation_frequency' => 'daily',
+            'min_order_count'      => 3,
+            'thresholds'           => [
+                'dormancy_multiplier'   => 1.5,
+                'max_dormancy_days'     => 180,
+                'spend_percentile_tier' => 80,
+                'min_spend_override'    => null,
+                'min_client_history_days' => 180,
+            ],
+            'business_objectives' => [
+                'priority_boost' => true,
+                'strategic_goal' => 'B2B Wholesale Retention',
+            ],
+            'default_owner_role' => 'account_manager',
+        ],
+        'opportunity.replenishment_cadence' => [
+            'key'                  => 'opportunity.replenishment_cadence',
+            'name'                 => 'Repeat Purchasing & Replenishment',
+            'enabled'              => true,
+            'evaluation_frequency' => 'weekly',
+            'min_order_count'      => 3,
+            'thresholds'           => [
+                'lead_window_days' => 5,
+                'lag_window_days'  => 15,
+                'max_variance_cv'  => 0.5,
+            ],
+            'business_objectives' => [
+                'priority_boost' => false,
+                'strategic_goal' => 'Consumable Reorder Capture',
+            ],
+            'default_owner_role' => 'growth_marketer',
+        ],
+        'risk.account_contraction' => [
+            'key'                  => 'risk.account_contraction',
+            'name'                 => 'Customer Revenue Contraction',
+            'enabled'              => true,
+            'evaluation_frequency' => 'weekly',
+            'min_order_count'      => 3,
+            'thresholds'           => [
+                'contraction_threshold_pct' => 25.0,
+                'baseline_period_days'      => 90,
+                'evaluation_period_days'    => 90,
+                'spend_percentile_tier'     => 70,
+                'min_client_history_days'   => 180,
+            ],
+            'business_objectives' => [
+                'priority_boost' => true,
+                'strategic_goal' => 'Key Account Churn Prevention',
+            ],
+            'default_owner_role' => 'account_manager',
+        ],
+        'opportunity.long_term_winback' => [
+            'key'                  => 'opportunity.long_term_winback',
+            'name'                 => 'Long-Term Account Winback',
+            'enabled'              => true,
+            'evaluation_frequency' => 'monthly',
+            'min_order_count'      => 3,
+            'thresholds'           => [
+                'min_dormancy_days'       => 181,
+                'max_dormancy_days'       => 730,
+                'spend_percentile_tier'   => 80,
+                'min_client_history_days' => 365,
+            ],
+            'business_objectives' => [
+                'priority_boost' => true,
+                'strategic_goal' => 'Enterprise Winback Campaign',
+            ],
+            'default_owner_role' => 'executive_sales',
+        ],
+    ],
+
 ];
+
 

@@ -2,18 +2,71 @@
 
 namespace App\Filament\Resources\FindingResource\Pages;
 
+use App\Enums\FindingPillar;
+use App\Enums\FindingStatus;
 use App\Filament\Resources\FindingResource;
+use App\Filament\Widgets\BusinessInitiativesOverviewWidget;
 use App\Jobs\Intelligence\GenerateAIAnalysis;
 use App\Models\Client;
+use App\Models\Finding;
 use App\Services\Intelligence\ChangeDetectionEngine;
 use Filament\Actions;
 use Filament\Forms;
 use Filament\Notifications\Notification;
+use Filament\Resources\Components\Tab;
 use Filament\Resources\Pages\ListRecords;
+use Illuminate\Database\Eloquent\Builder;
 
 class ListFindings extends ListRecords
 {
     protected static string $resource = FindingResource::class;
+
+    protected function getHeaderWidgets(): array
+    {
+        return [
+            BusinessInitiativesOverviewWidget::class,
+        ];
+    }
+
+    public function getHeaderWidgetsColumns(): int | array
+    {
+        return 1;
+    }
+
+    public function getDefaultActiveTab(): string | int | null
+    {
+        return 'initiatives';
+    }
+
+    public function getTabs(): array
+    {
+        return [
+            'initiatives' => Tab::make('Strategic Initiatives')
+                ->icon('heroicon-m-briefcase')
+                ->badge(Finding::whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
+                    ->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
+                    ->count())
+                ->badgeColor('primary')
+                ->modifyQueryUsing(fn (Builder $query) => $query->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])),
+
+            'all_commercial' => Tab::make('All Commercial Opportunities')
+                ->icon('heroicon-m-chart-bar')
+                ->modifyQueryUsing(fn (Builder $query) => $query->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))),
+
+            'technical_health' => Tab::make('Technical & Data Health')
+                ->icon('heroicon-m-wrench-screwdriver')
+                ->badge(Finding::where('finding_pillar', FindingPillar::TechnicalHealth->value)
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
+                    ->count())
+                ->badgeColor('gray')
+                ->modifyQueryUsing(fn (Builder $query) => $query->where('finding_pillar', FindingPillar::TechnicalHealth->value)),
+
+            'archived' => Tab::make('Resolved / Dismissed')
+                ->icon('heroicon-m-archive-box')
+                ->modifyQueryUsing(fn (Builder $query) => $query->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])),
+        ];
+    }
 
     protected function getHeaderActions(): array
     {

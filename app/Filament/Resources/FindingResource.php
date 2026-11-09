@@ -9,6 +9,7 @@ use App\Filament\Resources\FindingResource\Pages;
 use App\Filament\Resources\FindingResource\RelationManagers;
 use App\Models\Client;
 use App\Models\Finding;
+use App\Models\User;
 use App\Services\Intelligence\AIAnalyst;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -129,10 +130,42 @@ class FindingResource extends Resource
                     ->formatStateUsing(fn (FindingCategory $state) => $state->label())
                     ->grow(false),
 
+                Tables\Columns\TextColumn::make('estimated_revenue_impact')
+                    ->label('Impact')
+                    ->money('USD')
+                    ->description(fn (Finding $record): ?string => $record->impact_nature instanceof \App\Enums\ImpactNature
+                        ? $record->impact_nature->label()
+                        : ($record->impact_nature ? \Illuminate\Support\Str::headline($record->impact_nature) : null))
+                    ->sortable()
+                    ->grow(false),
+
+                Tables\Columns\TextColumn::make('responsibleUser.name')
+                    ->label('Assigned')
+                    ->placeholder('Unassigned')
+                    ->sortable()
+                    ->grow(false),
+
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->color(fn (FindingStatus $state) => $state->color())
                     ->formatStateUsing(fn (FindingStatus $state) => $state->label())
+                    ->description(function (Finding $record): ?string {
+                        if ($record->isActionCompleted()) {
+                            if ($record->isOutcomeMeasured()) {
+                                if ($record->hasObservedPostActionOrders()) {
+                                    $observed = number_format($record->getObservedPostActionRevenue(), 0);
+                                    if ($record->hasModeledIncrementalLift()) {
+                                        $lift = number_format($record->getModeledIncrementalLift(), 0);
+                                        return "Observed: \${$observed} (Modeled Lift: \${$lift})";
+                                    }
+                                    return "Observed: \${$observed} (Within Baseline)";
+                                }
+                                return 'Outcome Measured (0 Orders)';
+                            }
+                            return 'Action Done (Awaiting Results)';
+                        }
+                        return null;
+                    })
                     ->sortable()
                     ->grow(false),
 
@@ -185,8 +218,7 @@ class FindingResource extends Resource
                     ->options(collect(FindingStatus::cases())->mapWithKeys(
                         fn ($s) => [$s->value => $s->label()]
                     ))
-                    ->multiple()
-                    ->default([FindingStatus::New->value, FindingStatus::Investigating->value]),
+                    ->multiple(),
 
                 Tables\Filters\SelectFilter::make('visibility_classification')
                     ->label('Visibility')
@@ -197,25 +229,106 @@ class FindingResource extends Resource
                     ->visible(fn () => ! auth()->user()?->isClientOnly()),
             ])
             ->actions([
-                Tables\Actions\Action::make('mark_investigating')
-                    ->label('Investigate')
+                Tables\Actions\Action::make('mark_under_review')
+                    ->label('Review')
                     ->icon('heroicon-o-eye')
                     ->color('warning')
                     ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && $r->status === FindingStatus::New)
-                    ->action(fn (Finding $r) => $r->update(['status' => FindingStatus::Investigating->value]))
-                    ->successNotificationTitle('Marked as investigating'),
+                    ->action(function (Finding $r) {
+                        $r->transitionTo(FindingStatus::UnderReview, auth()->user(), 'Marked under review in table');
+                    })
+                    ->successNotificationTitle('Marked as under review'),
+
+                Tables\Actions\Action::make('mark_approved')
+                    ->label('Approve')
+                    ->icon('heroicon-o-check-badge')
+                    ->color('success')
+                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && in_array($r->status, [FindingStatus::New, FindingStatus::UnderReview, FindingStatus::Investigating]))
+                    ->action(function (Finding $r) {
+                        $r->transitionTo(FindingStatus::Approved, auth()->user(), 'Approved in table');
+                    })
+                    ->successNotificationTitle('Approved finding'),
+
+                Tables\Actions\Action::make('assign_user')
+                    ->label('Assign')
+                    ->icon('heroicon-o-user-plus')
+                    ->color('primary')
+                    ->visible(fn () => ! auth()->user()?->isClientOnly())
+                    ->form([
+                        Forms\Components\Select::make('responsible_user_id')
+                            ->label('Forge Team Member')
+                            ->options(fn (Finding $r) => User::getAuthorizedUsersForClient($r->client_id)->pluck('name', 'id'))
+                            ->default(fn (Finding $r) => $r->responsible_user_id ?? auth()->id())
+                            ->required()
+                            ->searchable(),
+                        Forms\Components\Textarea::make('notes')
+                            ->label('Assignment Instructions / Notes')
+                            ->placeholder('Optional instructions for the assignee...'),
+                    ])
+                    ->action(function (Finding $r, array $data) {
+                        $assignee = User::find($data['responsible_user_id']);
+                        $r->transitionTo(FindingStatus::Assigned, auth()->user(), $data['notes'] ?? null, $assignee);
+                    })
+                    ->successNotificationTitle('Finding assigned'),
 
                 Tables\Actions\Action::make('mark_resolved')
-                    ->label('Resolve')
+                    ->label('Complete Action')
+                    ->modalHeading('Complete Commercial Action')
+                    ->modalDescription('Record representative outreach or technical action taken. Note: Marking an action complete documents operational execution and transfers the finding to outcome observation — it does NOT assume or claim recovered revenue.')
+                    ->modalSubmitActionLabel('Mark Action Completed')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
-                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && in_array($r->status, [
-                        FindingStatus::Investigating, FindingStatus::Accepted,
-                    ]))
-                    ->action(fn (Finding $r) => $r->update(['status' => FindingStatus::Resolved->value])),
+                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && ! in_array($r->status, [FindingStatus::Resolved, FindingStatus::Dismissed]))
+                    ->form([
+                        Forms\Components\Select::make('business_outcome')
+                            ->label('Action Type / Category')
+                            ->options([
+                                'reorder_secured'       => 'Reorder Secured',
+                                'meeting_held'          => 'Client Meeting Held',
+                                'quote_submitted'       => 'Quote / Proposal Submitted',
+                                'cadence_normalized'    => 'Account Cadence Normalized',
+                                'technical_fix_deployed'=> 'Technical Fix Deployed',
+                                'no_action_needed'      => 'Reviewed - No Immediate Action',
+                            ])
+                            ->default('reorder_secured')
+                            ->required(),
+                        Forms\Components\Textarea::make('resolution_notes')
+                            ->label('Action Taken & Resolution Notes')
+                            ->required()
+                            ->minLength(10)
+                            ->placeholder('Record what action was taken (min 10 characters)...'),
+                    ])
+                    ->action(function (Finding $r, array $data) {
+                        $r->transitionTo(FindingStatus::Resolved, auth()->user(), $data['resolution_notes'], null, $data['business_outcome'] ?? null);
+                    })
+                    ->successNotificationTitle('Action marked completed; observing revenue outcome'),
+
+                Tables\Actions\Action::make('mark_dismissed')
+                    ->label('Dismiss')
+                    ->icon('heroicon-o-x-circle')
+                    ->color('gray')
+                    ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && ! in_array($r->status, [FindingStatus::Resolved, FindingStatus::Dismissed]))
+                    ->form([
+                        Forms\Components\Textarea::make('dismissal_reason')
+                            ->label('Dismissal Reason')
+                            ->required()
+                            ->placeholder('Specify why this finding is being dismissed...'),
+                    ])
+                    ->action(function (Finding $r, array $data) {
+                        $r->transitionTo(FindingStatus::Dismissed, auth()->user(), $data['dismissal_reason']);
+                    })
+                    ->successNotificationTitle('Finding dismissed'),
+
+                Tables\Actions\Action::make('audit_trail')
+                    ->label('Audit Trail')
+                    ->icon('heroicon-o-clock')
+                    ->color('gray')
+                    ->modalHeading(fn (Finding $r) => "Audit History: {$r->title}")
+                    ->modalContent(fn (Finding $r) => view('filament.components.finding-audit-trail', ['finding' => $r]))
+                    ->modalSubmitAction(false),
 
                 Tables\Actions\Action::make('generate_ai')
-                    ->label('Generate AI Analysis')
+                    ->label('AI Analysis')
                     ->icon('heroicon-o-sparkles')
                     ->color('primary')
                     ->visible(fn (Finding $r) => ! auth()->user()?->isClientOnly() && ! $r->recommendations()->exists())

@@ -30,12 +30,14 @@ class Client extends Model
         'monitoring_config',
         'findings_comparison_period',
         'is_internal',
+        'business_profile_json',
     ];
 
     protected $casts = [
         'status' => ClientStatus::class,
         'monthly_allocated_hours' => 'integer',
         'monitoring_config' => 'array',
+        'business_profile_json' => 'array',
         'is_internal' => 'boolean',
     ];
 

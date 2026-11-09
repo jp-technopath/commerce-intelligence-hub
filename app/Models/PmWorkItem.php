@@ -129,6 +129,16 @@ class PmWorkItem extends Model
         return false;
     }
 
+    public function getTitleAttribute(): ?string
+    {
+        return $this->summary;
+    }
+
+    public function getStatusAttribute(): ?string
+    {
+        return $this->external_status;
+    }
+
     public function getEstimatedHoursAttribute(): float
     {
         return round($this->estimated_seconds / 3600, 1);
