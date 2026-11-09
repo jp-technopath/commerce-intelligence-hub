@@ -288,4 +288,83 @@ class BusinessInitiativesUiAndLifecycleTest extends TestCase
             ->assertSee('Technical & Data Health')
             ->assertSee('Resolved / Dismissed');
     }
+
+    public function test_list_findings_table_and_badges_filter_strictly_by_selected_client(): void
+    {
+        $this->actingAs($this->adminUser);
+
+        // Goldkamp finding
+        $gkFinding = Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'opportunity',
+            'fingerprint'      => hash('sha256', 'gk_wb_strict'),
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'title'            => 'Goldkamp Long-Term Winback Opportunity',
+        ]);
+
+        // Cambro finding
+        $cambroFinding = Finding::create([
+            'client_id'        => $this->cambro->id,
+            'finding_type'     => 'opportunity',
+            'fingerprint'      => hash('sha256', 'cambro_wb_strict'),
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'title'            => 'Cambro Long-Term Winback Opportunity',
+        ]);
+
+        // 1. Initial unfiltered state: both records visible
+        Livewire::test(ListFindings::class)
+            ->assertCanSeeTableRecords([$gkFinding, $cambroFinding]);
+
+        // 2. Filtered by Goldkamp via selectedClientId property or query:
+        // Must see Goldkamp finding, must NOT see Cambro finding
+        Livewire::test(ListFindings::class, ['selectedClientId' => $this->goldkamp->id])
+            ->assertCanSeeTableRecords([$gkFinding])
+            ->assertCanNotSeeTableRecords([$cambroFinding]);
+
+        // 3. Dispatch finding-client-filter-changed event with Goldkamp ID:
+        Livewire::test(ListFindings::class)
+            ->dispatch('finding-client-filter-changed', selectedClientId: $this->goldkamp->id)
+            ->assertSet('selectedClientId', $this->goldkamp->id)
+            ->assertCanSeeTableRecords([$gkFinding])
+            ->assertCanNotSeeTableRecords([$cambroFinding]);
+
+        // 4. Switch to Cambro:
+        Livewire::test(ListFindings::class, ['selectedClientId' => $this->goldkamp->id])
+            ->dispatch('finding-client-filter-changed', selectedClientId: $this->cambro->id)
+            ->assertSet('selectedClientId', $this->cambro->id)
+            ->assertCanSeeTableRecords([$cambroFinding])
+            ->assertCanNotSeeTableRecords([$gkFinding]);
+
+        // 5. Reset to all clients (null):
+        Livewire::test(ListFindings::class, ['selectedClientId' => $this->goldkamp->id])
+            ->dispatch('finding-client-filter-changed', selectedClientId: null)
+            ->assertSet('selectedClientId', null)
+            ->assertCanSeeTableRecords([$gkFinding, $cambroFinding]);
+    }
+
+    public function test_business_initiatives_widget_dispatches_client_and_pillar_events_and_receives_table_sync(): void
+    {
+        $this->actingAs($this->adminUser);
+
+        // Test widget dispatches events when selectedClientId changes
+        Livewire::test(BusinessInitiativesOverviewWidget::class)
+            ->set('selectedClientId', $this->goldkamp->id)
+            ->assertDispatched('finding-client-filter-changed', selectedClientId: $this->goldkamp->id)
+            ->assertDispatched('finding-filter-changed', selectedClientId: $this->goldkamp->id, selectedPillar: null);
+
+        // Test widget dispatches events when selectedPillar changes
+        Livewire::test(BusinessInitiativesOverviewWidget::class)
+            ->set('selectedPillar', 'growth_opportunity')
+            ->assertDispatched('finding-pillar-filter-changed', selectedPillar: 'growth_opportunity')
+            ->assertDispatched('finding-filter-changed', selectedClientId: null, selectedPillar: 'growth_opportunity');
+
+        // Test widget updates internal state when table dispatches client change
+        Livewire::test(BusinessInitiativesOverviewWidget::class)
+            ->dispatch('finding-client-filter-changed', selectedClientId: $this->cambro->id)
+            ->assertSet('selectedClientId', $this->cambro->id);
+    }
 }

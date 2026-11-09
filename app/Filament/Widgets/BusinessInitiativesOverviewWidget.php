@@ -19,6 +19,7 @@ use Filament\Widgets\Widget;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 
 class BusinessInitiativesOverviewWidget extends Widget
@@ -121,6 +122,40 @@ class BusinessInitiativesOverviewWidget extends Widget
                 $this->selectedClientId = (int) $assigned[0];
             }
         }
+    }
+
+    public function updatedSelectedClientId($value): void
+    {
+        $clientId = ! empty($value) ? (int) $value : null;
+        $this->dispatch('finding-client-filter-changed', selectedClientId: $clientId);
+        $this->dispatch('finding-filter-changed', selectedClientId: $clientId, selectedPillar: $this->selectedPillar);
+    }
+
+    public function updatedSelectedPillar($value): void
+    {
+        $pillar = ! empty($value) ? $value : null;
+        $this->dispatch('finding-pillar-filter-changed', selectedPillar: $pillar);
+        $this->dispatch('finding-filter-changed', selectedClientId: $this->selectedClientId ? (int) $this->selectedClientId : null, selectedPillar: $pillar);
+    }
+
+    #[On('finding-client-filter-changed')]
+    public function handleExternalClientFilterChanged(?int $selectedClientId = null): void
+    {
+        if ($this->selectedClientId === $selectedClientId) {
+            return;
+        }
+
+        $this->selectedClientId = $selectedClientId;
+    }
+
+    #[On('finding-pillar-filter-changed')]
+    public function handleExternalPillarFilterChanged(?string $selectedPillar = null): void
+    {
+        if ($this->selectedPillar === $selectedPillar) {
+            return;
+        }
+
+        $this->selectedPillar = $selectedPillar;
     }
 
     public function getClientsProperty(): Collection

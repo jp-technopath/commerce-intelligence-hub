@@ -16,15 +16,61 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Components\Tab;
 use Filament\Resources\Pages\ListRecords;
 use Illuminate\Database\Eloquent\Builder;
+use Livewire\Attributes\On;
+use Livewire\Attributes\Url;
 
 class ListFindings extends ListRecords
 {
     protected static string $resource = FindingResource::class;
 
+    #[Url]
+    public ?int $selectedClientId = null;
+
+    #[Url]
+    public ?string $selectedPillar = null;
+
+    public function mount(): void
+    {
+        parent::mount();
+
+        if (request()->has('selectedClientId')) {
+            $this->selectedClientId = (int) request()->query('selectedClientId');
+        } elseif (! empty($this->tableFilters['client_id']['value'])) {
+            $this->selectedClientId = (int) $this->tableFilters['client_id']['value'];
+        } else {
+            $user = auth()->user();
+            if ($user && ! $user->isSuperAdmin()) {
+                $assigned = $user->getAssignedClientIds();
+                if (! in_array('*', $assigned, true) && count($assigned) === 1) {
+                    $this->selectedClientId = (int) $assigned[0];
+                }
+            }
+        }
+
+        if ($this->selectedClientId) {
+            $this->tableFilters['client_id']['value'] = $this->selectedClientId;
+        }
+
+        if (request()->has('selectedPillar')) {
+            $this->selectedPillar = request()->query('selectedPillar');
+        }
+    }
+
     protected function getHeaderWidgets(): array
     {
         return [
-            BusinessInitiativesOverviewWidget::class,
+            BusinessInitiativesOverviewWidget::make([
+                'selectedClientId' => $this->selectedClientId,
+                'selectedPillar'   => $this->selectedPillar,
+            ]),
+        ];
+    }
+
+    public function getWidgetData(): array
+    {
+        return [
+            'selectedClientId' => $this->selectedClientId,
+            'selectedPillar'   => $this->selectedPillar,
         ];
     }
 
@@ -38,12 +84,93 @@ class ListFindings extends ListRecords
         return 'initiatives';
     }
 
+    #[On('finding-client-filter-changed')]
+    public function handleClientFilterChanged(?int $selectedClientId = null): void
+    {
+        $this->selectedClientId = $selectedClientId;
+
+        if ($selectedClientId) {
+            $this->tableFilters['client_id']['value'] = $selectedClientId;
+        } else {
+            unset($this->tableFilters['client_id']['value']);
+        }
+
+        $this->resetPage();
+    }
+
+    #[On('finding-pillar-filter-changed')]
+    public function handlePillarFilterChanged(?string $selectedPillar = null): void
+    {
+        $this->selectedPillar = $selectedPillar;
+
+        if ($this->selectedPillar === FindingPillar::TechnicalHealth->value) {
+            $this->activeTab = 'technical_health';
+        } elseif (in_array($this->selectedPillar, [FindingPillar::GrowthOpportunity->value, FindingPillar::BusinessRisk->value], true)) {
+            if ($this->activeTab === 'technical_health') {
+                $this->activeTab = 'initiatives';
+            }
+        }
+
+        $this->resetPage();
+    }
+
+    #[On('finding-filter-changed')]
+    public function handleFindingFilterChanged(?int $selectedClientId = null, ?string $selectedPillar = null): void
+    {
+        $this->handleClientFilterChanged($selectedClientId);
+        $this->handlePillarFilterChanged($selectedPillar);
+    }
+
+    public function updatedTableFilters(): void
+    {
+        parent::updatedTableFilters();
+
+        $tableClientId = $this->tableFilters['client_id']['value'] ?? null;
+        $clientId = ! empty($tableClientId) ? (int) $tableClientId : null;
+
+        if ($this->selectedClientId !== $clientId) {
+            $this->selectedClientId = $clientId;
+            $this->dispatch('finding-client-filter-changed', selectedClientId: $clientId);
+        }
+    }
+
+    public function resetTableFiltersForm(): void
+    {
+        parent::resetTableFiltersForm();
+
+        if ($this->selectedClientId !== null) {
+            $this->selectedClientId = null;
+            $this->dispatch('finding-client-filter-changed', selectedClientId: null);
+        }
+    }
+
+    protected function getTableQuery(): ?Builder
+    {
+        $query = parent::getTableQuery();
+
+        if ($this->selectedClientId) {
+            $query->where('client_id', $this->selectedClientId);
+        }
+
+        if ($this->selectedPillar) {
+            if ($this->activeTab !== 'technical_health' && in_array($this->selectedPillar, [FindingPillar::GrowthOpportunity->value, FindingPillar::BusinessRisk->value], true)) {
+                $query->where('finding_pillar', $this->selectedPillar);
+            }
+        }
+
+        return $query;
+    }
+
     public function getTabs(): array
     {
+        $baseBadgeQuery = fn () => static::getResource()::getEloquentQuery()
+            ->when($this->selectedClientId, fn ($q) => $q->where('client_id', $this->selectedClientId));
+
         return [
             'initiatives' => Tab::make('Strategic Initiatives')
                 ->icon('heroicon-m-briefcase')
-                ->badge(Finding::whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
+                ->badge($baseBadgeQuery()
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
                     ->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
                     ->count())
                 ->badgeColor('primary')
@@ -52,11 +179,16 @@ class ListFindings extends ListRecords
 
             'all_commercial' => Tab::make('All Commercial Opportunities')
                 ->icon('heroicon-m-chart-bar')
+                ->badge($baseBadgeQuery()
+                    ->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
+                    ->count())
+                ->badgeColor('gray')
                 ->modifyQueryUsing(fn (Builder $query) => $query->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))),
 
             'technical_health' => Tab::make('Technical & Data Health')
                 ->icon('heroicon-m-wrench-screwdriver')
-                ->badge(Finding::where('finding_pillar', FindingPillar::TechnicalHealth->value)
+                ->badge($baseBadgeQuery()
+                    ->where('finding_pillar', FindingPillar::TechnicalHealth->value)
                     ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
                     ->count())
                 ->badgeColor('gray')
@@ -64,6 +196,10 @@ class ListFindings extends ListRecords
 
             'archived' => Tab::make('Resolved / Dismissed')
                 ->icon('heroicon-m-archive-box')
+                ->badge($baseBadgeQuery()
+                    ->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
+                    ->count())
+                ->badgeColor('gray')
                 ->modifyQueryUsing(fn (Builder $query) => $query->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])),
         ];
     }
