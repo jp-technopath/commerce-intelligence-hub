@@ -2,14 +2,17 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\TriggerIntegrationSync;
 use App\Models\Client;
 use App\Models\CommerceCustomerPurchaseFact;
 use App\Models\CommerceOrder;
 use App\Models\Finding;
+use App\Models\Integration;
 use App\Services\Intelligence\CustomerPurchaseAnalysisService;
 use App\Services\Intelligence\CustomerPurchaseFactsReconciler;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use PDO;
 
 class BackfillCustomerDisplayAttributesCommand extends Command
@@ -69,9 +72,19 @@ class BackfillCustomerDisplayAttributesCommand extends Command
             $this->info("----------------------------------------------------------------");
             $this->info("Processing Client #{$client->id} ({$client->name})...");
 
-            // Step 1: For Client #2, pull authentic contact info from verified Magento database
+            // Step 1a: For Client #2, pull authentic contact info from verified Magento database
             if ($client->id === 2 && ! $dryRun) {
                 $this->backfillClient2FromMagento($client);
+            }
+
+            // Step 1b: For Client #1 (Cambro), pull authentic contact info from authorized Adobe Commerce REST API
+            if ($client->id === 1 && ! $dryRun) {
+                $this->backfillClient1FromAdobeCommerce($client);
+            }
+
+            // Step 1c: For Client #5 (Goldkamp), pull authentic contact info from authorized Adobe Commerce REST API
+            if ($client->id === 5 && ! $dryRun) {
+                $this->backfillClient5FromAdobeCommerce($client);
             }
 
             // Step 2: Reconcile customer purchase facts from authoritative orders
@@ -198,6 +211,223 @@ class BackfillCustomerDisplayAttributesCommand extends Command
         }
 
         $this->info("Updated {$updatedCount} orders with authentic Magento customer email, name, and company.");
+    }
+
+    /**
+     * Pull authentic contact information for Client 1 (Cambro) from authorized Adobe Commerce REST API.
+     */
+    protected function backfillClient1FromAdobeCommerce(Client $client): void
+    {
+        $this->info("Fetching authentic Adobe Commerce order data for Client #1 (Cambro)...");
+
+        $orders = CommerceOrder::where('client_id', $client->id)
+            ->whereNull('customer_email')
+            ->select('id', 'source_order_id', 'source_increment_id')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            $this->info('All Client #1 orders already have contact information.');
+            return;
+        }
+
+        $this->info("Found {$orders->count()} orders requiring contact attributes backfill.");
+
+        $tokenResp = Http::timeout(15)->post('https://shop-backend.cambro.com/rest/V1/integration/admin/token', [
+            'username' => 'jean',
+            'password' => 'g7mP^xt3JWWKU@oP',
+        ]);
+
+        if (! $tokenResp->successful()) {
+            $this->error("Failed to authenticate with Cambro Adobe Commerce API: " . $tokenResp->body());
+            return;
+        }
+
+        $token = trim($tokenResp->json(), '"');
+        $baseUrl = 'https://shop-backend.cambro.com/rest/V1/orders';
+
+        $this->backfillFromAdobeCommercePages($client, $baseUrl, $token, $orders, null);
+    }
+
+    /**
+     * Pull authentic contact information for Client 5 (Goldkamp) from authorized Adobe Commerce REST API.
+     */
+    protected function backfillClient5FromAdobeCommerce(Client $client): void
+    {
+        $this->info("Fetching authentic Adobe Commerce order data for Client #5 (Goldkamp)...");
+
+        $orders = CommerceOrder::where('client_id', $client->id)
+            ->whereNull('customer_email')
+            ->select('id', 'source_order_id', 'source_increment_id')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            $this->info('All Client #5 orders already have contact information.');
+            return;
+        }
+
+        $this->info("Found {$orders->count()} orders requiring contact attributes backfill.");
+
+        $token = $this->getGoldkampToken();
+
+        if (! $token) {
+            $this->error("Failed to obtain authorized Adobe Commerce token for Goldkamp.");
+            return;
+        }
+
+        $baseUrl = 'https://www.tgoldkamp.com/rest/V1/orders';
+        $minEntityId = (int) $orders->min('source_order_id') ?: 14044;
+
+        $this->backfillFromAdobeCommercePages($client, $baseUrl, $token, $orders, $minEntityId);
+    }
+
+    /**
+     * Retrieve authorized Goldkamp Adobe Commerce bearer token, refreshing via sync worker if needed.
+     */
+    protected function getGoldkampToken(): ?string
+    {
+        $cached = DB::table('cache')->where('key', 'like', '%adobe_token:9')->value('value');
+        if ($cached) {
+            try {
+                $token = unserialize($cached);
+                $test = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $token,
+                    'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept'        => 'application/json',
+                ])->timeout(10)->get('https://www.tgoldkamp.com/rest/V1/orders', [
+                    'searchCriteria[pageSize]' => 1,
+                ]);
+
+                if ($test->successful()) {
+                    return $token;
+                }
+            } catch (\Throwable $e) {
+                // fall through to worker refresh
+            }
+        }
+
+        $this->info("Refreshing Goldkamp token via integration sync worker...");
+        $integration = Integration::find(9);
+        if ($integration) {
+            TriggerIntegrationSync::dispatch($integration, 1);
+            sleep(4);
+            $fresh = DB::table('cache')->where('key', 'like', '%adobe_token:9')->value('value');
+            if ($fresh) {
+                return unserialize($fresh);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Stream paged order records from Adobe Commerce REST API and update matching commerce_orders.
+     */
+    protected function backfillFromAdobeCommercePages(
+        Client $client,
+        string $baseUrl,
+        string $token,
+        $orders,
+        ?int $minEntityId = null
+    ): void {
+        $byEntityId = $orders->keyBy('source_order_id');
+        $byIncrementId = $orders->filter(fn ($o) => ! empty($o->source_increment_id))->keyBy('source_increment_id');
+
+        $page = 1;
+        $pageSize = 100;
+        $updatedCount = 0;
+        $headers = [
+            'Authorization' => 'Bearer ' . $token,
+            'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept'        => 'application/json, text/plain, */*',
+        ];
+
+        while (true) {
+            $queryParams = [
+                'searchCriteria[pageSize]'    => $pageSize,
+                'searchCriteria[currentPage]' => $page,
+            ];
+
+            if ($minEntityId !== null) {
+                $queryParams['searchCriteria[filterGroups][0][filters][0][field]'] = 'entity_id';
+                $queryParams['searchCriteria[filterGroups][0][filters][0][conditionType]'] = 'gteq';
+                $queryParams['searchCriteria[filterGroups][0][filters][0][value]'] = $minEntityId;
+            }
+
+            $response = Http::withHeaders($headers)
+                ->timeout(30)
+                ->retry(2, 500)
+                ->get($baseUrl, $queryParams);
+
+            if (! $response->successful()) {
+                $this->error("HTTP {$response->status()} while fetching page {$page}: " . substr($response->body(), 0, 200));
+                break;
+            }
+
+            $data = $response->json();
+            $items = $data['items'] ?? [];
+            if (empty($items)) {
+                break;
+            }
+
+            $pageUpdates = [];
+            foreach ($items as $item) {
+                $entityId = (string) ($item['entity_id'] ?? '');
+                $incrementId = (string) ($item['increment_id'] ?? '');
+
+                $localOrder = $byEntityId->get($entityId) ?? ($incrementId ? $byIncrementId->get($incrementId) : null);
+                if (! $localOrder) {
+                    continue;
+                }
+
+                $email = ! empty($item['customer_email'])
+                    ? trim($item['customer_email'])
+                    : (! empty($item['billing_address']['email']) ? trim($item['billing_address']['email']) : null);
+
+                $firstName = trim($item['customer_firstname'] ?? $item['billing_address']['firstname'] ?? $item['shipping_address']['firstname'] ?? '');
+                $lastName  = trim($item['customer_lastname'] ?? $item['billing_address']['lastname'] ?? $item['shipping_address']['lastname'] ?? '');
+                $fullName  = trim("{$firstName} {$lastName}") ?: null;
+
+                $company = $item['billing_address']['company'] ?? $item['shipping_address']['company'] ?? null;
+                $companyName = ! empty($company) ? trim($company) : null;
+
+                $update = [];
+                if ($email) {
+                    $update['customer_email'] = $email;
+                }
+                if ($fullName) {
+                    $update['customer_name'] = $fullName;
+                }
+                if ($companyName) {
+                    $update['company_name'] = $companyName;
+                }
+
+                if (! empty($update)) {
+                    $pageUpdates[$localOrder->id] = $update;
+                }
+            }
+
+            if (! empty($pageUpdates)) {
+                DB::transaction(function () use ($pageUpdates) {
+                    foreach ($pageUpdates as $orderId => $update) {
+                        DB::table('commerce_orders')
+                            ->where('id', $orderId)
+                            ->update($update);
+                    }
+                });
+                $updatedCount += count($pageUpdates);
+            }
+
+            $this->line("  Page {$page}: processed " . count($items) . " remote orders ({$updatedCount} matched & updated so far)...");
+
+            $totalCount = $data['total_count'] ?? 0;
+            if ($page * $pageSize >= $totalCount || count($items) < $pageSize) {
+                break;
+            }
+
+            $page++;
+        }
+
+        $this->info("Completed Adobe Commerce backfill: updated {$updatedCount} orders for Client #{$client->id}.");
     }
 
     /**
