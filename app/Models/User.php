@@ -375,4 +375,29 @@ class User extends Authenticatable implements FilamentUser
     {
         return \App\Services\ApprovalService::canApprove($this, $record, $actionType);
     }
+
+    /**
+     * Check if this user is authorized to access a given client/customer.
+     */
+    public function canAccessClient(int $clientId): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        $assignedClientIds = $this->getAssignedClientIds();
+        return in_array('*', $assignedClientIds, true) || in_array($clientId, $assignedClientIds, false);
+    }
+
+    /**
+     * Get Forge team members authorized to work on a specific customer/client.
+     *
+     * @return \Illuminate\Support\Collection<int, User>
+     */
+    public static function getAuthorizedUsersForClient(int $clientId): \Illuminate\Support\Collection
+    {
+        return static::all()->filter(function (User $user) use ($clientId) {
+            return $user->canAccessClient($clientId);
+        })->sortBy('name')->values();
+    }
 }

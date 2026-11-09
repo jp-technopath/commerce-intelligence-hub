@@ -42,6 +42,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton(ComputeEngineClient::class, GoogleComputeEngineClient::class);
         $this->app->singleton(WorkerIdentityVerifier::class, GoogleWorkerIdentityVerifier::class);
+        $this->app->singleton(\App\Services\PM\ProjectManagementProvider::class, \App\Services\PM\Providers\JiraProvider::class);
     }
 
     public function boot(): void

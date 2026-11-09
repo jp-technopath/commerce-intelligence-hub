@@ -7,7 +7,14 @@ use ZipArchive;
 
 class FindingConfigurationService
 {
-    public const SCHEMA_VERSION = '1.0';
+    public const SCHEMA_VERSION_V1 = '1.0';
+    public const SCHEMA_VERSION_V2 = '2.0';
+    public const SCHEMA_VERSION = self::SCHEMA_VERSION_V2;
+
+    public const SUPPORTED_SCHEMA_VERSIONS = [
+        self::SCHEMA_VERSION_V1,
+        self::SCHEMA_VERSION_V2,
+    ];
 
     public const ALLOWED_OPERATORS = [
         'greater_than',
@@ -76,20 +83,82 @@ class FindingConfigurationService
             ];
         }
 
+        $opportunityDefaults = array_values(config('intelligence.opportunity_defaults', []));
+
         return [
-            '$schema'            => './finding-rules.schema.json',
-            'schema_version'     => self::SCHEMA_VERSION,
-            'client'             => [
+            '$schema'               => './finding-rules.schema.json',
+            'schema_version'        => self::SCHEMA_VERSION_V2,
+            'client'                => [
                 'id'   => $client->id,
                 'name' => $client->name,
             ],
-            'available_metrics'  => $availableMetrics,
-            'allowed_operators'  => self::ALLOWED_OPERATORS,
-            'allowed_severities' => self::ALLOWED_SEVERITIES,
-            'allowed_periods'    => self::ALLOWED_PERIODS,
-            'rules'              => $rules,
-            '_instructions'      => 'Only use metrics listed in available_metrics. Only use supported operators, periods and severity values. Do not create executable code or unsupported fields. To customize, paste this entire JSON into ChatGPT or Claude and describe your desired alert rules.',
+            'available_metrics'     => $availableMetrics,
+            'allowed_operators'     => self::ALLOWED_OPERATORS,
+            'allowed_severities'    => self::ALLOWED_SEVERITIES,
+            'allowed_periods'       => self::ALLOWED_PERIODS,
+            'rules'                 => $rules,
+            'opportunity_detectors' => $opportunityDefaults,
+            '_instructions'         => 'Only use metrics listed in available_metrics. Only use supported operators, periods and severity values. In opportunity_detectors, configure thresholds, enabled status, and business goals. To customize, paste this entire JSON into ChatGPT or Claude and describe your desired business and technical finding rules.',
         ];
+    }
+
+    /**
+     * Resolve effective opportunity detector configuration for a client,
+     * merging customer-specific overrides over global defaults.
+     */
+    public function getEffectiveOpportunityConfiguration(Client $client): array
+    {
+        $defaults = config('intelligence.opportunity_defaults', []);
+        $activeConfig = \App\Models\ClientFindingConfiguration::forClient($client->id)->active()->first();
+
+        if (! $activeConfig || empty($activeConfig->configuration_json['opportunity_detectors'])) {
+            return $defaults;
+        }
+
+        $clientDetectors = $activeConfig->configuration_json['opportunity_detectors'];
+        $effective = $defaults;
+
+        foreach ($clientDetectors as $detector) {
+            $key = $detector['key'] ?? null;
+            if (! $key) {
+                continue;
+            }
+
+            if (isset($effective[$key])) {
+                $effective[$key] = array_replace_recursive($effective[$key], $detector);
+            } else {
+                $effective[$key] = $detector;
+            }
+        }
+
+        return $effective;
+    }
+
+    /**
+     * Safely upgrade an existing v1 ClientFindingConfiguration to v2.
+     */
+    public function upgradeToV2(\App\Models\ClientFindingConfiguration $config, ?int $userId = null): \App\Models\ClientFindingConfiguration
+    {
+        $data = $config->configuration_json;
+        $data['schema_version'] = self::SCHEMA_VERSION_V2;
+        if (empty($data['opportunity_detectors'])) {
+            $defaults = config('intelligence.opportunity_defaults', []);
+            $data['opportunity_detectors'] = array_values($defaults);
+        }
+
+        $newConfig = new \App\Models\ClientFindingConfiguration([
+            'client_id'          => $config->client_id,
+            'version'            => \App\Models\ClientFindingConfiguration::nextVersionForClient($config->client_id),
+            'configuration_json' => $data,
+            'schema_version'     => self::SCHEMA_VERSION_V2,
+            'rules_count'        => count($data['rules'] ?? []),
+            'status'             => 'active',
+            'created_by'         => $userId ?? $config->created_by,
+        ]);
+
+        $newConfig->activate();
+
+        return $newConfig;
     }
 
     /**
@@ -109,8 +178,8 @@ class FindingConfigurationService
             'properties'  => [
                 '$schema'            => ['type' => 'string'],
                 'schema_version'     => [
-                    'type'  => 'string',
-                    'const' => self::SCHEMA_VERSION,
+                    'type' => 'string',
+                    'enum' => self::SUPPORTED_SCHEMA_VERSIONS,
                 ],
                 'client'             => [
                     'type'       => 'object',
@@ -133,7 +202,7 @@ class FindingConfigurationService
                         'properties' => [
                             'key'           => [
                                 'type'    => 'string',
-                                'pattern' => '^[a-z0-9_-]+$',
+                                'pattern' => '^[a-z0-9_.-]+$',
                             ],
                             'name'          => ['type' => 'string', 'minLength' => 3, 'maxLength' => 120],
                             'enabled'       => ['type' => 'boolean'],
@@ -179,6 +248,23 @@ class FindingConfigurationService
                             ],
                         ],
                         'additionalProperties' => false,
+                    ],
+                ],
+                'opportunity_detectors' => [
+                    'type'  => 'array',
+                    'items' => [
+                        'type'       => 'object',
+                        'required'   => ['key', 'name', 'enabled'],
+                        'properties' => [
+                            'key'                  => ['type' => 'string'],
+                            'name'                 => ['type' => 'string'],
+                            'enabled'              => ['type' => 'boolean'],
+                            'evaluation_frequency' => ['type' => 'string'],
+                            'min_order_count'      => ['type' => 'integer'],
+                            'thresholds'           => ['type' => 'object'],
+                            'business_objectives'  => ['type' => 'object'],
+                            'default_owner_role'   => ['type' => 'string'],
+                        ],
                     ],
                 ],
             ],

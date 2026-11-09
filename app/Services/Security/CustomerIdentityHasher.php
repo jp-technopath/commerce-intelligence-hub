@@ -66,9 +66,16 @@ class CustomerIdentityHasher
             try {
                 return Crypt::decryptString($encryptedKey);
             } catch (\Exception $e) {
-                Log::warning('CustomerIdentityHasher: failed to decrypt HMAC key, re-generating', [
+                Log::critical('CustomerIdentityHasher: failed to decrypt HMAC key for client', [
                     'client_id' => $client->id,
+                    'error'     => $e->getMessage(),
                 ]);
+
+                throw new \RuntimeException(
+                    "CustomerIdentityHasher: Failed to decrypt HMAC key for Client #{$client->id}. " .
+                    "Silent key regeneration is blocked to prevent customer identity fragmentation. " .
+                    "Please verify APP_KEY or run administrative key rotation with fact reconciliation."
+                );
             }
         }
 

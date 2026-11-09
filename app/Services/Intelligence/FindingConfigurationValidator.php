@@ -40,11 +40,11 @@ class FindingConfigurationValidator
         }
 
         // 2. Validate schema_version
-        if (! isset($data['schema_version']) || (string) $data['schema_version'] !== FindingConfigurationService::SCHEMA_VERSION) {
+        if (! isset($data['schema_version']) || ! in_array((string) $data['schema_version'], FindingConfigurationService::SUPPORTED_SCHEMA_VERSIONS, true)) {
             $errors[] = sprintf(
-                'Unsupported schema version "%s". Expected "%s".',
+                'Unsupported schema version "%s". Expected one of: %s.',
                 $data['schema_version'] ?? 'null',
-                FindingConfigurationService::SCHEMA_VERSION
+                implode(', ', FindingConfigurationService::SUPPORTED_SCHEMA_VERSIONS)
             );
         }
 
@@ -200,6 +200,33 @@ class FindingConfigurationValidator
                         } elseif (! is_numeric($gateVal) || (float) $gateVal < 0) {
                             $errors[] = "Rule \"{$ruleName}\": quality gate \"{$gateKey}\" must be a positive number.";
                         }
+                    }
+                }
+            }
+        }
+
+        // 7. Validate opportunity_detectors if present
+        if (isset($data['opportunity_detectors'])) {
+            if (! is_array($data['opportunity_detectors'])) {
+                $errors[] = 'The "opportunity_detectors" field must be an array.';
+            } else {
+                $seenDetectorKeys = [];
+                foreach ($data['opportunity_detectors'] as $idx => $detector) {
+                    $dNum = $idx + 1;
+                    if (! is_array($detector)) {
+                        $errors[] = "Opportunity detector #{$dNum} must be a valid JSON object.";
+                        continue;
+                    }
+                    if (empty($detector['key']) || ! is_string($detector['key'])) {
+                        $errors[] = "Opportunity detector #{$dNum}: missing or invalid \"key\". Must be a non-empty string.";
+                    } elseif (isset($seenDetectorKeys[$detector['key']])) {
+                        $errors[] = "Duplicate opportunity detector key detected: \"{$detector['key']}\".";
+                    } else {
+                        $seenDetectorKeys[$detector['key']] = true;
+                    }
+
+                    if (! isset($detector['enabled']) || ! is_bool($detector['enabled'])) {
+                        $errors[] = "Opportunity detector #{$dNum}: \"enabled\" must be a boolean (true or false).";
                     }
                 }
             }

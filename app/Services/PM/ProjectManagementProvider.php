@@ -22,4 +22,6 @@ interface ProjectManagementProvider
     public function transitionWorkItem(PmWorkItem $workItem, string $semanticAction, ?User $actor = null): bool;
 
     public function updateEstimate(PmWorkItem $workItem, int $estimatedSeconds, ?User $actor = null): bool;
+
+    public function createWorkItem(PmProject $project, array $data, ?User $actor = null): PmWorkItem;
 }

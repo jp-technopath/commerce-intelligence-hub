@@ -7,7 +7,6 @@ use Illuminate\Support\Facades\Route;
 // Redirect root to the Filament admin panel
 Route::get('/', fn () => redirect('/admin'));
 
-// Named 'login' route required by Laravel's auth middleware
 Route::get('/login', fn () => redirect('/admin/login'))->name('login');
 
 // Google OAuth2 — GA4 authorization flow
