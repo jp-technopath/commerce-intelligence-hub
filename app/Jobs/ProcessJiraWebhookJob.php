@@ -81,18 +81,20 @@ class ProcessJiraWebhookJob implements ShouldQueue
         // 2. Process worklog events
         $worklogData = $this->payload['worklog'] ?? null;
         if ($worklogData && isset($workItem)) {
+            $site = $connection->getJiraSiteIdentity();
+            $canonicalKey = PmWorklog::generateCanonicalKey($site, (string) $worklogData['id']);
+
             if (in_array($this->webhookEvent, ['jira:worklog_deleted', 'worklog_deleted'], true)) {
-                PmWorklog::where('pm_connection_id', $connection->id)
-                    ->where('external_worklog_id', (string) $worklogData['id'])
-                    ->delete();
+                PmWorklog::where('canonical_worklog_key', $canonicalKey)->delete();
             } else {
                 PmWorklog::updateOrCreate(
+                    [
+                        'canonical_worklog_key' => $canonicalKey,
+                    ],
                     [
                         'client_id'           => $connection->client_id,
                         'pm_connection_id'    => $connection->id,
                         'external_worklog_id' => (string) $worklogData['id'],
-                    ],
-                    [
                         'pm_work_item_id'     => $workItem->id,
                         'author_name'         => $worklogData['author']['displayName'] ?? 'Unknown',
                         'time_spent_seconds'  => (int) ($worklogData['timeSpentSeconds'] ?? 0),

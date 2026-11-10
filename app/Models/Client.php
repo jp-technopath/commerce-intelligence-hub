@@ -342,6 +342,27 @@ class Client extends Model
     }
 
     /**
+     * Get normalized Jira project keys associated with this client.
+     * Supports comma-separated keys (e.g. 'GKSSC, GSM').
+     *
+     * @return array<string>
+     */
+    public function getNormalizedJiraProjectKeysAttribute(): array
+    {
+        $raw = $this->jira_project_key;
+        if (empty($raw)) {
+            return [];
+        }
+
+        $keys = array_map(
+            fn ($k) => strtoupper(trim($k)),
+            explode(',', $raw)
+        );
+
+        return array_values(array_unique(array_filter($keys, fn ($k) => $k !== '')));
+    }
+
+    /**
      * Check if this client represents an internal agency workspace or tracking project.
      */
     public function isInternal(): bool

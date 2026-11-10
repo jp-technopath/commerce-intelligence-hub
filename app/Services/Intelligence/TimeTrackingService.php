@@ -27,12 +27,18 @@ class TimeTrackingService
         // Query worklogs for this user within the month belonging to valid customer spaces
         $worklogs = PmWorklog::with(['client', 'workItem.project'])
             ->forCustomerSpacesWithJiraCode()
+            ->canonicalUnique()
             ->whereIn('user_id', $targetUserIds)
             ->whereBetween('worklog_started_at', [$startOfMonth, $endOfMonth])
             ->get();
 
         $totalSeconds = $worklogs->sum('time_spent_seconds');
         $totalHours = round($totalSeconds / 3600, 1);
+
+        $verifiedSeconds = $worklogs->filter(fn ($wl) => $wl->isVerified())->sum('time_spent_seconds');
+        $legacySeconds = $worklogs->filter(fn ($wl) => $wl->isLegacy())->sum('time_spent_seconds');
+        $verifiedHours = round($verifiedSeconds / 3600, 1);
+        $legacyHours = round($legacySeconds / 3600, 1);
 
         // Breakdown by Customer
         $byCustomer = [];
@@ -98,6 +104,8 @@ class TimeTrackingService
         return [
             'period_label'            => $startOfMonth->format('M 1') . ' - ' . $endOfMonth->format('M j, Y'),
             'total_hours'             => $totalHours,
+            'verified_hours'          => $verifiedHours,
+            'legacy_unverified_hours' => $legacyHours,
             'capacity_validated'      => $capacityValidated,
             'working_capacity_hours'  => $workingCapacityHours,
             'by_customer'             => $byCustomer,
@@ -125,6 +133,7 @@ class TimeTrackingService
 
         $worklogsQuery = PmWorklog::with(['user', 'client'])
             ->forCustomerSpacesWithJiraCode()
+            ->canonicalUnique()
             ->whereBetween('worklog_started_at', [$startOfMonth, $endOfMonth]);
         if (! empty($effectiveClientIds)) {
             $worklogsQuery->whereIn('client_id', $effectiveClientIds);
@@ -139,6 +148,14 @@ class TimeTrackingService
             $totalSeconds = $clientLogs->sum('time_spent_seconds');
             $actualHours = round($totalSeconds / 3600, 1);
             $allocatedHours = $client->monthly_allocated_hours;
+
+            $verifiedSeconds = $clientLogs->filter(fn ($wl) => $wl->isVerified())->sum('time_spent_seconds');
+            $legacySeconds = $clientLogs->filter(fn ($wl) => $wl->isLegacy())->sum('time_spent_seconds');
+            $unattributedSeconds = $clientLogs->filter(fn ($wl) => $wl->isUnattributed())->sum('time_spent_seconds');
+
+            $verifiedHours = round($verifiedSeconds / 3600, 1);
+            $legacyHours = round($legacySeconds / 3600, 1);
+            $unattributedCustomerHours = round($unattributedSeconds / 3600, 1);
 
             $allocationPct = null;
             $allocationStatus = 'unbudgeted';
@@ -164,10 +181,12 @@ class TimeTrackingService
                 $cHours = round($aLogs->sum('time_spent_seconds') / 3600, 1);
 
                 $contributors[] = [
-                    'user_id'   => $user?->id,
-                    'name'      => $authorName,
-                    'is_mapped' => $isMapped,
-                    'hours'     => $cHours,
+                    'user_id'            => $user?->id,
+                    'name'               => $authorName,
+                    'is_mapped'          => $isMapped,
+                    'hours'              => $cHours,
+                    'attribution_source' => $aLogs->first()->attribution_source,
+                    'is_verified'        => $aLogs->first()->isVerified(),
                 ];
 
                 if (! $isMapped) {
@@ -180,29 +199,37 @@ class TimeTrackingService
             usort($contributors, fn ($a, $b) => $b['hours'] <=> $a['hours']);
 
             $byCustomer[] = [
-                'client_id'         => $client->id,
-                'client_name'       => $client->name,
-                'hours'             => $actualHours,
-                'actual_hours'      => $actualHours,
-                'allocated_hours'   => $allocatedHours,
-                'utilization_pct'   => $allocationPct,
-                'allocation_pct'    => $allocationPct,
-                'status'            => $allocationStatus,
-                'allocation_status' => $allocationStatus,
-                'contributors'      => $contributors,
+                'client_id'               => $client->id,
+                'client_name'             => $client->name,
+                'hours'                   => $actualHours,
+                'actual_hours'            => $actualHours,
+                'verified_hours'          => $verifiedHours,
+                'legacy_unverified_hours' => $legacyHours,
+                'unattributed_hours'      => $unattributedCustomerHours,
+                'allocated_hours'         => $allocatedHours,
+                'utilization_pct'         => $allocationPct,
+                'allocation_pct'          => $allocationPct,
+                'status'                  => $allocationStatus,
+                'allocation_status'       => $allocationStatus,
+                'contributors'            => $contributors,
             ];
         }
 
         usort($byCustomer, fn ($a, $b) => $b['actual_hours'] <=> $a['actual_hours']);
 
-        $unattributedHours = round(collect($unattributedLogs)->sum('time_spent_seconds') / 3600, 1);
+        $totalPortfolioSeconds = $worklogs->sum('time_spent_seconds');
+        $totalVerifiedHours = round($worklogs->filter(fn ($wl) => $wl->isVerified())->sum('time_spent_seconds') / 3600, 1);
+        $totalLegacyHours = round($worklogs->filter(fn ($wl) => $wl->isLegacy())->sum('time_spent_seconds') / 3600, 1);
+        $totalUnattributedHours = round($worklogs->filter(fn ($wl) => $wl->isUnattributed())->sum('time_spent_seconds') / 3600, 1);
 
         return [
             'period_label'             => $startOfMonth->format('M 1') . ' - ' . $endOfMonth->format('M j, Y'),
-            'total_portfolio_hours'    => round($worklogs->sum('time_spent_seconds') / 3600, 1),
+            'total_portfolio_hours'    => round($totalPortfolioSeconds / 3600, 1),
+            'verified_hours'           => $totalVerifiedHours,
+            'legacy_unverified_hours'  => $totalLegacyHours,
+            'unattributed_hours'       => $totalUnattributedHours,
             'by_customer'              => $byCustomer,
-            'unattributed_hours'       => $unattributedHours,
-            'total_unattributed_hours' => $unattributedHours,
+            'total_unattributed_hours' => $totalUnattributedHours,
             'unattributed_count'       => count($unattributedLogs),
             'unattributed_authors'     => collect($unattributedLogs)->pluck('author_name')->filter()->unique()->values()->all(),
         ];
