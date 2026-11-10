@@ -155,11 +155,42 @@ class JiraProvider implements ProjectManagementProvider
         $projects = $response->json();
         $synced = [];
 
-        // Preload mapped clients, fallback TEC client, and other active dedicated connections
-        $mappedClientsByKey = Client::whereNotNull('jira_project_key')
+        // Preload mapped clients supporting multiple keys (e.g. 'GKSSC, GSM') and internal Projects
+        $mappedClientsByKey = collect();
+        $conflicts = [];
+
+        $allClients = Client::whereNotNull('jira_project_key')
             ->where('jira_project_key', '!=', '')
-            ->get()
-            ->keyBy('jira_project_key');
+            ->get();
+
+        foreach ($allClients as $c) {
+            foreach ($c->normalized_jira_project_keys as $k) {
+                if ($mappedClientsByKey->has($k) && $mappedClientsByKey->get($k)->id !== $c->id) {
+                    $existingClient = $mappedClientsByKey->get($k);
+                    Log::warning("Conflicting Jira project key mapping: key {$k} claimed by client #{$c->id} ({$c->name}) and client #{$existingClient->id} ({$existingClient->name}). Preserving existing mapping.");
+                    $conflicts[$k] = true;
+                    continue;
+                }
+                $mappedClientsByKey->put($k, $c);
+            }
+        }
+
+        $internalProjects = \App\Models\Project::whereNotNull('jira_project_key')
+            ->where('jira_project_key', '!=', '')
+            ->with('client')
+            ->get();
+
+        foreach ($internalProjects as $p) {
+            $k = strtoupper(trim($p->jira_project_key));
+            if ($k !== '' && $p->client) {
+                if ($mappedClientsByKey->has($k) && $mappedClientsByKey->get($k)->id !== $p->client->id) {
+                    $existingClient = $mappedClientsByKey->get($k);
+                    Log::warning("Conflicting Jira project key mapping from Project #{$p->id}: key {$k} claimed by client #{$p->client->id} and client #{$existingClient->id}. Preserving existing mapping.");
+                    continue;
+                }
+                $mappedClientsByKey->put($k, $p->client);
+            }
+        }
 
         $tecClientId = $mappedClientsByKey->get('TEC')?->id;
 
@@ -412,32 +443,103 @@ class JiraProvider implements ProjectManagementProvider
             $total = $json['total'] ?? count($worklogs);
 
             foreach ($worklogs as $wl) {
-                $authorAccountId = $wl['author']['accountId'] ?? null;
-                $authorEmail     = $wl['author']['emailAddress'] ?? null;
-                $authorName      = $wl['author']['displayName'] ?? null;
-                $resolvedUserId  = \App\Services\PM\IdentityResolverService::resolveUserId('jira', $authorAccountId, $authorEmail, $authorName);
+                $externalWorklogId = (string) $wl['id'];
+                $authorAccountId   = $wl['author']['accountId'] ?? null;
+                $authorName        = $wl['author']['displayName'] ?? null;
 
-                // Preserve existing user_id if already attributed; do NOT fall back to $workItem->user_id
-                // as that falsely reattributes previous engineers' time logs when tickets are reassigned (TPF-47).
-                $existingLog = PmWorklog::where('external_worklog_id', (string) $wl['id'])->first();
-                $userId      = $resolvedUserId ?? $existingLog?->user_id;
+                // 1. Stable canonical worklog identity: site_identity:external_worklog_id
+                // Ensures:
+                // - Multiple employee connections to the same Jira site do not double-count worklogs.
+                // - Different Jira sites cannot accidentally merge worklogs with identical numeric IDs.
+                // - Tenant attribution cannot be overwritten by an unrelated connection.
+                // - Concurrent syncs cannot create duplicate canonical worklogs.
+                $siteIdentity = $connection->getJiraSiteIdentity();
+                $canonicalKey = PmWorklog::generateCanonicalKey($siteIdentity, $externalWorklogId);
 
+                $existingLog = PmWorklog::withTrashed()->where('canonical_worklog_key', $canonicalKey)->first();
+                if ($existingLog && $existingLog->trashed()) {
+                    $existingLog->restore();
+                }
+
+                // Protect tenant attribution from being overwritten by an unrelated connection:
+                $targetClientId = $workItem->client_id;
+                if ($existingLog && $existingLog->client_id && $existingLog->client_id !== $targetClientId) {
+                    Log::warning("JiraProvider: Preserving tenant client_id {$existingLog->client_id} for canonical worklog {$canonicalKey} against incoming client_id {$targetClientId}");
+                    $targetClientId = $existingLog->client_id;
+                }
+
+                // 2. Authoritative author resolution:
+                // Barred from display names, ticket assignees, or fuzzy email matching.
+                // Must match authoritative external account ID.
+                $isTempoBot = ($authorAccountId === '557058:295406f3-a1fc-4733-b906-dd15d021bd79')
+                    || str_contains(strtolower($authorName ?? ''), 'timesheets by tempo');
+
+                $verifiedUserId = null;
+                $attributionSource = null;
+                $metadata = $existingLog?->attribution_metadata_json ?? [];
+
+                if (! $isTempoBot && $authorAccountId) {
+                    $resolvedAuthorId = \App\Services\PM\IdentityResolverService::resolveAuthoritativeAccountId('jira', $authorAccountId);
+                    if ($resolvedAuthorId) {
+                        $verifiedUserId = $resolvedAuthorId;
+                        $attributionSource = 'jira_verified';
+                    }
+                }
+
+                // 3. Attribution categorization & provenance:
+                if ($verifiedUserId !== null) {
+                    if ($existingLog && $existingLog->user_id && $existingLog->user_id !== $verifiedUserId) {
+                        // Authoritative correction of an existing attribution
+                        $attributionSource = 'authoritative_correction';
+                        $metadata = array_merge($metadata, [
+                            'previous_user_id'  => $existingLog->user_id,
+                            'corrected_user_id' => $verifiedUserId,
+                            'corrected_at'      => now()->toIso8601String(),
+                            'reason'            => 'Authoritative Jira account ID update',
+                        ]);
+                    }
+                    $finalUserId = $verifiedUserId;
+                } else {
+                    // Current sync could not establish verified author.
+                    if ($existingLog && $existingLog->user_id) {
+                        // Preserve existing assignment as legacy/unverified (or retain past verified status)
+                        $finalUserId = $existingLog->user_id;
+                        $attributionSource = $existingLog->attribution_source ?: 'legacy_attributed';
+                    } else {
+                        // Unattributed
+                        $finalUserId = null;
+                        $attributionSource = 'unattributed';
+                    }
+                }
+
+                // Preserve connection provenance:
+                $metadata['provenance'] = [
+                    'site_identity'           => $siteIdentity,
+                    'original_connection_id'  => $existingLog?->pm_connection_id ?? $connection->id,
+                    'last_sync_connection_id' => $connection->id,
+                    'last_synced_at'          => now()->toIso8601String(),
+                ];
+
+                // 4. Upsert with canonical deduplication by canonical_worklog_key:
                 $worklogModel = PmWorklog::updateOrCreate(
                     [
-                        'external_worklog_id' => (string) $wl['id'],
+                        'canonical_worklog_key' => $canonicalKey,
                     ],
                     [
-                        'pm_connection_id'    => $connection->id,
-                        'client_id'           => $workItem->client_id,
-                        'user_id'             => $userId,
-                        'pm_work_item_id'     => $workItem->id,
-                        'external_author_id'  => $authorAccountId,
-                        'author_name'         => $wl['author']['displayName'] ?? 'Unknown',
-                        'time_spent_seconds'  => (int) ($wl['timeSpentSeconds'] ?? 0),
-                        'worklog_started_at'  => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
-                        'external_created_at' => isset($wl['created']) ? Carbon::parse($wl['created']) : null,
-                        'external_updated_at' => isset($wl['updated']) ? Carbon::parse($wl['updated']) : null,
-                        'last_synced_at'      => now(),
+                        'external_worklog_id'        => $externalWorklogId,
+                        'pm_connection_id'           => $existingLog?->pm_connection_id ?? $connection->id,
+                        'client_id'                  => $targetClientId,
+                        'user_id'                    => $finalUserId,
+                        'pm_work_item_id'            => $workItem->id,
+                        'external_author_id'         => $authorAccountId,
+                        'author_name'                => $wl['author']['displayName'] ?? 'Unknown',
+                        'attribution_source'         => $attributionSource,
+                        'attribution_metadata_json'  => $metadata,
+                        'time_spent_seconds'         => (int) ($wl['timeSpentSeconds'] ?? 0),
+                        'worklog_started_at'         => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
+                        'external_created_at'        => isset($wl['created']) ? Carbon::parse($wl['created']) : null,
+                        'external_updated_at'        => isset($wl['updated']) ? Carbon::parse($wl['updated']) : null,
+                        'last_synced_at'             => now(),
                     ]
                 );
                 $syncedLogs[] = $worklogModel;

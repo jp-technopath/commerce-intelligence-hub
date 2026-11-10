@@ -55,7 +55,10 @@ return new class extends Migration
         }
 
         // Re-assign PmWorklogs
-        $worklogs = \App\Models\PmWorklog::with('workItem')->get();
+        $worklogQuery = \Illuminate\Support\Facades\Schema::hasColumn('pm_worklogs', 'deleted_at')
+            ? \App\Models\PmWorklog::with('workItem')
+            : \App\Models\PmWorklog::withoutGlobalScopes()->with('workItem');
+        $worklogs = $worklogQuery->get();
         foreach ($worklogs as $wl) {
             if ($wl->workItem && $wl->client_id !== $wl->workItem->client_id) {
                 $wl->update(['client_id' => $wl->workItem->client_id]);

@@ -7,6 +7,7 @@ use App\Models\PmWorkItem;
 use App\Models\PmWorklog;
 use App\Services\EstimateApprovalService;
 use App\Services\PM\Providers\JiraProvider;
+use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -16,7 +17,7 @@ use Illuminate\Support\Facades\Log;
 
 class SyncPmProjectJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public $timeout = 180;
     public $tries = 2;

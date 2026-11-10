@@ -90,4 +90,48 @@ class PmConnection extends Model
             'message'    => "Connected as {$user->name}",
         ];
     }
+
+    /**
+     * Get the stable Jira site / cloud identity for this connection.
+     */
+    public function getJiraSiteIdentity(): string
+    {
+        if (! empty($this->external_workspace_id)) {
+            $parsed = parse_url($this->external_workspace_id, PHP_URL_HOST);
+            return $parsed ?: $this->external_workspace_id;
+        }
+
+        if (! empty($this->configuration_json['site_url'])) {
+            $parsed = parse_url($this->configuration_json['site_url'], PHP_URL_HOST);
+            if ($parsed) {
+                return $parsed;
+            }
+        }
+
+        if (! empty($this->configuration_json['cloud_id'])) {
+            return (string) $this->configuration_json['cloud_id'];
+        }
+
+        if ($this->default_sync_user_id && $this->defaultSyncUser) {
+            try {
+                $account = $this->defaultSyncUser->jiraAccount();
+                $cloudId = $account?->getCredential('cloud_id');
+                if ($cloudId) {
+                    return $cloudId;
+                }
+            } catch (\Throwable $e) {
+                // fall through
+            }
+        }
+
+        $baseUrl = config('meeting_agent.jira.base_url');
+        if ($baseUrl) {
+            $parsed = parse_url($baseUrl, PHP_URL_HOST);
+            if ($parsed) {
+                return $parsed;
+            }
+        }
+
+        return 'technopath.atlassian.net';
+    }
 }

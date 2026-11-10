@@ -32,7 +32,7 @@ return new class extends Migration
 
         // 4. Re-assign PmWorklogs for internal work items
         $internalWorkItemIds = PmWorkItem::where('client_id', $internalClient->id)->pluck('id');
-        PmWorklog::whereIn('pm_work_item_id', $internalWorkItemIds)->update(['client_id' => $internalClient->id]);
+        \Illuminate\Support\Facades\DB::table('pm_worklogs')->whereIn('pm_work_item_id', $internalWorkItemIds)->update(['client_id' => $internalClient->id]);
 
         // 5. Re-assign CustomerAttentionItems for internal work items
         $attentionItems = \App\Models\CustomerAttentionItem::all();

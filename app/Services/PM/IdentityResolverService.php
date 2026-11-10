@@ -21,6 +21,43 @@ class IdentityResolverService
     }
 
     /**
+     * Resolve a verified Forge User ID strictly from an authoritative external account ID.
+     * Barred from using display names, fuzzy matching, or ticket assignees.
+     */
+    public static function resolveAuthoritativeAccountId(string $provider, ?string $externalAccountId): ?int
+    {
+        if (! $externalAccountId) {
+            return null;
+        }
+
+        if ($provider === 'jira') {
+            $knownMappings = self::getJiraAccountMappings();
+            if (isset($knownMappings[$externalAccountId])) {
+                return $knownMappings[$externalAccountId];
+            }
+        }
+
+        $connected = ConnectedAccount::where('provider', $provider)
+            ->where('external_account_id', $externalAccountId)
+            ->first();
+
+        if ($connected && $connected->user_id) {
+            return $connected->user_id;
+        }
+
+        $connectedJson = ConnectedAccount::where('provider', $provider)
+            ->where('settings_json->account_id', $externalAccountId)
+            ->first();
+
+        if ($connectedJson && $connectedJson->user_id) {
+            $connectedJson->update(['external_account_id' => $externalAccountId]);
+            return $connectedJson->user_id;
+        }
+
+        return null;
+    }
+
+    /**
      * Resolve a Forge User ID from an external provider account ID, verified email, or display name.
      */
     public static function resolveUserId(

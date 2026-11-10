@@ -22,6 +22,9 @@ use Filament\Forms\Form;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class EngineerDashboard extends Page implements HasForms
 {
@@ -120,11 +123,14 @@ class EngineerDashboard extends Page implements HasForms
 
     public function getLastSyncedAt(): ?Carbon
     {
+        $lastBatchSync = Cache::get('pm_last_successful_full_sync_at');
+        $batchTs = $lastBatchSync ? Carbon::parse($lastBatchSync) : null;
+
         $lastPm = PmWorkItem::max('last_synced_at');
         $lastConn = PmConnection::max('last_synced_at');
         $lastMeeting = ClientMeeting::max('updated_at');
 
-        $latest = collect([$lastPm, $lastConn, $lastMeeting])
+        $latest = collect([$batchTs, $lastPm, $lastConn, $lastMeeting])
             ->filter()
             ->map(fn ($ts) => Carbon::parse($ts))
             ->max();
@@ -132,26 +138,107 @@ class EngineerDashboard extends Page implements HasForms
         return $latest;
     }
 
+    public function getSyncStatus(): string
+    {
+        $existingBatchId = Cache::get('pm_dashboard_sync_batch_id');
+        if ($existingBatchId) {
+            $batch = Bus::findBatch($existingBatchId);
+            if ($batch && ! $batch->finished() && ! $batch->cancelled()) {
+                return 'running';
+            }
+        }
+
+        return Cache::get('pm_sync_status', 'idle');
+    }
+
     public function refreshDashboardData(): void
     {
         try {
-            $activeProjects = PmProject::where('is_active', true)->get();
-            foreach ($activeProjects as $project) {
-                SyncPmProjectJob::dispatch($project, 14);
+            // Check for existing running batch with stale lock recovery
+            $existingBatchId = Cache::get('pm_dashboard_sync_batch_id');
+            if ($existingBatchId) {
+                $batch = Bus::findBatch($existingBatchId);
+                if ($batch && ! $batch->finished() && ! $batch->cancelled()) {
+                    Notification::make()
+                        ->title('Sync Already in Progress')
+                        ->body('A project synchronization batch is currently running. Please wait for it to complete.')
+                        ->warning()
+                        ->send();
+                    return;
+                }
             }
+
+            // Clear any stale locks
+            Cache::forget('pm_dashboard_sync_lock');
+            Cache::forget('pm_dashboard_sync_batch_id');
+
+            // 1. Discovery-first: Reconcile project mappings for all active Jira connections
+            $jiraProvider = app(\App\Services\PM\Providers\JiraProvider::class);
+            $activeConnections = PmConnection::where('is_active', true)->where('provider', 'jira')->get();
+            foreach ($activeConnections as $connection) {
+                try {
+                    $jiraProvider->syncProjects($connection);
+                } catch (\Throwable $pe) {
+                    Log::warning("Discovery syncProjects failed for connection #{$connection->id}: " . $pe->getMessage());
+                }
+            }
+
+            // 2. Discover all active projects
+            $activeProjects = PmProject::where('is_active', true)->get();
+            $jobs = [];
+            foreach ($activeProjects as $project) {
+                $jobs[] = new SyncPmProjectJob($project, 30);
+            }
+
+            if (empty($jobs)) {
+                Notification::make()
+                    ->title('No Active Projects')
+                    ->body('No active PM projects found to synchronize.')
+                    ->info()
+                    ->send();
+                return;
+            }
+
+            // 3. Dispatch tracked batch
+            $batch = Bus::batch($jobs)
+                ->name('PM Projects Synchronization')
+                ->allowFailures()
+                ->then(function (\Illuminate\Bus\Batch $batch) {
+                    Cache::set('pm_sync_status', 'completed');
+                    Cache::set('pm_last_successful_full_sync_at', now()->toIso8601String());
+                })
+                ->catch(function (\Illuminate\Bus\Batch $batch, \Throwable $e) {
+                    Log::error('PM Dashboard Sync batch error: ' . $e->getMessage());
+                })
+                ->finally(function (\Illuminate\Bus\Batch $batch) {
+                    Cache::forget('pm_dashboard_sync_lock');
+                    Cache::forget('pm_dashboard_sync_batch_id');
+                    if ($batch->hasFailures()) {
+                        Cache::set('pm_sync_status', 'partially_completed');
+                    }
+                })
+                ->dispatch();
+
+            Cache::put('pm_dashboard_sync_lock', true, now()->addMinutes(10));
+            Cache::put('pm_dashboard_sync_batch_id', $batch->id, now()->addMinutes(10));
+            Cache::set('pm_sync_status', 'running');
 
             if (class_exists(\App\Jobs\MeetingAgent\ScanGoogleCalendarJob::class)) {
                 \App\Jobs\MeetingAgent\ScanGoogleCalendarJob::dispatch();
             }
 
             Notification::make()
-                ->title('Refresh Queued')
-                ->body('Sync queued for ' . $activeProjects->count() . ' active project(s) and calendar meetings.')
+                ->title('Synchronization Batch Started')
+                ->body('Discovered and queued ' . count($jobs) . ' project(s) across ' . $activeConnections->count() . ' connection(s).')
                 ->success()
                 ->send();
 
             $this->dispatch('$refresh');
         } catch (\Throwable $e) {
+            Cache::forget('pm_dashboard_sync_lock');
+            Cache::forget('pm_dashboard_sync_batch_id');
+            Cache::set('pm_sync_status', 'failed');
+
             Notification::make()
                 ->title('Refresh Failed')
                 ->body($e->getMessage())

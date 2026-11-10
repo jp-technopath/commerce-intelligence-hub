@@ -398,31 +398,35 @@ class PmWorkItem extends Model
     {
         if ($clientId !== null) {
             $client = Client::find($clientId);
-            if (! $client || empty($client->jira_project_key)) {
+            $keys = $client?->normalized_jira_project_keys ?? [];
+            if (! $client || empty($keys)) {
                 return $query->whereRaw('1 = 0');
             }
 
             return $query->where('pm_work_items.client_id', $client->id)
-                ->where(function ($keyClause) use ($client) {
-                    $keyClause->where('pm_work_items.external_item_key', 'LIKE', $client->jira_project_key . '-%')
-                              ->orWhereHas('project', function ($pq) use ($client) {
-                                  $pq->where('external_project_key', $client->jira_project_key);
-                              })
-                              ->orWhere(function ($supClause) {
-                                  $supClause->where(function ($isSup) {
-                                      $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
-                                            ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
-                                  })
-                                  ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
-                                  ->where(function ($statClause) {
-                                      $statClause->whereNull('pm_work_items.external_status')
-                                          ->orWhere(function ($sub) {
-                                              $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
-                                                  ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
-                                                  ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
-                                          });
-                                  });
-                              });
+                ->where(function ($keyClause) use ($client, $keys) {
+                    $keyClause->where(function ($kSub) use ($client, $keys) {
+                        foreach ($keys as $k) {
+                            $kSub->orWhere('pm_work_items.external_item_key', 'LIKE', $k . '-%')
+                                 ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', $k));
+                        }
+                        $kSub->orWhereHas('project', fn ($pq) => $pq->where('client_id', $client->id));
+                    })
+                    ->orWhere(function ($supClause) {
+                        $supClause->where(function ($isSup) {
+                            $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
+                                  ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
+                        })
+                        ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                        ->where(function ($statClause) {
+                            $statClause->whereNull('pm_work_items.external_status')
+                                ->orWhere(function ($sub) {
+                                    $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
+                                        ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
+                                        ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
+                                });
+                        });
+                    });
                 });
         }
 
@@ -437,28 +441,36 @@ class PmWorkItem extends Model
 
         return $query->where(function ($sub) use ($validClients) {
             foreach ($validClients as $client) {
-                $sub->orWhere(function ($clause) use ($client) {
+                $keys = $client->normalized_jira_project_keys;
+                if (empty($keys)) {
+                    continue;
+                }
+
+                $sub->orWhere(function ($clause) use ($client, $keys) {
                     $clause->where('pm_work_items.client_id', $client->id)
-                           ->where(function ($keyClause) use ($client) {
-                               $keyClause->where('pm_work_items.external_item_key', 'LIKE', $client->jira_project_key . '-%')
-                                         ->orWhereHas('project', function ($pq) use ($client) {
-                                             $pq->where('external_project_key', $client->jira_project_key);
-                                         })
-                                         ->orWhere(function ($supClause) {
-                                             $supClause->where(function ($isSup) {
-                                                 $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
-                                                       ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
-                                             })
-                                             ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
-                                             ->where(function ($statClause) {
-                                                 $statClause->whereNull('pm_work_items.external_status')
-                                                     ->orWhere(function ($sub) {
-                                                         $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
-                                                             ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
-                                                             ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
-                                                     });
-                                             });
-                                         });
+                           ->where(function ($keyClause) use ($client, $keys) {
+                               $keyClause->where(function ($kSub) use ($client, $keys) {
+                                   foreach ($keys as $k) {
+                                       $kSub->orWhere('pm_work_items.external_item_key', 'LIKE', $k . '-%')
+                                            ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', $k));
+                                   }
+                                   $kSub->orWhereHas('project', fn ($pq) => $pq->where('client_id', $client->id));
+                               })
+                               ->orWhere(function ($supClause) {
+                                   $supClause->where(function ($isSup) {
+                                       $isSup->where('pm_work_items.external_item_key', 'LIKE', 'SUP-%')
+                                             ->orWhereHas('project', fn ($pq) => $pq->where('external_project_key', 'SUP'));
+                                   })
+                                   ->whereNotIn('pm_work_items.normalized_delivery_status', ['completed', 'cancelled', 'canceled'])
+                                   ->where(function ($statClause) {
+                                       $statClause->whereNull('pm_work_items.external_status')
+                                           ->orWhere(function ($sub) {
+                                               $sub->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%resolve%'])
+                                                   ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%closed%'])
+                                                   ->whereRaw('LOWER(pm_work_items.external_status) NOT LIKE ?', ['%cancel%']);
+                                           });
+                                   });
+                               });
                            });
                 });
             }
