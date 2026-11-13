@@ -101,6 +101,38 @@ class PmConnectionResource extends Resource
                             );
                         }),
                 ]),
+
+            Forms\Components\Section::make('Tempo Timesheets Integration')
+                ->description('Configure Tempo API credentials for authoritative employee worklog attribution.')
+                ->schema([
+                    Forms\Components\TextInput::make('tempo_api_token')
+                        ->label('Tempo API Token')
+                        ->password()
+                        ->revealable()
+                        ->helperText('Used to authoritatively resolve real employee authors for Tempo-logged worklogs.')
+                        ->placeholder(fn (?PmConnection $record): string => $record?->hasTempoToken()
+                            ? '•••••••••••••••• (Configured — leave blank to preserve)'
+                            : 'Enter Tempo API Token'
+                        )
+                        ->dehydrated(fn ($state) => filled($state))
+                        ->suffixAction(
+                            Forms\Components\Actions\Action::make('clear_token')
+                                ->icon('heroicon-o-trash')
+                                ->color('danger')
+                                ->tooltip('Revoke Tempo Token')
+                                ->visible(fn (?PmConnection $record): bool => (bool) $record?->hasTempoToken())
+                                ->requiresConfirmation()
+                                ->action(function (PmConnection $record, Forms\Set $set): void {
+                                    $record->tempo_api_token = null;
+                                    $record->save();
+                                    $set('tempo_api_token', null);
+                                    Notification::make()
+                                        ->title('Tempo token revoked')
+                                        ->success()
+                                        ->send();
+                                })
+                        ),
+                ])->columns(1),
         ]);
     }
 

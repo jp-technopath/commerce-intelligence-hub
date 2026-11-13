@@ -96,6 +96,11 @@ class PmWorklog extends Model
         return $this->belongsTo(PmConnection::class, 'pm_connection_id');
     }
 
+    public function connection(): BelongsTo
+    {
+        return $this->pmConnection();
+    }
+
     public function workItem(): BelongsTo
     {
         return $this->belongsTo(PmWorkItem::class, 'pm_work_item_id');

@@ -442,6 +442,24 @@ class JiraProvider implements ProjectManagementProvider
             $worklogs = $json['worklogs'] ?? [];
             $total = $json['total'] ?? count($worklogs);
 
+            // Pre-resolve any Tempo-authored worklogs in this batch
+            $resolvedTempoAuthors = [];
+            $tempoJiraIds = [];
+            foreach ($worklogs as $checkWl) {
+                $checkAccId = $checkWl['author']['accountId'] ?? null;
+                $checkName  = $checkWl['author']['displayName'] ?? null;
+                if ($checkAccId === '557058:295406f3-a1fc-4733-b906-dd15d021bd79' || str_contains(strtolower($checkName ?? ''), 'timesheets by tempo')) {
+                    $tempoJiraIds[] = (string) $checkWl['id'];
+                }
+            }
+
+            if (! empty($tempoJiraIds)) {
+                $tempoClient = \App\Services\PM\Providers\TempoClient::forConnection($connection);
+                if ($tempoClient && $tempoClient->isConfigured()) {
+                    $resolvedTempoAuthors = $tempoClient->resolveJiraWorklogAuthors($tempoJiraIds);
+                }
+            }
+
             foreach ($worklogs as $wl) {
                 $externalWorklogId = (string) $wl['id'];
                 $authorAccountId   = $wl['author']['accountId'] ?? null;
@@ -478,7 +496,26 @@ class JiraProvider implements ProjectManagementProvider
                 $attributionSource = null;
                 $metadata = $existingLog?->attribution_metadata_json ?? [];
 
-                if (! $isTempoBot && $authorAccountId) {
+                if ($isTempoBot) {
+                    $tempoData = $resolvedTempoAuthors[(int) $externalWorklogId] ?? null;
+                    if ($tempoData && ! empty($tempoData['author_account_id'])) {
+                        $resolvedAuthorId = \App\Services\PM\IdentityResolverService::resolveAuthoritativeAccountId('jira', $tempoData['author_account_id']);
+                        if ($resolvedAuthorId) {
+                            $verifiedUserId = $resolvedAuthorId;
+                            $attributionSource = 'tempo_verified';
+                            $authorAccountId = $tempoData['author_account_id'];
+                            $resolvedUser = \App\Models\User::find($resolvedAuthorId);
+                            if ($resolvedUser) {
+                                $authorName = $resolvedUser->name;
+                            }
+                            $metadata = array_merge($metadata, [
+                                'tempo_worklog_id'        => $tempoData['tempo_worklog_id'],
+                                'tempo_author_account_id' => $tempoData['author_account_id'],
+                                'tempo_resolved_at'       => now()->toIso8601String(),
+                            ]);
+                        }
+                    }
+                } elseif ($authorAccountId) {
                     $resolvedAuthorId = \App\Services\PM\IdentityResolverService::resolveAuthoritativeAccountId('jira', $authorAccountId);
                     if ($resolvedAuthorId) {
                         $verifiedUserId = $resolvedAuthorId;
@@ -495,7 +532,7 @@ class JiraProvider implements ProjectManagementProvider
                             'previous_user_id'  => $existingLog->user_id,
                             'corrected_user_id' => $verifiedUserId,
                             'corrected_at'      => now()->toIso8601String(),
-                            'reason'            => 'Authoritative Jira account ID update',
+                            'reason'            => $isTempoBot ? 'Authoritative Tempo author resolution' : 'Authoritative Jira account ID update',
                         ]);
                     }
                     $finalUserId = $verifiedUserId;
@@ -532,7 +569,7 @@ class JiraProvider implements ProjectManagementProvider
                         'user_id'                    => $finalUserId,
                         'pm_work_item_id'            => $workItem->id,
                         'external_author_id'         => $authorAccountId,
-                        'author_name'                => $wl['author']['displayName'] ?? 'Unknown',
+                        'author_name'                => $authorName ?? $wl['author']['displayName'] ?? 'Unknown',
                         'attribution_source'         => $attributionSource,
                         'attribution_metadata_json'  => $metadata,
                         'time_spent_seconds'         => (int) ($wl['timeSpentSeconds'] ?? 0),

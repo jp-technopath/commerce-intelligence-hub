@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Crypt;
 
 class PmConnection extends Model
 {
@@ -21,6 +22,10 @@ class PmConnection extends Model
         'default_sync_user_id',
         'is_active',
         'last_synced_at',
+    ];
+
+    protected $hidden = [
+        'configuration_json',
     ];
 
     protected $casts = [
@@ -133,5 +138,46 @@ class PmConnection extends Model
         }
 
         return 'technopath.atlassian.net';
+    }
+
+    /**
+     * Get the decrypted Tempo API token for this connection,
+     * or fallback to global configuration / environment.
+     */
+    public function getTempoApiTokenAttribute(): ?string
+    {
+        $encrypted = $this->configuration_json['tempo_api_token'] ?? null;
+        if (! empty($encrypted)) {
+            try {
+                return Crypt::decryptString($encrypted);
+            } catch (\Throwable $e) {
+                // If stored plaintext during migration or testing
+                return (string) $encrypted;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Store the Tempo API token with single-layer encryption.
+     */
+    public function setTempoApiTokenAttribute(?string $token): void
+    {
+        $config = $this->configuration_json ?? [];
+        if (empty($token)) {
+            unset($config['tempo_api_token']);
+        } else {
+            $config['tempo_api_token'] = Crypt::encryptString(trim($token));
+        }
+        $this->configuration_json = $config;
+    }
+
+    /**
+     * Check if this connection has a valid Tempo token available.
+     */
+    public function hasTempoToken(): bool
+    {
+        return ! empty($this->tempo_api_token);
     }
 }

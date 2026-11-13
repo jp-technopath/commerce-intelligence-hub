@@ -15,8 +15,9 @@ class IdentityResolverService
         return [
             '557058:32896f1a-9055-4a58-a03b-0bd86412a2db' => 2, // Jean Paul Hanna
             '712020:7fcac433-e79a-4587-8eda-11ef61607fc2' => 4, // Nour eldin ayman
-            '64007b8f896d10ebd471046d'                    => 3, // Donia Khaled
+            '64007b8f896d10ebd471046d'                    => 3, // Donia Khaled / Donia Attwa
             '557058:a2618e39-f9da-44c4-8d36-5ca32df0785a' => 5, // Nick Barretta
+            '5deeae42a179040e8cfd25c1'                    => 913, // Mostafa Naguib
         ];
     }
 

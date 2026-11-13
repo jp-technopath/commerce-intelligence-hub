@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'tempo' => [
+        'token' => env('TEMPO_API_TOKEN'),
+        'base_url' => env('TEMPO_BASE_URL', 'https://api.tempo.io/4'),
+    ],
+
 ];
