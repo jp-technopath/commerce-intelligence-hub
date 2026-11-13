@@ -57,10 +57,15 @@ class SyncPmProjectJob implements ShouldQueue
                     Log::warning("Estimate approval check failed for item {$workItem->external_item_key}: " . $ae->getMessage());
                 }
 
-                // Sync worklogs if item has logged time and DB worklogs differ from reported time_spent_seconds
+                // Sync worklogs if item has logged time and DB worklogs differ from reported time_spent_seconds,
+                // or if the item still has unattributed worklogs that can be resolved via Tempo.
                 if ($workItem->time_spent_seconds > 0) {
                     $dbSeconds = (int) ($dbWorklogSums->get($workItem->id) ?? 0);
-                    if ($dbSeconds != $workItem->time_spent_seconds) {
+                    $hasUnattributed = PmWorklog::where('pm_work_item_id', $workItem->id)
+                        ->where('attribution_source', 'unattributed')
+                        ->exists();
+
+                    if ($dbSeconds != $workItem->time_spent_seconds || $hasUnattributed) {
                         try {
                             $jiraProvider->syncWorklogs($workItem);
                         } catch (\Throwable $we) {

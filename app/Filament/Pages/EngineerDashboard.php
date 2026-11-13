@@ -227,6 +227,13 @@ class EngineerDashboard extends Page implements HasForms
                 \App\Jobs\MeetingAgent\ScanGoogleCalendarJob::dispatch();
             }
 
+            // Queue Tempo worklog reconciliation for any pending unattributed worklogs
+            try {
+                \Illuminate\Support\Facades\Artisan::queue('pm:reconcile-customer-worklogs');
+            } catch (\Throwable $qe) {
+                \Illuminate\Support\Facades\Log::warning('Dashboard sync: ReconcileCustomerWorklogs queue failed: ' . $qe->getMessage());
+            }
+
             Notification::make()
                 ->title('Synchronization Batch Started')
                 ->body('Discovered and queued ' . count($jobs) . ' project(s) across ' . $activeConnections->count() . ' connection(s).')
