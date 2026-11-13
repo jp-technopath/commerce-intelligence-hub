@@ -536,4 +536,195 @@ class MultiProjectSyncAndTempoAttributionTest extends TestCase
         $this->assertTrue($cambroScopedLogs->contains('id', $logOtherSup->id));
         $this->assertFalse($cambroScopedLogs->contains('id', $logGoldkampSup->id));
     }
+
+    public function test_tempo_api_token_single_layer_encryption_and_decryption(): void
+    {
+        $rawToken = '1YL4GtHOU5WKEKp4j1RVGTDPsbhDJQ-us';
+        $this->connectionA->tempo_api_token = $rawToken;
+        $this->connectionA->save();
+
+        $fresh = $this->connectionA->fresh();
+
+        // 1. Decrypted value matches raw input
+        $this->assertEquals($rawToken, $fresh->tempo_api_token);
+        $this->assertTrue($fresh->hasTempoToken());
+
+        // 2. Raw configuration_json in database is encrypted (not plain text)
+        $rawConfig = $fresh->getRawOriginal('configuration_json');
+        $this->assertStringNotContainsString($rawToken, $rawConfig);
+
+        // 3. Serialized representation hides credentials
+        $serialized = $fresh->toArray();
+        $this->assertArrayNotHasKey('configuration_json', $serialized);
+
+        // 4. Blank update preserves existing token
+        $fresh->name = 'Updated Name';
+        $fresh->save();
+        $this->assertEquals($rawToken, $fresh->fresh()->tempo_api_token);
+
+        // 5. Explicit null clears the token
+        $fresh->tempo_api_token = null;
+        $fresh->save();
+        $this->assertNull($fresh->fresh()->tempo_api_token);
+    }
+
+    public function test_tempo_client_resolves_jira_worklog_authors(): void
+    {
+        Http::fake([
+            'https://api.tempo.io/4/worklogs/jira-to-tempo' => Http::response([
+                'results' => [
+                    ['jiraWorklogId' => 101, 'tempoWorklogId' => 201],
+                    ['jiraWorklogId' => 102, 'tempoWorklogId' => 202],
+                ],
+            ], 200),
+            'https://api.tempo.io/4/worklogs/201' => Http::response([
+                'tempoWorklogId'   => 201,
+                'author'           => ['accountId' => '64007b8f896d10ebd471046d'],
+                'timeSpentSeconds' => 3600,
+                'startDate'        => '2026-11-02',
+            ], 200),
+            'https://api.tempo.io/4/worklogs/202' => Http::response([
+                'tempoWorklogId'   => 202,
+                'author'           => ['accountId' => '5deeae42a179040e8cfd25c1'],
+                'timeSpentSeconds' => 7200,
+                'startDate'        => '2026-11-03',
+            ], 200),
+        ]);
+
+        $this->connectionA->tempo_api_token = 'test_token';
+        $client = \App\Services\PM\Providers\TempoClient::forConnection($this->connectionA);
+        $this->assertNotNull($client);
+
+        $resolved = $client->resolveJiraWorklogAuthors([101, 102]);
+
+        $this->assertCount(2, $resolved);
+        $this->assertEquals(201, $resolved[101]['tempo_worklog_id']);
+        $this->assertEquals('64007b8f896d10ebd471046d', $resolved[101]['author_account_id']);
+        $this->assertEquals(3600, $resolved[101]['time_spent_seconds']);
+
+        $this->assertEquals(202, $resolved[102]['tempo_worklog_id']);
+        $this->assertEquals('5deeae42a179040e8cfd25c1', $resolved[102]['author_account_id']);
+        $this->assertEquals(7200, $resolved[102]['time_spent_seconds']);
+    }
+
+    public function test_jira_provider_promotes_tempo_bot_worklogs_to_tempo_verified(): void
+    {
+        $this->connectionA->tempo_api_token = 'test_token';
+        $this->connectionA->save();
+
+        // Create work item
+        $workItem = PmWorkItem::create([
+            'pm_connection_id'   => $this->connectionA->id,
+            'client_id'          => $this->goldkamp->id,
+            'pm_project_id'      => $this->projectGkssc->id,
+            'external_item_id'   => '30001',
+            'external_item_key'  => 'GKSSC-265',
+            'summary'            => 'Checkout bug fix',
+            'external_status'    => 'Done',
+            'delivery_status'    => 'done',
+            'item_type'          => 'Bug',
+            'time_spent_seconds' => 3600,
+        ]);
+
+        // Mock Jira worklogs and Tempo endpoints
+        Http::fake([
+            'https://api.atlassian.com/ex/jira/cloud_goldkamp/rest/api/3/issue/30001/worklog*' => Http::response([
+                'startAt'    => 0,
+                'maxResults' => 50,
+                'total'      => 1,
+                'worklogs'   => [
+                    [
+                        'id'               => '99901',
+                        'timeSpentSeconds' => 3600,
+                        'started'          => '2026-11-02T10:00:00.000+0000',
+                        'created'          => '2026-11-02T10:00:00.000+0000',
+                        'author'           => [
+                            'accountId'   => '557058:295406f3-a1fc-4733-b906-dd15d021bd79',
+                            'displayName' => 'Timesheets by Tempo - Jira Time Tracking',
+                        ],
+                    ],
+                ],
+            ], 200),
+            'https://api.tempo.io/4/worklogs/jira-to-tempo' => Http::response([
+                'results' => [
+                    ['jiraWorklogId' => 99901, 'tempoWorklogId' => 88801],
+                ],
+            ], 200),
+            'https://api.tempo.io/4/worklogs/88801' => Http::response([
+                'tempoWorklogId'   => 88801,
+                'author'           => ['accountId' => '64007b8f896d10ebd471046d'],
+                'timeSpentSeconds' => 3600,
+                'startDate'        => '2026-11-02',
+            ], 200),
+        ]);
+
+        $provider = new JiraProvider();
+        $synced = $provider->syncWorklogs($workItem);
+
+        $this->assertCount(1, $synced);
+        $worklog = $synced[0];
+
+        // Must be promoted to tempo_verified with Donia's user ID
+        $this->assertEquals($this->engineer->id, $worklog->user_id);
+        $this->assertEquals('tempo_verified', $worklog->attribution_source);
+        $this->assertEquals('64007b8f896d10ebd471046d', $worklog->external_author_id);
+        $this->assertEquals('Donia Khaled', $worklog->author_name);
+        $this->assertTrue($worklog->isVerified());
+        $this->assertEquals(88801, $worklog->attribution_metadata_json['tempo_worklog_id']);
+    }
+
+    public function test_reconcile_customer_worklogs_command_promotes_unattributed_logs(): void
+    {
+        $this->connectionA->tempo_api_token = 'test_token';
+        $this->connectionA->save();
+
+        $workItem = PmWorkItem::create([
+            'pm_connection_id'   => $this->connectionA->id,
+            'client_id'          => $this->goldkamp->id,
+            'pm_project_id'      => $this->projectGkssc->id,
+            'external_item_id'   => '30002',
+            'external_item_key'  => 'GKSSC-266',
+            'summary'            => 'Feature dev',
+            'external_status'    => 'In Progress',
+            'delivery_status'    => 'in_progress',
+            'item_type'          => 'Story',
+            'time_spent_seconds' => 7200,
+        ]);
+
+        $unattributedLog = PmWorklog::create([
+            'pm_connection_id'      => $this->connectionA->id,
+            'client_id'             => $this->goldkamp->id,
+            'pm_work_item_id'       => $workItem->id,
+            'external_worklog_id'   => '888001',
+            'canonical_worklog_key' => 'cloud_goldkamp:888001',
+            'time_spent_seconds'    => 7200,
+            'worklog_started_at'    => Carbon::parse('2026-11-05 10:00:00'),
+            'attribution_source'    => 'unattributed',
+            'user_id'               => null,
+        ]);
+
+        Http::fake([
+            'https://api.tempo.io/4/worklogs/jira-to-tempo' => Http::response([
+                'results' => [
+                    ['jiraWorklogId' => 888001, 'tempoWorklogId' => 777001],
+                ],
+            ], 200),
+            'https://api.tempo.io/4/worklogs/777001' => Http::response([
+                'tempoWorklogId'   => 777001,
+                'author'           => ['accountId' => '64007b8f896d10ebd471046d'],
+                'timeSpentSeconds' => 7200,
+                'startDate'        => '2026-11-05',
+            ], 200),
+        ]);
+
+        $this->artisan('pm:reconcile-customer-worklogs', [
+            '--client' => $this->goldkamp->id,
+        ])->assertSuccessful();
+
+        $unattributedLog->refresh();
+        $this->assertEquals($this->engineer->id, $unattributedLog->user_id);
+        $this->assertEquals('tempo_verified', $unattributedLog->attribution_source);
+        $this->assertEquals('64007b8f896d10ebd471046d', $unattributedLog->external_author_id);
+        $this->assertTrue($unattributedLog->isVerified());
+    }
 }

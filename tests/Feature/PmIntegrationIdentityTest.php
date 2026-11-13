@@ -14,6 +14,7 @@ use App\Services\PM\Exceptions\UserJiraAccountNotConnectedException;
 use App\Services\PM\Providers\JiraProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class PmIntegrationIdentityTest extends TestCase
@@ -31,6 +32,10 @@ class PmIntegrationIdentityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        Http::fake([
+            '*' => Http::response(['transitions' => []], 200),
+        ]);
 
         $this->client = Client::create([
             'name' => 'Cambro',
@@ -95,8 +100,8 @@ class PmIntegrationIdentityTest extends TestCase
             'client_id'                  => $this->client->id,
             'pm_connection_id'           => $this->connection->id,
             'pm_project_id'              => $this->project->id,
-            'external_item_id'           => '10042',
-            'external_item_key'          => 'CMBR2-421',
+            'external_item_id'           => '999999',
+            'external_item_key'          => 'MOCK-101',
             'summary'                    => 'Checkout Optimization',
             'normalized_delivery_status' => 'in_progress',
             'estimated_seconds'          => 36000, // 10 hours
