@@ -175,4 +175,80 @@ class TempoClient
 
         return $resolved;
     }
+
+    /**
+     * Retrieve all Tempo worklogs for a given date range across all users or for a specific user.
+     * Handles pagination automatically.
+     *
+     * @param string $from YYYY-MM-DD
+     * @param string $to YYYY-MM-DD
+     * @param string|null $authorAccountId
+     * @param int $limit
+     * @return array<int, array>
+     */
+    public function getWorklogsForDateRange(string $from, string $to, ?string $authorAccountId = null, int $limit = 1000): array
+    {
+        if (! $this->isConfigured()) {
+            return [];
+        }
+
+        $allWorklogs = [];
+        $url = $authorAccountId
+            ? "{$this->baseUrl}/worklogs/user/{$authorAccountId}"
+            : "{$this->baseUrl}/worklogs";
+
+        $offset = 0;
+        $maxPages = 20;
+
+        for ($page = 0; $page < $maxPages; $page++) {
+            try {
+                $response = Http::withToken($this->token)
+                    ->timeout(20)
+                    ->retry(2, 200, throw: false)
+                    ->get($url, [
+                        'from'   => $from,
+                        'to'     => $to,
+                        'limit'  => $limit,
+                        'offset' => $offset,
+                    ]);
+
+                if (! $response->successful()) {
+                    Log::warning('TempoClient: getWorklogsForDateRange request failed', [
+                        'status' => $response->status(),
+                        'from'   => $from,
+                        'to'     => $to,
+                        'offset' => $offset,
+                    ]);
+                    break;
+                }
+
+                $json = $response->json();
+                $results = $json['results'] ?? [];
+                if (empty($results)) {
+                    break;
+                }
+
+                foreach ($results as $res) {
+                    $allWorklogs[] = $res;
+                }
+
+                $metadata = $json['metadata'] ?? [];
+                $count = (int) ($metadata['count'] ?? count($results));
+                if ($count < $limit || ! isset($metadata['next'])) {
+                    break;
+                }
+
+                $offset += $count;
+            } catch (\Throwable $e) {
+                Log::error('TempoClient: Exception in getWorklogsForDateRange', [
+                    'message' => $e->getMessage(),
+                    'from'    => $from,
+                    'to'      => $to,
+                ]);
+                break;
+            }
+        }
+
+        return $allWorklogs;
+    }
 }
