@@ -475,6 +475,12 @@ class JiraProvider implements ProjectManagementProvider
                 $canonicalKey = PmWorklog::generateCanonicalKey($siteIdentity, $externalWorklogId);
 
                 $existingLog = PmWorklog::withTrashed()->where('canonical_worklog_key', $canonicalKey)->first();
+                if (! $existingLog) {
+                    $existingLog = PmWorklog::withTrashed()
+                        ->where('pm_connection_id', $connection->id)
+                        ->where('external_worklog_id', $externalWorklogId)
+                        ->first();
+                }
                 if ($existingLog && $existingLog->trashed()) {
                     $existingLog->restore();
                 }
@@ -558,27 +564,30 @@ class JiraProvider implements ProjectManagementProvider
                 ];
 
                 // 4. Upsert with canonical deduplication by canonical_worklog_key:
-                $worklogModel = PmWorklog::updateOrCreate(
-                    [
-                        'canonical_worklog_key' => $canonicalKey,
-                    ],
-                    [
-                        'external_worklog_id'        => $externalWorklogId,
-                        'pm_connection_id'           => $existingLog?->pm_connection_id ?? $connection->id,
-                        'client_id'                  => $targetClientId,
-                        'user_id'                    => $finalUserId,
-                        'pm_work_item_id'            => $workItem->id,
-                        'external_author_id'         => $authorAccountId,
-                        'author_name'                => $authorName ?? $wl['author']['displayName'] ?? 'Unknown',
-                        'attribution_source'         => $attributionSource,
-                        'attribution_metadata_json'  => $metadata,
-                        'time_spent_seconds'         => (int) ($wl['timeSpentSeconds'] ?? 0),
-                        'worklog_started_at'         => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
-                        'external_created_at'        => isset($wl['created']) ? Carbon::parse($wl['created']) : null,
-                        'external_updated_at'        => isset($wl['updated']) ? Carbon::parse($wl['updated']) : null,
-                        'last_synced_at'             => now(),
-                    ]
-                );
+                $attributes = [
+                    'canonical_worklog_key'      => $canonicalKey,
+                    'external_worklog_id'        => $externalWorklogId,
+                    'pm_connection_id'           => $existingLog?->pm_connection_id ?? $connection->id,
+                    'client_id'                  => $targetClientId,
+                    'user_id'                    => $finalUserId,
+                    'pm_work_item_id'            => $workItem->id,
+                    'external_author_id'         => $authorAccountId,
+                    'author_name'                => $authorName ?? $wl['author']['displayName'] ?? 'Unknown',
+                    'attribution_source'         => $attributionSource,
+                    'attribution_metadata_json'  => $metadata,
+                    'time_spent_seconds'         => (int) ($wl['timeSpentSeconds'] ?? 0),
+                    'worklog_started_at'         => isset($wl['started']) ? Carbon::parse($wl['started']) : now(),
+                    'external_created_at'        => isset($wl['created']) ? Carbon::parse($wl['created']) : null,
+                    'external_updated_at'        => isset($wl['updated']) ? Carbon::parse($wl['updated']) : null,
+                    'last_synced_at'             => now(),
+                ];
+
+                if ($existingLog) {
+                    $existingLog->update($attributes);
+                    $worklogModel = $existingLog;
+                } else {
+                    $worklogModel = PmWorklog::create($attributes);
+                }
                 $syncedLogs[] = $worklogModel;
             }
 

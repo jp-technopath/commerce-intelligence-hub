@@ -58,14 +58,20 @@ class SyncPmProjectJob implements ShouldQueue
                 }
 
                 // Sync worklogs if item has logged time and DB worklogs differ from reported time_spent_seconds,
-                // or if the item still has unattributed worklogs that can be resolved via Tempo.
+                // or if the item still has unverified or legacy-attributed worklogs that can be authoritatively resolved via Tempo.
                 if ($workItem->time_spent_seconds > 0) {
                     $dbSeconds = (int) ($dbWorklogSums->get($workItem->id) ?? 0);
-                    $hasUnattributed = PmWorklog::where('pm_work_item_id', $workItem->id)
-                        ->where('attribution_source', 'unattributed')
+                    $needsReconciliation = PmWorklog::where('pm_work_item_id', $workItem->id)
+                        ->where(function ($q) {
+                            $q->whereIn('attribution_source', ['unattributed', 'legacy_attributed'])
+                              ->orWhereNull('attribution_source')
+                              ->orWhere('author_name', 'LIKE', '%tempo%')
+                              ->orWhere('external_author_id', '557058:295406f3-a1fc-4733-b906-dd15d021bd79');
+                        })
+                        ->whereNotIn('attribution_source', ['tempo_verified', 'jira_verified', 'authoritative_correction'])
                         ->exists();
 
-                    if ($dbSeconds != $workItem->time_spent_seconds || $hasUnattributed) {
+                    if ($dbSeconds != $workItem->time_spent_seconds || $needsReconciliation) {
                         try {
                             $jiraProvider->syncWorklogs($workItem);
                         } catch (\Throwable $we) {
