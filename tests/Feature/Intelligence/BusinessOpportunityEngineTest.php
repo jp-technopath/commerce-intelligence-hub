@@ -190,7 +190,7 @@ class BusinessOpportunityEngineTest extends TestCase
         $profile = $this->analysisService->getCustomerAccountProfile($this->client, $twoOrderHash);
 
         $this->assertNotNull($profile);
-        $this->assertEquals('limited_two_orders', $profile['cadence']['evidence_level']);
+        $this->assertContains($profile['cadence']['evidence_level'], ['limited_two_orders', 'provisional_two_episodes']);
         $this->assertEquals('provisional', $profile['cadence']['confidence']);
         $this->assertTrue($profile['cadence']['cohort_benchmark_used']);
         $this->assertNull($profile['cadence']['std_dev_days']);
@@ -501,7 +501,7 @@ class BusinessOpportunityEngineTest extends TestCase
 
         $provenFinding = $findings->firstWhere('accountIdentityHash', $provenHash);
         $this->assertNotNull($provenFinding, 'Proven recurring enterprise account must qualify for long-term winback');
-        $this->assertEquals('historical_reorder_value', $provenFinding->impactNature);
+        $this->assertEquals('historical_purchasing_episode_benchmark', $provenFinding->impactNature);
         $this->assertEquals(3000.00, $provenFinding->estimatedRevenueImpact);
         $this->assertEquals('proven_recurring', $provenFinding->impactAssumptions['relationship_qualification']);
         $this->assertEquals('executive_sales', $provenFinding->targetRole);

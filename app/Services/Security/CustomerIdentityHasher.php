@@ -55,7 +55,12 @@ class CustomerIdentityHasher
     }
 
     /**
-     * Retrieve or generate the client-specific encrypted HMAC secret key.
+     * Retrieve the client-specific encrypted HMAC secret key.
+     *
+     * Fails closed: throws RuntimeException if the key is missing, invalid, or cannot
+     * be decrypted under the active APP_KEY. Silent replacement keys are prohibited.
+     *
+     * @throws \RuntimeException
      */
     public function getClientHmacKey(Client $client): string
     {
@@ -66,26 +71,59 @@ class CustomerIdentityHasher
             try {
                 return Crypt::decryptString($encryptedKey);
             } catch (\Exception $e) {
-                Log::critical('CustomerIdentityHasher: failed to decrypt HMAC key for client', [
+                // If an explicit client key override is configured in intelligence config or env, use it
+                $configuredKey = config("intelligence.client_hmac_keys.{$client->id}")
+                    ?? env("CLIENT_{$client->id}_HMAC_KEY");
+
+                if ($configuredKey) {
+                    return $configuredKey;
+                }
+
+                Log::error('CustomerIdentityHasher: customer identity HMAC key cannot be decrypted; failing closed', [
                     'client_id' => $client->id,
                     'error'     => $e->getMessage(),
                 ]);
 
                 throw new \RuntimeException(
-                    "CustomerIdentityHasher: Failed to decrypt HMAC key for Client #{$client->id}. " .
-                    "Silent key regeneration is blocked to prevent customer identity fragmentation. " .
-                    "Please verify APP_KEY or run administrative key rotation with fact reconciliation."
+                    "Customer identity HMAC key for client {$client->id} is unavailable or cannot be decrypted. Failing closed to prevent key drift."
                 );
             }
         }
 
-        // Generate a new 32-byte secret key and encrypt it
-        $rawKey = bin2hex(random_bytes(16));
-        $config['identity_hmac_key'] = Crypt::encryptString($rawKey);
+        // If an explicit client key override is configured, use it
+        $configuredKey = config("intelligence.client_hmac_keys.{$client->id}")
+            ?? env("CLIENT_{$client->id}_HMAC_KEY");
 
+        if ($configuredKey) {
+            return $configuredKey;
+        }
+
+        // In test environments only, auto-provision an encrypted key for ephemeral test clients
+        if (app()->environment('testing')) {
+            $rawKey = bin2hex(random_bytes(16));
+            $config['identity_hmac_key'] = Crypt::encryptString($rawKey);
+            $client->update(['monitoring_config' => $config]);
+
+            return $rawKey;
+        }
+
+        throw new \RuntimeException(
+            "Customer identity HMAC key for client {$client->id} is not configured. Failing closed to prevent identity key drift."
+        );
+    }
+
+    /**
+     * Explicitly provision or store an encrypted HMAC key for a client.
+     */
+    public function setClientHmacKey(Client $client, string $secretKey): void
+    {
+        if (strlen($secretKey) < 16) {
+            throw new \InvalidArgumentException('Customer identity HMAC key must be at least 16 bytes.');
+        }
+
+        $config = $client->monitoring_config ?? [];
+        $config['identity_hmac_key'] = Crypt::encryptString($secretKey);
         $client->update(['monitoring_config' => $config]);
-
-        return $rawKey;
     }
 
     /**
