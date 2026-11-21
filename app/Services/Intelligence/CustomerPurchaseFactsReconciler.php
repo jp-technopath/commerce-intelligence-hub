@@ -61,6 +61,7 @@ class CustomerPurchaseFactsReconciler
             ->selectRaw('
                 client_id,
                 customer_identity_hash,
+                MAX(canonical_account_id) as canonical_account_id,
                 MAX(registered_customer_id) as customer_id,
                 MAX(customer_email) as customer_email,
                 MAX(customer_name) as customer_name,
@@ -163,6 +164,7 @@ class CustomerPurchaseFactsReconciler
                 $factUpsertBatch[] = [
                     'client_id'                  => $clientId,
                     'customer_identity_hash'     => $row->customer_identity_hash,
+                    'canonical_account_id'       => $row->canonical_account_id ?? $existing?->canonical_account_id,
                     'customer_id'                => $row->customer_id ?? $existing?->customer_id,
                     'customer_email'             => $row->customer_email ?: ($existing?->customer_email ?: null),
                     'customer_name'              => $row->customer_name ?: ($existing?->customer_name ?: null),
@@ -183,6 +185,7 @@ class CustomerPurchaseFactsReconciler
                     $chunk,
                     ['client_id', 'customer_identity_hash'],
                     [
+                        'canonical_account_id',
                         'customer_id',
                         'customer_email',
                         'customer_name',

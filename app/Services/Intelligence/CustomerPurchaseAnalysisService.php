@@ -23,9 +23,13 @@ class CustomerPurchaseAnalysisService
             return $this->baselinesCache[$client->id];
         }
 
-        $facts = CommerceCustomerPurchaseFact::where('client_id', $client->id)
-            ->where('lifetime_valid_order_count', '>', 0)
-            ->get();
+        try {
+            $facts = CommerceCustomerPurchaseFact::where('client_id', $client->id)
+                ->where('lifetime_valid_order_count', '>', 0)
+                ->get();
+        } catch (\Throwable $e) {
+            $facts = collect();
+        }
 
         if ($facts->isEmpty()) {
             $this->baselinesCache[$client->id] = [
@@ -112,25 +116,40 @@ class CustomerPurchaseAnalysisService
             return null;
         }
 
-        $orders = CommerceOrder::where('client_id', $client->id)
-            ->where('customer_identity_hash', $customerIdentityHash)
-            ->where('is_valid', true)
-            ->orderBy('order_date', 'asc')
-            ->get(['order_date', 'net_revenue']);
+        $ordersQuery = CommerceOrder::where('client_id', $client->id)
+            ->where('is_valid', true);
+
+        if (! empty($fact->canonical_account_id)) {
+            $ordersQuery->where('canonical_account_id', $fact->canonical_account_id);
+        } else {
+            $ordersQuery->where('customer_identity_hash', $customerIdentityHash);
+        }
+
+        if ($asOf) {
+            $ordersQuery->where('order_date', '<=', $asOf->toDateTimeString());
+        }
+
+        $orders = $ordersQuery->orderBy('order_date', 'asc')->get(['id', 'order_date', 'net_revenue', 'metadata_json']);
 
         $orderCount = $orders->count();
         if ($orderCount === 0) {
             return null;
         }
 
-        $referenceDate = $asOf ?? ($client->timezone ? Carbon::now($client->timezone) : Carbon::now());
+        $timezone = $client->timezone ?? 'UTC';
+        $referenceDate = $asOf ? Carbon::parse($asOf)->setTimezone($timezone) : Carbon::now($timezone);
 
-        $firstOrderAt = Carbon::parse($orders->first()->order_date);
-        $latestOrderAt = Carbon::parse($orders->last()->order_date);
+        $firstOrderAt = Carbon::parse($orders->first()->order_date)->setTimezone($timezone);
+        $latestOrderAt = Carbon::parse($orders->last()->order_date)->setTimezone($timezone);
         $daysSinceLastOrder = max(0, (int) $latestOrderAt->diffInDays($referenceDate));
 
         $totalSpend = (float) $orders->sum('net_revenue');
         $aov = $orderCount > 0 ? round($totalSpend / $orderCount, 2) : 0.0;
+
+        // Cluster valid orders into 48-hour purchasing episodes
+        $episodes = $this->clusterOrdersIntoEpisodes($orders, 48.0);
+        $episodeCount = $episodes->count();
+        $averageEpisodeSpend = $episodeCount > 0 ? round($totalSpend / $episodeCount, 2) : $aov;
 
         // Identity confidence qualification
         $identityConfidence = 'provisional';
@@ -140,8 +159,8 @@ class CustomerPurchaseAnalysisService
             $identityConfidence = 'stable_hash';
         }
 
-        // Account-level cadence and variance calculation
-        $cadenceData = $this->calculateAccountCadence($client, $orders);
+        // Account-level cadence and variance calculation on purchasing episodes
+        $cadenceData = $this->calculateAccountCadence($client, $orders, $episodes);
 
         // Contraction evaluation: trailing adaptive cadence window vs baseline window with bulk outlier normalization
         $contractionData = $this->calculateAccountContraction($orders, $referenceDate, $cadenceData, $daysSinceLastOrder, $aov);
@@ -151,6 +170,7 @@ class CustomerPurchaseAnalysisService
 
         $this->accountProfileCache[$cacheKey] = [
             'customer_identity_hash' => $customerIdentityHash,
+            'canonical_account_id'   => $fact->canonical_account_id,
             'customer_id'            => $fact->customer_id,
             'customer_email'         => $fact->customer_email,
             'customer_name'          => $fact->customer_name,
@@ -158,11 +178,13 @@ class CustomerPurchaseAnalysisService
             'is_registered'          => (bool) $fact->is_registered_customer,
             'identity_confidence'    => $identityConfidence,
             'order_count'            => $orderCount,
+            'episode_count'          => $episodeCount,
             'first_order_at'         => $firstOrderAt->toIso8601String(),
             'latest_order_at'        => $latestOrderAt->toIso8601String(),
             'days_since_last_order'  => $daysSinceLastOrder,
             'lifetime_spend'         => round($totalSpend, 2),
             'historical_aov'         => $aov,
+            'average_episode_spend'  => $averageEpisodeSpend,
             'cadence'                => $cadenceData,
             'contraction'            => $contractionData,
             'seasonality'            => $seasonalityData,
@@ -302,90 +324,204 @@ class CustomerPurchaseAnalysisService
     }
 
     /**
-     * Calculate account cadence and purchasing regularity.
-     * Enforces minimum evidence requirements:
-     * - order_count >= 3: account-specific mean, median, IQR, cv.
-     * - order_count == 2: single interval, cohort benchmark used, confidence 'provisional'.
-     * - order_count == 1: no intervals, confidence 'unsupported'.
+     * Cluster valid commerce orders into purchasing episodes.
+     * Orders placed by the same account within <= 48 hours measured from the FIRST order
+     * in the episode are grouped into a single purchasing episode.
+     *
+     * In addition:
+     * - Preserves all individual orders, their order IDs, and financial values.
+     * - Avoids merging clearly unrelated purchase orders solely because they occurred within 48 hours
+     *   by checking purchase order / project references in order metadata.
+     *
+     * @return Collection<int, array{first_order_at: string, latest_order_at: string, order_count: int, total_spend: float, po_references: array, orders: array}>
      */
-    protected function calculateAccountCadence(Client $client, Collection $orders): array
+    public function clusterOrdersIntoEpisodes(Collection $orders, float $windowHours = 48.0): Collection
     {
-        $orderCount = $orders->count();
+        if ($orders->isEmpty()) {
+            return collect();
+        }
 
-        if ($orderCount < 2) {
+        $sorted = $orders->sortBy('order_date')->values();
+        $episodes = collect();
+
+        $extractPo = function ($order): ?string {
+            $meta = is_array($order->metadata_json ?? null)
+                ? $order->metadata_json
+                : (is_string($order->metadata_json ?? null) ? json_decode($order->metadata_json, true) : []);
+            $po = $meta['po_number'] ?? $meta['purchase_order'] ?? $meta['project_id'] ?? $meta['reference'] ?? null;
+
+            return ! empty($po) && is_string($po) ? trim(strtolower($po)) : null;
+        };
+
+        $firstPo = $extractPo($sorted[0]);
+        $currentEpisode = [
+            'first_order_at' => $sorted[0]->order_date,
+            'latest_order_at'=> $sorted[0]->order_date,
+            'order_count'    => 1,
+            'total_spend'    => (float) $sorted[0]->net_revenue,
+            'po_references'  => $firstPo ? [$firstPo] : [],
+            'orders'         => [
+                [
+                    'id'          => $sorted[0]->id ?? null,
+                    'order_date'  => $sorted[0]->order_date,
+                    'net_revenue' => (float) $sorted[0]->net_revenue,
+                ],
+            ],
+        ];
+
+        for ($i = 1; $i < $sorted->count(); $i++) {
+            $currOrder = $sorted[$i];
+            $firstDate = Carbon::parse($currentEpisode['first_order_at']);
+            $currDate = Carbon::parse($currOrder->order_date);
+            $diffHoursFromStart = abs($currDate->diffInHours($firstDate));
+
+            $currPo = $extractPo($currOrder);
+            $hasConflictingPo = false;
+
+            if ($currPo !== null && ! empty($currentEpisode['po_references'])) {
+                // If candidate order has an explicit PO that conflicts with the episode's established PO
+                if (! in_array($currPo, $currentEpisode['po_references'], true)) {
+                    $hasConflictingPo = true;
+                }
+            }
+
+            if ($diffHoursFromStart <= $windowHours && ! $hasConflictingPo) {
+                // Clustered into current episode
+                $currentEpisode['latest_order_at'] = $currOrder->order_date;
+                $currentEpisode['order_count']++;
+                $currentEpisode['total_spend'] += (float) $currOrder->net_revenue;
+                if ($currPo !== null && ! in_array($currPo, $currentEpisode['po_references'], true)) {
+                    $currentEpisode['po_references'][] = $currPo;
+                }
+                $currentEpisode['orders'][] = [
+                    'id'          => $currOrder->id ?? null,
+                    'order_date'  => $currOrder->order_date,
+                    'net_revenue' => (float) $currOrder->net_revenue,
+                ];
+            } else {
+                // Finalize current episode and begin next
+                $episodes->push($currentEpisode);
+                $currentEpisode = [
+                    'first_order_at' => $currOrder->order_date,
+                    'latest_order_at'=> $currOrder->order_date,
+                    'order_count'    => 1,
+                    'total_spend'    => (float) $currOrder->net_revenue,
+                    'po_references'  => $currPo ? [$currPo] : [],
+                    'orders'         => [
+                        [
+                            'id'          => $currOrder->id ?? null,
+                            'order_date'  => $currOrder->order_date,
+                            'net_revenue' => (float) $currOrder->net_revenue,
+                        ],
+                    ],
+                ];
+            }
+        }
+
+        $episodes->push($currentEpisode);
+
+        return $episodes;
+    }
+
+    /**
+     * Calculate account cadence and purchasing regularity based on purchasing episodes.
+     * Enforces minimum evidence requirements:
+     * - episode_count >= 3: account-specific mean, median, IQR, cv, adaptive multiplier M in [2.5, 4.0].
+     * - episode_count == 2: single interval, provisional directional candidate, cohort benchmark used.
+     * - episode_count == 1: no intervals, confidence 'unsupported', ineligible for winback.
+     */
+    public function calculateAccountCadence(Client $client, Collection $orders, ?Collection $episodes = null): array
+    {
+        if ($episodes === null) {
+            $episodes = $this->clusterOrdersIntoEpisodes($orders);
+        }
+
+        $episodeCount = $episodes->count();
+
+        if ($episodeCount < 2) {
             return [
-                'has_cadence'            => false,
-                'evidence_level'         => 'single_order_insufficient',
-                'confidence'             => 'unsupported',
-                'interval_count'         => 0,
-                'intervals_days'         => [],
-                'median_interval_days'   => null,
-                'mean_interval_days'     => null,
-                'std_dev_days'           => null,
-                'variance_cv'            => null,
-                'regularity'             => 'unknown',
-                'expected_next_order_at' => null,
-                'days_overdue'           => 0,
+                'has_cadence'                 => false,
+                'evidence_level'              => 'single_episode_insufficient',
+                'confidence'                  => 'unsupported',
+                'episode_count'               => $episodeCount,
+                'interval_count'              => 0,
+                'intervals_days'              => [],
+                'median_interval_days'        => null,
+                'mean_interval_days'          => null,
+                'std_dev_days'                => null,
+                'variance_cv'                 => null,
+                'regularity'                  => 'unknown',
+                'expected_next_order_at'      => null,
+                'days_overdue'                => 0,
+                'adaptive_winback_multiplier' => 2.5,
+                'winback_overdue_days'        => null,
+                'limitation_note'             => 'Account has only 1 independent purchasing episode. Recurring cadence cannot be established.',
             ];
         }
 
         $intervals = [];
-        for ($i = 1; $i < $orderCount; $i++) {
-            $prevDate = Carbon::parse($orders[$i - 1]->order_date);
-            $currDate = Carbon::parse($orders[$i]->order_date);
+        for ($i = 1; $i < $episodeCount; $i++) {
+            $prevDate = Carbon::parse($episodes[$i - 1]['first_order_at']);
+            $currDate = Carbon::parse($episodes[$i]['first_order_at']);
             $intervals[] = max(1, (int) $prevDate->diffInDays($currDate));
         }
 
         $intervalCount = count($intervals);
 
-        if ($orderCount == 2) {
-            // Exactly 2 orders => 1 interval. Cannot compute true standard deviation or variance.
+        if ($episodeCount == 2) {
+            // Exactly 2 episodes => 1 interval. Provisional candidate.
             $singleInterval = $intervals[0];
 
-            // If the 2 orders occurred within <= 14 days of each other, this represents a split or clustered project order, NOT a recurring replenishment cadence
+            // If the 2 episodes occurred within <= 14 days of each other, this represents a clustered project purchase
             if ($singleInterval <= 14) {
                 return [
-                    'has_cadence'            => false,
-                    'evidence_level'         => 'split_or_project_purchase',
-                    'confidence'             => 'unsupported',
-                    'interval_count'         => 1,
-                    'intervals_days'         => $intervals,
-                    'median_interval_days'   => null,
-                    'mean_interval_days'     => null,
-                    'std_dev_days'           => null,
-                    'variance_cv'            => null,
-                    'regularity'             => 'project_or_split_purchase',
-                    'expected_next_order_at' => null,
-                    'days_overdue'           => 0,
-                    'limitation_note'        => "Account has only 2 orders placed {$singleInterval} days apart. Classified as a split or project purchase; recurring cadence cannot be inferred.",
+                    'has_cadence'                 => false,
+                    'evidence_level'              => 'split_or_project_purchase',
+                    'confidence'                  => 'unsupported',
+                    'episode_count'               => 2,
+                    'interval_count'              => 1,
+                    'intervals_days'              => $intervals,
+                    'median_interval_days'        => null,
+                    'mean_interval_days'          => null,
+                    'std_dev_days'                => null,
+                    'variance_cv'                 => null,
+                    'regularity'                  => 'project_or_split_purchase',
+                    'expected_next_order_at'      => null,
+                    'days_overdue'                => 0,
+                    'adaptive_winback_multiplier' => 2.5,
+                    'winback_overdue_days'        => null,
+                    'limitation_note'             => "Account has only 2 purchasing episodes placed {$singleInterval} days apart. Classified as a split or project purchase; recurring cadence cannot be inferred.",
                 ];
             }
 
             $cohortBaselines = $this->getDerivedClientBaselines($client);
             $cohortMedian = $cohortBaselines['cohort_intervals']['median'] ?? 30;
 
-            $latestOrderDate = Carbon::parse($orders->last()->order_date);
+            $latestOrderDate = Carbon::parse($episodes->last()['latest_order_at']);
             $expectedNextOrderAt = $latestOrderDate->copy()->addDays($singleInterval);
 
             return [
-                'has_cadence'            => true,
-                'evidence_level'         => 'limited_two_orders',
-                'confidence'             => 'provisional',
-                'interval_count'         => 1,
-                'intervals_days'         => $intervals,
-                'median_interval_days'   => $singleInterval,
-                'mean_interval_days'     => (float) $singleInterval,
-                'std_dev_days'           => null,
-                'variance_cv'            => null,
-                'cohort_benchmark_used'  => true,
-                'cohort_median_days'     => $cohortMedian,
-                'regularity'             => 'limited_history',
-                'expected_next_order_at' => $expectedNextOrderAt->toIso8601String(),
-                'limitation_note'        => 'Account has only 2 historical orders (1 interval). Variance and periodicity cannot be calculated reliably; cohort benchmarks applied.',
+                'has_cadence'                 => true,
+                'evidence_level'              => 'provisional_two_episodes',
+                'confidence'                  => 'provisional',
+                'episode_count'               => 2,
+                'interval_count'              => 1,
+                'intervals_days'              => $intervals,
+                'median_interval_days'        => $singleInterval,
+                'mean_interval_days'          => (float) $singleInterval,
+                'std_dev_days'                => null,
+                'variance_cv'                 => null,
+                'cohort_benchmark_used'       => true,
+                'cohort_median_days'          => $cohortMedian,
+                'regularity'                  => 'limited_history',
+                'expected_next_order_at'      => $expectedNextOrderAt->toIso8601String(),
+                'adaptive_winback_multiplier' => 2.5,
+                'winback_overdue_days'        => (int) round($singleInterval * 2.5),
+                'limitation_note'             => 'Account has only 2 historical purchasing episodes (1 observed interval). Periodicity is provisional; directional candidate only.',
             ];
         }
 
-        // order_count >= 3: account-specific cadence and variance
+        // episode_count >= 3: account-specific cadence and variance
         sort($intervals);
         $mean = array_sum($intervals) / $intervalCount;
         $variance = 0.0;
@@ -399,28 +535,38 @@ class CustomerPurchaseAnalysisService
 
         // Regularity classification
         $regularity = 'moderately_regular';
-        if ($cv <= 0.40) {
+        if ($cv <= 0.35) {
             $regularity = 'highly_regular'; // Consumable/replenishment candidate
         } elseif ($cv > 0.80) {
             $regularity = 'irregular_or_project_based';
         }
 
-        $latestOrderDate = Carbon::parse($orders->last()->order_date);
+        // Calibrated adaptive winback multiplier M in [2.0, 3.2] based on cv
+        $adaptiveMultiplier = 2.0;
+        if ($cv > 0.35) {
+            $adaptiveMultiplier = min(3.2, round(2.0 + (1.2 * min(1.0, ($cv - 0.35) / 0.45)), 2));
+        }
+
+        $latestOrderDate = Carbon::parse($episodes->last()['latest_order_at']);
         $expectedNextOrderAt = $latestOrderDate->copy()->addDays((int) round($median));
+        $winbackOverdueDays = (int) round($median * $adaptiveMultiplier);
 
         return [
-            'has_cadence'            => true,
-            'evidence_level'         => 'sufficient_history',
-            'confidence'             => 'high',
-            'interval_count'         => $intervalCount,
-            'intervals_days'         => $intervals,
-            'median_interval_days'   => (int) round($median),
-            'mean_interval_days'     => round($mean, 1),
-            'std_dev_days'           => round($stdDev, 1),
-            'variance_cv'            => $cv,
-            'cohort_benchmark_used'  => false,
-            'regularity'             => $regularity,
-            'expected_next_order_at' => $expectedNextOrderAt->toIso8601String(),
+            'has_cadence'                 => true,
+            'evidence_level'              => 'qualified_three_plus_episodes',
+            'confidence'                  => 'high',
+            'episode_count'               => $episodeCount,
+            'interval_count'              => $intervalCount,
+            'intervals_days'              => $intervals,
+            'median_interval_days'        => (int) round($median),
+            'mean_interval_days'          => round($mean, 1),
+            'std_dev_days'                => round($stdDev, 1),
+            'variance_cv'                 => $cv,
+            'cohort_benchmark_used'       => false,
+            'regularity'                  => $regularity,
+            'expected_next_order_at'      => $expectedNextOrderAt->toIso8601String(),
+            'adaptive_winback_multiplier' => $adaptiveMultiplier,
+            'winback_overdue_days'        => $winbackOverdueDays,
         ];
     }
 

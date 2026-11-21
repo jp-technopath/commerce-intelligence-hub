@@ -102,7 +102,9 @@ class InitiativeAggregationService
             return true;
         }
 
-        if (($evidence['cadence_evidence_level'] ?? null) === 'limited_two_orders' || ($evidence['evidence_level'] ?? null) === 'provisional_p90') {
+        if (($evidence['cadence_evidence_level'] ?? null) === 'limited_two_orders' 
+            || ($evidence['evidence_level'] ?? null) === 'provisional_p90'
+            || ($evidence['relationship_tier'] ?? null) === 'provisional_two_episodes') {
             return true;
         }
 
@@ -131,6 +133,7 @@ class InitiativeAggregationService
         $provisionalAccountsCount = $provisionalFindings->pluck('account_identity_hash')->filter()->unique()->count() ?: $provisionalFindings->count();
 
         // 1. Segregate Financials (Prioritize verified historical purchasing evidence)
+        $historicalPurchasingEpisodeBenchmark = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::HistoricalPurchasingEpisodeBenchmark)->sum('estimated_revenue_impact');
         $historicalReorderValue = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::HistoricalReorderValue)->sum('estimated_revenue_impact');
         $observedSpendingDecline = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::ObservedSpendingDecline)->sum('estimated_revenue_impact');
         $verifiedFinancialLoss = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::VerifiedFinancialLoss)->sum('estimated_revenue_impact');
@@ -148,6 +151,11 @@ class InitiativeAggregationService
             $primaryFinancialValue = $verifiedFinancialLoss;
             $primaryFinancialNature = 'verified_financial_loss';
             $primaryFinancialColor = 'rose';
+        } elseif ($historicalPurchasingEpisodeBenchmark > 0) {
+            $primaryFinancialLabel = 'Historical Purchasing-Episode Benchmark';
+            $primaryFinancialValue = $historicalPurchasingEpisodeBenchmark;
+            $primaryFinancialNature = 'historical_purchasing_episode_benchmark';
+            $primaryFinancialColor = 'emerald';
         } elseif ($historicalReorderValue > 0) {
             $primaryFinancialLabel = 'Historical Reorder Value';
             $primaryFinancialValue = $historicalReorderValue;
@@ -231,8 +239,8 @@ class InitiativeAggregationService
                 'account_hash'              => $accHash,
                 'is_provisional'            => $isProvisional,
                 'evidence_level'            => $isProvisional ? 'Provisional (Manual Review Required)' : 'Verified Repeat Cadence',
-                'lifetime_net_revenue'      => (float) ($evidence['lifetime_net_revenue'] ?? $evidence['lifetime_spend'] ?? $evidence['account_lifetime_spend'] ?? 0.0),
-                'lifetime_spend'            => (float) ($evidence['lifetime_net_revenue'] ?? $evidence['lifetime_spend'] ?? $evidence['account_lifetime_spend'] ?? 0.0),
+                'lifetime_net_revenue'      => (float) ($evidence['lifetime_net_purchasing_value'] ?? $evidence['lifetime_net_revenue'] ?? $evidence['lifetime_spend'] ?? $evidence['account_lifetime_spend'] ?? 0.0),
+                'lifetime_spend'            => (float) ($evidence['lifetime_net_purchasing_value'] ?? $evidence['lifetime_net_revenue'] ?? $evidence['lifetime_spend'] ?? $evidence['account_lifetime_spend'] ?? 0.0),
                 'lifetime_orders'           => (int) ($evidence['lifetime_orders'] ?? $evidence['account_order_count'] ?? 0),
                 'cadence'                   => $cadence,
                 'days_since_last_order'     => $evidence['days_since_last_order'] ?? null,
