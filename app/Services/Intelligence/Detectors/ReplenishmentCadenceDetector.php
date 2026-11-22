@@ -16,10 +16,16 @@ use Illuminate\Support\Collection;
 class ReplenishmentCadenceDetector implements OpportunityDetectorInterface
 {
     public const KEY = 'opportunity.replenishment_cadence';
+    public const VERSION = '2.0.0';
 
     public function key(): string
     {
         return self::KEY;
+    }
+
+    public function version(): string
+    {
+        return self::VERSION;
     }
 
     public function name(): string
@@ -148,6 +154,12 @@ class ReplenishmentCadenceDetector implements OpportunityDetectorInterface
                 impactNature: 'historical_reorder_value',
                 impactAssumptions: [
                     'model_type'                  => 'historical_reorder_value',
+                    'detector_version'            => self::VERSION,
+                    'evaluated_at'                => $referenceDate->toIso8601String(),
+                    'cadence_threshold_days'      => $medianInterval,
+                    'effective_min_dormancy'      => $medianInterval,
+                    'days_since_last_purchase'    => $daysSinceLastOrder,
+                    'days_overdue'                => max(0, $daysDelta),
                     'historical_aov'              => $aov,
                     'median_interval_days'        => $medianInterval,
                     'variance_cv'                 => $cadence['variance_cv'],
@@ -159,16 +171,22 @@ class ReplenishmentCadenceDetector implements OpportunityDetectorInterface
                     'explanation'                 => "Opportunity assumes timely reorder of regular consumable basket at verified historical AOV of \${$aov}.",
                 ],
                 evidence: [
-                    'account_identity_hash' => $fact->customer_identity_hash,
-                    'is_registered'         => $profile['is_registered'],
-                    'order_count'           => $profile['order_count'],
-                    'median_interval_days'  => $medianInterval,
-                    'variance_cv'           => $cadence['variance_cv'],
-                    'regularity'            => $cadence['regularity'],
-                    'days_since_last_order' => $daysSinceLastOrder,
-                    'days_overdue_or_lead'  => $daysDelta,
-                    'historical_aov'        => $aov,
-                    'lifetime_spend'        => $lifetimeSpend,
+                    'detector_version'       => self::VERSION,
+                    'evaluated_at'           => $referenceDate->toIso8601String(),
+                    'cadence_threshold_days' => $medianInterval,
+                    'effective_min_dormancy' => $medianInterval,
+                    'days_since_last_purchase' => $daysSinceLastOrder,
+                    'days_overdue'           => max(0, $daysDelta),
+                    'account_identity_hash'  => $fact->customer_identity_hash,
+                    'is_registered'          => $profile['is_registered'],
+                    'order_count'            => $profile['order_count'],
+                    'median_interval_days'   => $medianInterval,
+                    'variance_cv'            => $cadence['variance_cv'],
+                    'regularity'             => $cadence['regularity'],
+                    'days_since_last_order'  => $daysSinceLastOrder,
+                    'days_overdue_or_lead'   => $daysDelta,
+                    'historical_aov'         => $aov,
+                    'lifetime_spend'         => $lifetimeSpend,
                 ],
                 metadata: [
                     'client_id'        => $client->id,

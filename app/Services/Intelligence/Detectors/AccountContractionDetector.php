@@ -16,10 +16,16 @@ use Illuminate\Support\Collection;
 class AccountContractionDetector implements OpportunityDetectorInterface
 {
     public const KEY = 'risk.account_contraction';
+    public const VERSION = '2.0.0';
 
     public function key(): string
     {
         return self::KEY;
+    }
+
+    public function version(): string
+    {
+        return self::VERSION;
     }
 
     public function name(): string
@@ -160,6 +166,12 @@ class AccountContractionDetector implements OpportunityDetectorInterface
                 impactNature: 'observed_spending_decline',
                 impactAssumptions: [
                     'model_type'             => 'observed_quarterly_run_rate_decline',
+                    'detector_version'       => self::VERSION,
+                    'evaluated_at'           => $referenceDate->toIso8601String(),
+                    'cadence_threshold_days' => $contraction['eval_window_days'],
+                    'effective_min_dormancy' => $contraction['eval_window_days'],
+                    'days_since_last_purchase' => $profile['days_since_last_order'],
+                    'days_overdue'           => max(0, $profile['days_since_last_order'] - $contraction['eval_window_days']),
                     'baseline_spend'         => $contraction['baseline_spend'],
                     'raw_baseline_spend'     => $contraction['raw_baseline_spend'] ?? $contraction['baseline_spend'],
                     'baseline_orders'        => $contraction['baseline_orders'],
@@ -174,20 +186,26 @@ class AccountContractionDetector implements OpportunityDetectorInterface
                     'explanation'            => "Observed run-rate decline of -\${$revenueDrop} over {$contraction['eval_window_days']} days relative to baseline spend.",
                 ],
                 evidence: [
-                    'account_identity_hash' => $fact->customer_identity_hash,
-                    'is_registered'         => $profile['is_registered'],
-                    'lifetime_spend'        => $lifetimeSpend,
-                    'historical_aov'        => $profile['historical_aov'],
-                    'baseline_spend'        => $contraction['baseline_spend'],
-                    'raw_baseline_spend'    => $contraction['raw_baseline_spend'] ?? $contraction['baseline_spend'],
-                    'baseline_orders'       => $contraction['baseline_orders'],
-                    'eval_spend'            => $contraction['eval_spend'],
-                    'eval_orders'           => $contraction['eval_orders'],
-                    'revenue_drop'          => $revenueDrop,
-                    'contraction_pct'       => $contractionPct,
-                    'days_since_last_order' => $profile['days_since_last_order'],
-                    'has_outlier_treatment' => $contraction['has_outlier_normalization'] ?? false,
-                    'outlier_orders'        => $contraction['outlier_orders'] ?? [],
+                    'detector_version'       => self::VERSION,
+                    'evaluated_at'           => $referenceDate->toIso8601String(),
+                    'cadence_threshold_days' => $contraction['eval_window_days'],
+                    'effective_min_dormancy' => $contraction['eval_window_days'],
+                    'days_since_last_purchase' => $profile['days_since_last_order'],
+                    'days_overdue'           => max(0, $profile['days_since_last_order'] - $contraction['eval_window_days']),
+                    'account_identity_hash'  => $fact->customer_identity_hash,
+                    'is_registered'          => $profile['is_registered'],
+                    'lifetime_spend'         => $lifetimeSpend,
+                    'historical_aov'         => $profile['historical_aov'],
+                    'baseline_spend'         => $contraction['baseline_spend'],
+                    'raw_baseline_spend'     => $contraction['raw_baseline_spend'] ?? $contraction['baseline_spend'],
+                    'baseline_orders'        => $contraction['baseline_orders'],
+                    'eval_spend'             => $contraction['eval_spend'],
+                    'eval_orders'            => $contraction['eval_orders'],
+                    'revenue_drop'           => $revenueDrop,
+                    'contraction_pct'        => $contractionPct,
+                    'days_since_last_order'  => $profile['days_since_last_order'],
+                    'has_outlier_treatment'  => $contraction['has_outlier_normalization'] ?? false,
+                    'outlier_orders'         => $contraction['outlier_orders'] ?? [],
                 ],
                 metadata: [
                     'client_id'        => $client->id,

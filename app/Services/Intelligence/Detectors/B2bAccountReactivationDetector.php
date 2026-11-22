@@ -16,10 +16,16 @@ use Illuminate\Support\Collection;
 class B2bAccountReactivationDetector implements OpportunityDetectorInterface
 {
     public const KEY = 'opportunity.b2b_account_reactivation';
+    public const VERSION = '2.0.0';
 
     public function key(): string
     {
         return self::KEY;
+    }
+
+    public function version(): string
+    {
+        return self::VERSION;
     }
 
     public function name(): string
@@ -205,6 +211,12 @@ class B2bAccountReactivationDetector implements OpportunityDetectorInterface
                 impactNature: $impactNature,
                 impactAssumptions: [
                     'model_type'                  => $impactNature,
+                    'detector_version'            => self::VERSION,
+                    'evaluated_at'                => $referenceDate->toIso8601String(),
+                    'cadence_threshold_days'      => $dormancyThresholdDays,
+                    'effective_min_dormancy'      => $dormancyThresholdDays,
+                    'days_since_last_purchase'    => $daysSinceLastOrder,
+                    'days_overdue'                => max(0, $daysSinceLastOrder - $dormancyThresholdDays),
                     'historical_aov'              => $aov,
                     'lifetime_spend'              => $lifetimeSpend,
                     'order_count'                 => $orderCount,
@@ -217,6 +229,12 @@ class B2bAccountReactivationDetector implements OpportunityDetectorInterface
                     'explanation'                 => "Opportunity benchmark based on account's historical average order value of \${$aov}.",
                 ],
                 evidence: [
+                    'detector_version'       => self::VERSION,
+                    'evaluated_at'           => $referenceDate->toIso8601String(),
+                    'cadence_threshold_days' => $dormancyThresholdDays,
+                    'effective_min_dormancy' => $dormancyThresholdDays,
+                    'days_since_last_purchase' => $daysSinceLastOrder,
+                    'days_overdue'           => max(0, $daysSinceLastOrder - $dormancyThresholdDays),
                     'account_identity_hash'  => $fact->customer_identity_hash,
                     'is_registered'          => $profile['is_registered'],
                     'order_count'            => $orderCount,

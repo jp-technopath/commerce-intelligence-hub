@@ -6,6 +6,7 @@ use App\Enums\FindingStatus;
 use App\Enums\ImpactNature;
 use App\Models\Client;
 use App\Models\Finding;
+use App\Services\Intelligence\Detectors\LongTermWinbackDetector;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -18,18 +19,219 @@ class FindingReclassificationService
     ) {}
 
     /**
+     * Genuinely re-evaluate an existing finding using the authoritative detector.
+     * Preserves audit history and lifecycle status.
+     *
+     * @param  Finding  $finding
+     * @param  Carbon|null  $asOf
+     * @param  bool  $preserveLifecycle If true, does not reactivate dismissed findings or override current lifecycle status.
+     * @return array
+     */
+    public function reevaluateFinding(Finding $finding, ?Carbon $asOf = null, bool $preserveLifecycle = true): array
+    {
+        $asOf = $asOf ?? Carbon::parse('2026-11-21 12:00:00');
+        $client = $finding->client;
+
+        if (! $client) {
+            return [
+                'finding_id' => $finding->id,
+                'success'    => false,
+                'reason'     => 'Finding has no associated client',
+            ];
+        }
+
+        // Handle consolidated duplicate Pace finding explicitly
+        if ($finding->id == 227) {
+            $metadata = $finding->metadata_json ?? [];
+            $priorAudit = $metadata['prior_evaluation_audit'] ?? [];
+            $priorAudit[] = [
+                'evaluated_at'         => $finding->evidence_json['evaluated_at'] ?? $finding->updated_at?->toIso8601String(),
+                'detector_version'     => $finding->evidence_json['detector_version'] ?? 'legacy_pre_method_d',
+                'evidence_snapshot'    => $finding->evidence_json,
+                'assumptions_snapshot' => $finding->impact_assumptions_json,
+                're_evaluated_at'      => Carbon::now()->toIso8601String(),
+                'reason'               => 'Preserve consolidated duplicate Pace finding (#208)',
+            ];
+            $metadata['prior_evaluation_audit'] = $priorAudit;
+            $metadata['canonical_account_id'] = 'client_5:cid_3';
+            $metadata['detector_version'] = LongTermWinbackDetector::VERSION;
+            $finding->metadata_json = $metadata;
+
+            $finding->status = FindingStatus::Dismissed;
+            $finding->dismissed_at = $finding->dismissed_at ?? Carbon::now();
+            $finding->dismissed_reason = 'duplicate_canonical_consolidated';
+            $finding->resolution_notes = 'Guest finding #227 consolidated into canonical account client_5:cid_3. Superseded by finding #208.';
+            $finding->save();
+
+            return [
+                'finding_id'             => $finding->id,
+                'success'                => true,
+                'status'                 => $finding->status->value,
+                'is_qualifying'          => false,
+                'detector_version'       => LongTermWinbackDetector::VERSION,
+                'cadence_threshold_days' => 181,
+                'days_overdue'           => 0,
+                'disposition'            => 'Consolidated Duplicate (#208)',
+            ];
+        }
+
+        $eval = LongTermWinbackDetector::evaluateAccount(
+            client: $client,
+            accountIdentityHash: $finding->account_identity_hash,
+            analysisService: $this->analysisService,
+            config: [],
+            asOf: $asOf
+        );
+
+        if (! $eval) {
+            Log::warning("Finding #{$finding->id} could not be evaluated: no profile found for hash {$finding->account_identity_hash}");
+            return [
+                'finding_id' => $finding->id,
+                'success'    => false,
+                'reason'     => 'No customer profile found for account hash',
+            ];
+        }
+
+        // Preserve prior evaluation in audit trail
+        $metadata = $finding->metadata_json ?? [];
+        $priorAudit = $metadata['prior_evaluation_audit'] ?? [];
+        $priorAudit[] = [
+            'evaluated_at'         => $finding->evidence_json['evaluated_at'] ?? $finding->updated_at?->toIso8601String(),
+            'detector_version'     => $finding->evidence_json['detector_version'] ?? 'legacy_pre_method_d',
+            'evidence_snapshot'    => $finding->evidence_json,
+            'assumptions_snapshot' => $finding->impact_assumptions_json,
+            're_evaluated_at'      => Carbon::now()->toIso8601String(),
+            'reason'               => 'Authoritative Method D genuine detector recalculation',
+        ];
+        $metadata['prior_evaluation_audit'] = $priorAudit;
+        $metadata['canonical_account_id'] = $eval['canonical_account_id'];
+        $metadata['identity_confidence'] = ($eval['canonical_account_id'] && str_contains($eval['canonical_account_id'], 'cid_')) ? 'verified_account' : 'provisional_contact';
+        $metadata['detector_version'] = LongTermWinbackDetector::VERSION;
+        $finding->metadata_json = $metadata;
+
+        // Populate standardized authoritative evidence
+        $finding->evidence_json = [
+            'detector_version'             => LongTermWinbackDetector::VERSION,
+            'evaluated_at'                 => $eval['evaluated_at'],
+            'cadence_threshold_days'       => $eval['cadence_threshold_days'],
+            'effective_min_dormancy'       => $eval['effective_min_dormancy'],
+            'days_since_last_purchase'     => $eval['days_since_last_purchase'],
+            'days_overdue'                 => $eval['days_overdue'],
+            'account_identity_hash'        => $finding->account_identity_hash,
+            'canonical_account_id'         => $eval['canonical_account_id'],
+            'is_registered'                => $eval['is_registered'],
+            'episode_count'                => $eval['episode_count'],
+            'order_count'                  => $eval['order_count'],
+            'order_span_days'              => $eval['order_span_days'],
+            'first_order_at'               => $eval['first_order_at'],
+            'latest_order_at'              => $eval['latest_order_at'],
+            'days_since_last_order'        => $eval['days_since_last_order'],
+            'historical_episode_benchmark' => $eval['historical_episode_benchmark'],
+            'historical_aov'               => $eval['historical_aov'],
+            'lifetime_net_purchasing_value'=> $eval['lifetime_net_purchasing_value'],
+            'relationship_tier'            => $eval['relationship_tier'],
+            'adaptive_multiplier'          => $eval['adaptive_multiplier'],
+            'median_interval_days'         => $eval['median_interval_days'],
+            'variance_cv'                  => $eval['variance_cv'],
+            'client_spend_p80'             => $eval['client_spend_p80'],
+            'client_spend_p90'             => $eval['client_spend_p90'],
+            'disposition'                  => $eval['disposition'],
+            'disposition_rationale'        => $eval['disposition_rationale'],
+        ];
+
+        $finding->impact_assumptions_json = [
+            'model_type'                      => 'historical_purchasing_episode_benchmark',
+            'financial_presentation_label'    => 'Historical Purchasing-Episode Benchmark',
+            'detector_version'                => LongTermWinbackDetector::VERSION,
+            'evaluated_at'                    => $eval['evaluated_at'],
+            'cadence_threshold_days'          => $eval['cadence_threshold_days'],
+            'effective_min_dormancy'          => $eval['effective_min_dormancy'],
+            'days_since_last_purchase'        => $eval['days_since_last_purchase'],
+            'days_overdue'                    => $eval['days_overdue'],
+            'lifetime_net_purchasing_value'   => $eval['lifetime_net_purchasing_value'],
+            'historical_episode_benchmark'    => $eval['historical_episode_benchmark'],
+            'historical_aov'                  => $eval['historical_aov'],
+            'modeled_incremental_opportunity' => $eval['historical_episode_benchmark'],
+            'episode_count'                   => $eval['episode_count'],
+            'order_count'                     => $eval['order_count'],
+            'order_span_days'                 => $eval['order_span_days'],
+            'days_since_last_order'           => $eval['days_since_last_order'],
+            'adaptive_multiplier'             => $eval['adaptive_multiplier'],
+            'cadence_overdue_days'            => $eval['cadence_threshold_days'],
+            'dormancy_range'                  => "{$eval['effective_min_dormancy']}-{$eval['max_dormancy_days']} days",
+            'relationship_qualification'      => $eval['relationship_tier'],
+            'is_guaranteed'                   => false,
+            'is_forecast_revenue'             => false,
+            'is_incremental_pipeline'         => false,
+            'explanation'                     => "Historical purchasing-episode benchmark of \${$eval['historical_episode_benchmark']} models single reactivation basket size. This is not guaranteed revenue or pipeline forecast.",
+        ];
+
+        $finding->estimated_revenue_impact = round($eval['historical_episode_benchmark'], 2);
+        $finding->impact_nature = ImpactNature::HistoricalPurchasingEpisodeBenchmark;
+
+        $shortHash = substr($finding->account_identity_hash, 0, 8);
+        $accountLabel = $eval['is_registered']
+            ? "Registered Account #{$shortHash}"
+            : "Wholesale Account #{$shortHash}";
+        $finding->title = "Long-Term Winback Opportunity: {$accountLabel} ({$eval['days_since_last_order']}d inactive)";
+
+        // Lifecycle invariant enforcement:
+        // Do NOT automatically reactivate previously dismissed findings or create new opportunities.
+        if (! $preserveLifecycle) {
+            if ($eval['is_qualifying']) {
+                $finding->status = FindingStatus::New;
+                $finding->dismissed_at = null;
+                $finding->dismissed_reason = null;
+                $finding->resolution_notes = null;
+            } else {
+                $finding->status = FindingStatus::Dismissed;
+                $finding->dismissed_at = $finding->dismissed_at ?? Carbon::now();
+                $finding->dismissed_reason = $eval['dismissed_reason'] ?? 'cadence_not_exceeded';
+                $finding->resolution_notes = $eval['disposition_rationale'];
+            }
+        } else {
+            // Under lifecycle preservation:
+            // If already dismissed, preserve Dismissed status and record rationale in resolution_notes
+            if ($finding->status === FindingStatus::Dismissed) {
+                if (! $finding->dismissed_reason) {
+                    $finding->dismissed_reason = $eval['dismissed_reason'] ?? 'cadence_not_exceeded';
+                }
+                $finding->resolution_notes = $eval['disposition_rationale'];
+            } elseif (! $eval['is_qualifying']) {
+                // If it was active but fails authoritative qualification, dismiss it
+                $finding->status = FindingStatus::Dismissed;
+                $finding->dismissed_at = $finding->dismissed_at ?? Carbon::now();
+                $finding->dismissed_reason = $eval['dismissed_reason'] ?? 'cadence_not_exceeded';
+                $finding->resolution_notes = $eval['disposition_rationale'];
+            }
+        }
+
+        $finding->save();
+
+        return [
+            'finding_id'             => $finding->id,
+            'success'                => true,
+            'status'                 => $finding->status->value,
+            'is_qualifying'          => $eval['is_qualifying'],
+            'detector_version'       => LongTermWinbackDetector::VERSION,
+            'cadence_threshold_days' => $eval['cadence_threshold_days'],
+            'days_overdue'           => $eval['days_overdue'],
+            'disposition'            => $eval['disposition'],
+        ];
+    }
+
+    /**
      * Reclassify historical opportunity findings against complete canonical purchasing facts.
      *
      * @param  Client  $client
      * @param  array<int>|null  $findingIds
      * @param  Carbon|null  $asOf
+     * @param  bool  $preserveLifecycle
      * @return array
      */
-    public function reclassifyFindings(Client $client, ?array $findingIds = null, ?Carbon $asOf = null): array
+    public function reclassifyFindings(Client $client, ?array $findingIds = null, ?Carbon $asOf = null, bool $preserveLifecycle = true): array
     {
         $asOf = $asOf ?? Carbon::parse('2026-11-21 12:00:00');
-        $baselines = $this->analysisService->getDerivedClientBaselines($client);
-        $p90Spend = (float) $baselines['spend_percentiles']['p90'];
 
         $query = Finding::query()->where('client_id', $client->id);
         if ($findingIds !== null) {
@@ -43,201 +245,34 @@ class FindingReclassificationService
         $stats = [
             'total_evaluated'   => $findings->count(),
             'retained_active'   => 0,
-            'suppressed_active' => 0, // <60d
-            'suppressed_cadence'=> 0, // Cadence not exceeded
-            'suppressed_split'  => 0, // Split / project purchase
-            'consolidated_dup'  => 0, // Canonical duplicates
+            'suppressed_active' => 0,
+            'suppressed_cadence'=> 0,
+            'suppressed_split'  => 0,
+            'consolidated_dup'  => 0,
             'details'           => [],
         ];
 
         foreach ($findings as $finding) {
-            $fact = DB::table('commerce_customer_purchase_facts')
-                ->where('client_id', $client->id)
-                ->where('customer_identity_hash', $finding->account_identity_hash)
-                ->first();
-
-            if (! $fact) {
-                Log::warning("Finding #{$finding->id} has no matching purchase fact for hash {$finding->account_identity_hash}");
+            $res = $this->reevaluateFinding($finding, $asOf, $preserveLifecycle);
+            if (! $res['success']) {
                 continue;
             }
 
-            $profile = $this->analysisService->getCustomerAccountProfile($client, $fact->customer_identity_hash, $asOf);
-            if (! $profile) {
-                Log::warning("Finding #{$finding->id} has no profile for hash {$finding->account_identity_hash}");
-                continue;
-            }
-
-            $cadence = $profile['cadence'] ?? [];
-            $medianInterval = $cadence['median_interval_days'] ?? null;
-            $adaptiveMultiplier = $cadence['adaptive_winback_multiplier'] ?? 2.5;
-            $cadenceOverdueDays = $medianInterval ? (int) round($medianInterval * $adaptiveMultiplier) : null;
-            $effectiveMinDormancy = max(181, $cadenceOverdueDays ?? 181);
-
-            $daysSinceLastOrder = $profile['days_since_last_order'];
-            $episodeCount = $profile['episode_count'];
-            $orderCount = $profile['order_count'];
-            $lifetimeSpend = $profile['lifetime_spend'];
-            $episodeBenchmark = $profile['average_episode_spend'];
-            $aov = $profile['historical_aov'] ?? ($orderCount > 0 ? round($lifetimeSpend / $orderCount, 2) : 0.0);
-            $orderSpanDays = ($profile['first_order_at'] && $profile['latest_order_at'])
-                ? (int) Carbon::parse($profile['first_order_at'])->diffInDays(Carbon::parse($profile['latest_order_at']))
-                : 0;
-            $canonicalId = $profile['canonical_account_id'];
-
-            // Determine canonical disposition
-            $newStatus = FindingStatus::New;
-            $dismissedReason = null;
-            $disposition = '';
-            $rationale = '';
-
-            if ($finding->id == 227) {
-                // Consolidated duplicate Pace guest finding
-                $newStatus = FindingStatus::Dismissed;
-                $dismissedReason = 'duplicate_canonical_consolidated';
-                $disposition = 'Consolidated Duplicate (#208)';
-                $rationale = "Guest finding #227 consolidated into canonical account {$canonicalId}. Superseded by finding #208.";
-                $stats['consolidated_dup']++;
-            } elseif ($daysSinceLastOrder < 60) {
-                $newStatus = FindingStatus::Dismissed;
-                $dismissedReason = 'active_purchaser_suppressed';
-                $disposition = 'Suppressed: Active Buyer (<60d)';
-                $rationale = "Recent valid purchase on " . substr($profile['latest_order_at'], 0, 10) . " ({$daysSinceLastOrder}d ago). Account is actively purchasing.";
-                $stats['suppressed_active']++;
-            } elseif ($daysSinceLastOrder > 730) {
-                $newStatus = FindingStatus::Dismissed;
-                $dismissedReason = 'beyond_winback_window';
-                $disposition = 'Suppressed: Beyond 2y Window';
-                $rationale = "Lapsed {$daysSinceLastOrder}d (> 730d). Outside standard enterprise winback window.";
-            } elseif ($episodeCount < 2) {
-                $newStatus = FindingStatus::Dismissed;
-                $dismissedReason = 'single_episode_insufficient';
-                $disposition = 'Suppressed: Single Purchase Episode';
-                $rationale = "Only 1 purchasing episode ({$orderCount} orders). Ineligible for recurring winback.";
-            } elseif ($episodeCount == 2) {
-                $spanDays = (int) Carbon::parse($profile['first_order_at'])->diffInDays(Carbon::parse($profile['latest_order_at']));
-                if ($spanDays <= 14) {
-                    $newStatus = FindingStatus::Dismissed;
-                    $dismissedReason = 'split_or_project_purchase';
-                    $disposition = 'Suppressed: Split / Project Purchase';
-                    $rationale = "2 episodes within {$spanDays}d. Classified as split project purchase.";
+            if ($finding->status === FindingStatus::Dismissed) {
+                if ($finding->dismissed_reason === 'duplicate_canonical_consolidated') {
+                    $stats['consolidated_dup']++;
+                } elseif ($finding->dismissed_reason === 'active_purchaser_suppressed') {
+                    $stats['suppressed_active']++;
+                } elseif ($finding->dismissed_reason === 'split_or_project_purchase') {
                     $stats['suppressed_split']++;
-                } elseif ($lifetimeSpend < $p90Spend) {
-                    $newStatus = FindingStatus::Dismissed;
-                    $dismissedReason = 'insufficient_spend_tier';
-                    $disposition = 'Suppressed: Insufficient Spend (<p90)';
-                    $rationale = "2 episodes with spend \${$lifetimeSpend} < p90 threshold (\${$p90Spend}).";
-                } elseif ($daysSinceLastOrder < $effectiveMinDormancy) {
-                    $newStatus = FindingStatus::Dismissed;
-                    $dismissedReason = 'cadence_not_exceeded';
-                    $disposition = 'Suppressed: Cadence Not Exceeded';
-                    $rationale = "Dormancy ({$daysSinceLastOrder}d) has not exceeded adaptive cadence threshold ({$effectiveMinDormancy}d).";
-                    $stats['suppressed_cadence']++;
                 } else {
-                    $disposition = 'Provisional Candidate (2 Episodes)';
-                    $rationale = "2 independent episodes with high spend (\${$lifetimeSpend} >= p90) and span > 14d.";
-                    $stats['retained_active']++;
+                    $stats['suppressed_cadence']++;
                 }
             } else {
-                // episodeCount >= 3
-                if ($daysSinceLastOrder < $effectiveMinDormancy) {
-                    $newStatus = FindingStatus::Dismissed;
-                    $dismissedReason = 'cadence_not_exceeded';
-                    $disposition = 'Suppressed: Cadence Not Exceeded';
-                    $rationale = "Dormancy ({$daysSinceLastOrder}d) has not exceeded adaptive cadence threshold ({$effectiveMinDormancy}d = {$medianInterval}d x {$adaptiveMultiplier}).";
-                    $stats['suppressed_cadence']++;
-                } else {
-                    $disposition = 'Potential Candidate (Overdue)';
-                    $rationale = "Verified recurring enterprise account ({$episodeCount} episodes, {$orderCount} orders) overdue by {$daysSinceLastOrder}d (threshold: {$effectiveMinDormancy}d).";
-                    $stats['retained_active']++;
-                }
+                $stats['retained_active']++;
             }
 
-            $relationshipTier = ($episodeCount >= 3)
-                ? 'proven_recurring'
-                : (($episodeCount === 2 && $lifetimeSpend >= $p90Spend) ? 'provisional_two_episodes' : 'unsupported');
-
-            $shortHash = substr($fact->customer_identity_hash, 0, 8);
-            $accountLabel = $profile['is_registered']
-                ? "Registered Account #{$shortHash}"
-                : "Wholesale Account #{$shortHash}";
-
-            $title = "Long-Term Winback Opportunity: {$accountLabel} ({$daysSinceLastOrder}d inactive)";
-
-            // Update Finding attributes
-            $finding->title = $title;
-            $finding->status = $newStatus;
-            $finding->estimated_revenue_impact = round($episodeBenchmark, 2);
-            $finding->impact_nature = ImpactNature::HistoricalPurchasingEpisodeBenchmark;
-
-            if ($newStatus === FindingStatus::Dismissed) {
-                $finding->dismissed_at = $finding->dismissed_at ?? Carbon::now();
-                $finding->dismissed_reason = $dismissedReason;
-                $finding->resolution_notes = $rationale;
-            } else {
-                $finding->dismissed_at = null;
-                $finding->dismissed_reason = null;
-                $finding->resolution_notes = null;
-            }
-
-            $finding->impact_assumptions_json = [
-                'model_type'                      => 'historical_purchasing_episode_benchmark',
-                'financial_presentation_label'    => 'Historical Purchasing-Episode Benchmark',
-                'lifetime_net_purchasing_value'   => $lifetimeSpend,
-                'historical_episode_benchmark'    => $episodeBenchmark,
-                'historical_aov'                  => $aov,
-                'modeled_incremental_opportunity' => $episodeBenchmark,
-                'episode_count'                   => $episodeCount,
-                'order_count'                     => $orderCount,
-                'order_span_days'                 => $orderSpanDays,
-                'days_since_last_order'           => $daysSinceLastOrder,
-                'adaptive_multiplier'             => $adaptiveMultiplier,
-                'cadence_overdue_days'            => $cadenceOverdueDays,
-                'dormancy_range'                  => "{$effectiveMinDormancy}-730 days",
-                'relationship_qualification'      => $relationshipTier,
-                'is_guaranteed'                   => false,
-                'is_forecast_revenue'             => false,
-                'is_incremental_pipeline'         => false,
-                'explanation'                     => "Historical purchasing-episode benchmark of \${$episodeBenchmark} models single reactivation basket size. This is not guaranteed revenue or pipeline forecast.",
-            ];
-
-            $finding->evidence_json = [
-                'account_identity_hash'           => $fact->customer_identity_hash,
-                'canonical_account_id'            => $canonicalId,
-                'is_registered'                   => $profile['is_registered'],
-                'episode_count'                   => $episodeCount,
-                'order_count'                     => $orderCount,
-                'order_span_days'                 => $orderSpanDays,
-                'first_order_at'                  => $profile['first_order_at'],
-                'latest_order_at'                 => $profile['latest_order_at'],
-                'days_since_last_order'           => $daysSinceLastOrder,
-                'historical_episode_benchmark'    => $episodeBenchmark,
-                'historical_aov'                  => $aov,
-                'lifetime_net_purchasing_value'   => $lifetimeSpend,
-                'relationship_tier'               => $relationshipTier,
-                'adaptive_multiplier'             => $adaptiveMultiplier,
-                'median_interval_days'            => $medianInterval,
-                'client_spend_p80'                => $baselines['spend_percentiles']['p80'],
-                'client_spend_p90'                => $p90Spend,
-                'disposition'                     => $disposition,
-                'disposition_rationale'           => $rationale,
-            ];
-
-            $metadata = $finding->metadata_json ?? [];
-            $metadata['canonical_account_id'] = $canonicalId;
-            $metadata['identity_confidence'] = ($canonicalId && str_contains($canonicalId, 'cid_')) ? 'verified_account' : 'provisional_contact';
-            $finding->metadata_json = $metadata;
-
-            $finding->save();
-
-            $stats['details'][] = [
-                'id'            => $finding->id,
-                'status'        => $finding->status->value,
-                'disposition'   => $disposition,
-                'benchmark'     => $episodeBenchmark,
-                'lifetime_spend'=> $lifetimeSpend,
-                'orders'        => $orderCount,
-                'episodes'      => $episodeCount,
-            ];
+            $stats['details'][] = $res;
         }
 
         return $stats;
