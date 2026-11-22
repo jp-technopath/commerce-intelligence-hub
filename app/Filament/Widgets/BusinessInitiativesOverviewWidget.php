@@ -678,6 +678,15 @@ class BusinessInitiativesOverviewWidget extends Widget
             throw new \Illuminate\Auth\Access\AuthorizationException("Initiative {$initiativeId} not found or unauthorized.");
         }
 
+        if (empty($initiative['batch_action_allowed'])) {
+            Notification::make()
+                ->title('Batch Action Not Permitted')
+                ->body('This initiative contains operational or diagnostic findings requiring individual team reviews.')
+                ->warning()
+                ->send();
+            return;
+        }
+
         $user = Auth::user();
         if ($user && ! $user->isSuperAdmin() && ! empty($initiative['client_id'])) {
             if (! $user->canAccessClient((int) $initiative['client_id'])) {

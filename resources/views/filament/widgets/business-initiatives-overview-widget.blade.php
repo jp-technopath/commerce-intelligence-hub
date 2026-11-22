@@ -6,9 +6,10 @@
     // Portfolio Totals (Strictly Segregated & Authoritative)
     $totalReorderValue = $initiatives->sum(fn($i) => $i['financial_metrics']['historical_reorder_value'] ?? 0.0);
     $totalSpendingDecline = $initiatives->sum(fn($i) => $i['financial_metrics']['observed_spending_decline'] ?? 0.0);
-    $totalProvenAccounts = $initiatives->sum('proven_accounts_count');
-    $totalProvisionalAccounts = $initiatives->sum('provisional_accounts_count');
-    $totalAccounts = $initiatives->sum('qualifying_accounts_count');
+    $totalProvenAccounts = $initiatives->where('is_account_based', true)->sum('proven_accounts_count');
+    $totalProvisionalAccounts = $initiatives->where('is_account_based', true)->sum('provisional_accounts_count');
+    $totalAccounts = $initiatives->where('is_account_based', true)->sum('qualifying_accounts_count');
+    $totalOperationalFindings = $initiatives->where('is_account_based', false)->sum('qualifying_accounts_count');
     $totalRelationshipValue = $initiatives->sum('historical_relationship_value');
 
     // Portfolio Progress & Outcome Totals
@@ -72,13 +73,28 @@
 
         {{-- Executive Portfolio Summary Badges (Segregated Financials & Authoritative Progress) --}}
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
-            {{-- 1. Active Initiatives & Accounts --}}
+            {{-- 1. Active Initiatives & Accounts / Operational Findings --}}
             <div class="p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60 rounded-xl">
-                <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Qualified Accounts</span>
+                <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    @if ($totalAccounts > 0 && $totalOperationalFindings > 0)
+                        Accounts &amp; Findings
+                    @elseif ($totalOperationalFindings > 0)
+                        Operational Findings
+                    @else
+                        Qualified Accounts
+                    @endif
+                </span>
                 <div class="text-xl font-black text-gray-900 dark:text-gray-100 mt-1">
-                    {{ $totalAccounts }}
+                    {{ $totalAccounts + $totalOperationalFindings }}
                 </div>
-                <span class="text-[11px] text-gray-500 dark:text-gray-400">{{ $totalProvenAccounts }} action-ready &bull; {{ $totalProvisionalAccounts }} provisional</span>
+                <span class="text-[11px] text-gray-500 dark:text-gray-400">
+                    @if ($totalAccounts > 0)
+                        {{ $totalProvenAccounts }} action-ready &bull; {{ $totalProvisionalAccounts }} provisional
+                        @if ($totalOperationalFindings > 0) &bull; {{ $totalOperationalFindings }} operational @endif
+                    @else
+                        {{ $totalOperationalFindings }} operational finding(s)
+                    @endif
+                </span>
             </div>
 
             {{-- 2. Historical Relationship Value --}}
@@ -163,17 +179,30 @@
                                 </h3>
                             </div>
 
-                            {{-- Financial Value Badge & Relationship Scale --}}
+                            {{-- Financial Value Badge & Relationship Scale / Diagnostic Metric --}}
                             <div class="text-right flex-shrink-0">
                                 <div class="text-xl font-black text-gray-900 dark:text-gray-100">
                                     {{ $initiative['formatted_primary_financial'] }}
                                 </div>
-                                <span class="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-bold rounded {{ $initiative['primary_financial_nature'] === 'observed_spending_decline' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200' : ($initiative['primary_financial_nature'] === 'historical_reorder_value' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200' : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200') }}">
+                                <span class="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-bold rounded {{ $initiative['primary_financial_nature'] === 'observed_spending_decline' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200' : ($initiative['primary_financial_nature'] === 'historical_reorder_value' || $initiative['primary_financial_nature'] === 'historical_purchasing_episode_benchmark' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200' : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200') }}">
                                     {{ $initiative['primary_financial_label'] }}
                                 </span>
-                                <div class="text-[11px] text-gray-500 dark:text-gray-400 mt-1" title="{{ $initiative['relationship_value_definition'] }}">
-                                    Relationship: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['formatted_relationship_value'] }}</strong>
-                                </div>
+                                @if ($initiative['has_relationship_value'])
+                                    <div class="text-[11px] text-gray-500 dark:text-gray-400 mt-1" title="{{ $initiative['relationship_value_definition'] }}">
+                                        Relationship: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['formatted_relationship_value'] }}</strong>
+                                    </div>
+                                @elseif (!empty($initiative['context_metric_badge']))
+                                    <div class="mt-1">
+                                        <span class="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60">
+                                            {{ $initiative['context_metric_badge'] }}
+                                        </span>
+                                    </div>
+                                @endif
+                                @if (!empty($initiative['primary_metric_subtext']))
+                                    <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 max-w-[200px] text-right truncate" title="{{ $initiative['primary_metric_subtext'] }}">
+                                        {{ $initiative['primary_metric_subtext'] }}
+                                    </div>
+                                @endif
                             </div>
                         </div>
 
@@ -202,6 +231,38 @@
                                 <span class="text-gray-600 dark:text-gray-400 ml-1">{{ $initiative['recommended_action'] }}</span>
                             </div>
                         </div>
+
+                        @if (! $initiative['is_account_based'] && !empty($initiative['finding_summaries']))
+                            {{-- Distinct Operational Findings Breakdown --}}
+                            <div class="p-2.5 rounded-lg bg-white dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 space-y-1.5">
+                                <div class="text-[11px] font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
+                                    <span>Distinct Findings ({{ count($initiative['finding_summaries']) }}):</span>
+                                    <span class="text-[10px] font-normal text-gray-500">Individual scope &amp; telemetry</span>
+                                </div>
+                                <div class="space-y-1">
+                                    @foreach ($initiative['finding_summaries'] as $summary)
+                                        <div class="p-1.5 rounded bg-gray-50 dark:bg-gray-900/60 border border-gray-100 dark:border-gray-800 flex items-center justify-between text-[11px] gap-2">
+                                            <div class="flex items-center gap-1.5 truncate">
+                                                <span class="font-mono font-bold text-primary-700 dark:text-primary-300 px-1 py-0.2 bg-primary-50 dark:bg-primary-950 rounded text-[10px]">
+                                                    {{ $summary['metric'] }}
+                                                </span>
+                                                <span class="truncate text-gray-800 dark:text-gray-200 font-medium" title="{{ $summary['title'] }}">
+                                                    {{ $summary['title'] }}
+                                                </span>
+                                            </div>
+                                            <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px]">
+                                                <span class="px-1 py-0.2 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                                    {{ $summary['target_team'] }}
+                                                </span>
+                                                <span class="text-gray-500 dark:text-gray-400">
+                                                    {{ $summary['freshness'] }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
 
                         {{-- Review Progress & Commercial Outcomes Row --}}
                         <div class="p-2.5 rounded-lg bg-white dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 space-y-1.5">
@@ -233,7 +294,11 @@
                             </div>
 
                             <div class="text-gray-500 dark:text-gray-400">
-                                <span>Accounts: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['qualifying_accounts_count'] }}</strong> ({{ $initiative['action_ready_accounts_count'] }} action-ready &bull; {{ $initiative['provisional_accounts_count'] }} provisional)</span>
+                                @if ($initiative['is_account_based'])
+                                    <span>Accounts: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['qualifying_accounts_count'] }}</strong> ({{ $initiative['action_ready_accounts_count'] }} action-ready &bull; {{ $initiative['provisional_accounts_count'] }} provisional)</span>
+                                @else
+                                    <span>Findings: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['qualifying_accounts_count'] }}</strong> {{ strtolower($initiative['entity_term_plural']) }}</span>
+                                @endif
                             </div>
                         </div>
                     </div>
@@ -246,18 +311,20 @@
                             class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950 hover:bg-primary-100 rounded-lg border border-primary-200 dark:border-primary-800 transition"
                         >
                             <x-heroicon-m-magnifying-glass-plus class="w-4 h-4" />
-                            <span>Drill-Down Accounts ({{ $initiative['qualifying_accounts_count'] }})</span>
+                            <span>{{ $initiative['drilldown_button_label'] }}</span>
                         </button>
 
-                        <button
-                            type="button"
-                            wire:click="openBatchApproveModal('{{ $initiative['id'] }}')"
-                            class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 rounded-lg border border-emerald-200 dark:border-emerald-800 transition"
-                            title="Open batch approval confirmation modal"
-                        >
-                            <x-heroicon-m-check class="w-3.5 h-3.5" />
-                            <span>Batch Approve</span>
-                        </button>
+                        @if (!empty($initiative['batch_action_allowed']))
+                            <button
+                                type="button"
+                                wire:click="openBatchApproveModal('{{ $initiative['id'] }}')"
+                                class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 rounded-lg border border-emerald-200 dark:border-emerald-800 transition"
+                                title="Open batch approval confirmation modal"
+                            >
+                                <x-heroicon-m-check class="w-3.5 h-3.5" />
+                                <span>Batch Approve</span>
+                            </button>
+                        @endif
                     </div>
                 </div>
             @endforeach
@@ -280,7 +347,7 @@
                             </span>
                         </div>
                         <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mt-2">
-                            Account-Level Drill-Down & Evidence
+                            {{ $selectedInitiative['is_account_based'] ? 'Account-Level Drill-Down & Evidence' : 'Operational & Diagnostic Findings Review' }}
                         </h2>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                             {{ $selectedInitiative['business_rationale'] }}
@@ -295,6 +362,11 @@
                             <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400">
                                 {{ $selectedInitiative['primary_financial_label'] }}
                             </span>
+                            @if (!empty($selectedInitiative['context_metric_badge']))
+                                <div class="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 mt-0.5">
+                                    {{ $selectedInitiative['context_metric_badge'] }}
+                                </div>
+                            @endif
                         </div>
 
                         <button
@@ -310,7 +382,8 @@
                 {{-- Compact, Scannable Account Opportunity List with Expandable Detailed Views --}}
                 <div class="p-6 overflow-y-auto space-y-3">
                     @foreach (collect($selectedInitiative['accounts'])->sortByDesc(fn($a) => $a['finding_id'] === 214 ? 2 : ($a['finding_id'] === 213 ? 1 : 0)) as $acc)
-                        <div x-data="{ expanded: {{ $acc['finding_id'] === 214 ? 'true' : 'false' }} }" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm hover:border-gray-300 dark:hover:border-gray-700 transition overflow-hidden">
+                        @if (!empty($acc['is_account_opportunity']))
+                            <div x-data="{ expanded: {{ $acc['finding_id'] === 214 ? 'true' : 'false' }} }" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm hover:border-gray-300 dark:hover:border-gray-700 transition overflow-hidden">
                             {{-- Default Scannable View --}}
                             <div class="p-4 space-y-3">
                                 {{-- Top Row: Identity, Opportunity Type, Status & Actions --}}
@@ -567,6 +640,212 @@
                                 </div>
                             </div>
                         </div>
+                        @else
+                            {{-- Operational / Diagnostic Finding View --}}
+                            <div x-data="{ expanded: false }" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm hover:border-gray-300 dark:hover:border-gray-700 transition overflow-hidden">
+                                <div class="p-4 space-y-3">
+                                    {{-- Top Row: Title, Scope, Team, Freshness & Status/Actions --}}
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div class="space-y-1">
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <h4 class="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                                    {{ $acc['primary_name'] }}
+                                                </h4>
+                                                @if (!empty($acc['scope_label']))
+                                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
+                                                        {{ $acc['scope_label'] }}
+                                                    </span>
+                                                @endif
+                                                <span class="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                                    {{ $acc['target_team_label'] }}
+                                                </span>
+                                                @if (!empty($acc['freshness_badge']))
+                                                    <span class="px-2 py-0.5 text-[10px] font-semibold rounded-md {{ !empty($acc['is_outdated']) ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800' }}" title="{{ $acc['freshness_note'] ?? '' }}">
+                                                        {{ $acc['freshness_badge'] }}
+                                                    </span>
+                                                @endif
+                                            </div>
+                                            @if (!empty($acc['freshness_note']) && !empty($acc['is_outdated']))
+                                                <div class="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                                                    {{ $acc['freshness_note'] }}
+                                                </div>
+                                            @endif
+                                        </div>
+
+                                        {{-- Status & Quick Action Buttons --}}
+                                        <div class="flex items-center gap-1.5 flex-wrap justify-end">
+                                            <span class="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
+                                                {{ $acc['status_label'] }}
+                                            </span>
+                                            @if ($acc['status'] === 'new')
+                                                <button
+                                                    type="button"
+                                                    wire:click="reviewFinding({{ $acc['finding_id'] }})"
+                                                    class="px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition"
+                                                >
+                                                    Review
+                                                </button>
+                                            @endif
+                                            @if (in_array($acc['status'], ['new', 'under_review']))
+                                                <button
+                                                    type="button"
+                                                    wire:click="approveFinding({{ $acc['finding_id'] }})"
+                                                    class="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition"
+                                                >
+                                                    Approve
+                                                </button>
+                                            @endif
+                                            @if (in_array($acc['status'], ['approved', 'assigned']))
+                                                <button
+                                                    type="button"
+                                                    wire:click="openAssignModal({{ $acc['finding_id'] }})"
+                                                    class="px-2.5 py-1 text-xs font-medium rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition"
+                                                >
+                                                    Assign
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    wire:click="openResolveModal({{ $acc['finding_id'] }})"
+                                                    class="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition"
+                                                >
+                                                    Complete
+                                                </button>
+                                            @endif
+                                            @if (!empty($acc['pm_work_item_key']))
+                                                <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                                    Jira: {{ $acc['pm_work_item_key'] }}
+                                                </span>
+                                            @elseif (in_array($acc['status'], ['approved', 'assigned']))
+                                                <button
+                                                    type="button"
+                                                    wire:click="openCreatePmModal({{ $acc['finding_id'] }})"
+                                                    class="px-2 py-1 text-xs font-medium rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 transition"
+                                                >
+                                                    + Jira
+                                                </button>
+                                            @endif
+                                            <button
+                                                type="button"
+                                                wire:click="openAuditModal({{ $acc['finding_id'] }})"
+                                                class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded"
+                                                title="View Audit Trail"
+                                            >
+                                                <x-heroicon-m-clipboard-document-list class="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {{-- Supporting Metric Cards --}}
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                                        @foreach ($acc['supporting_metrics'] ?? [] as $metric)
+                                            <div class="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-200/70 dark:border-gray-700/60">
+                                                <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                                    {{ $metric['label'] }}
+                                                </div>
+                                                <div class="text-xs font-bold text-gray-900 dark:text-gray-100 mt-0.5">
+                                                    {{ $metric['value'] }}
+                                                </div>
+                                                @if (!empty($metric['subtext']))
+                                                    <div class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 truncate" title="{{ $metric['subtext'] }}">
+                                                        {{ $metric['subtext'] }}
+                                                    </div>
+                                                @endif
+                                            </div>
+                                        @endforeach
+                                    </div>
+
+                                    {{-- 3-Part Findings Section: Confirmed Observation, Possible Implication, Recommended Action --}}
+                                    <div class="space-y-2 pt-1">
+                                        @if (!empty($acc['confirmed_observation']))
+                                            <div class="p-2.5 rounded-lg bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-900/30 text-xs">
+                                                <div class="flex items-start gap-2">
+                                                    <span class="font-bold text-blue-900 dark:text-blue-300 flex-shrink-0">Confirmed Observation:</span>
+                                                    <span class="text-gray-700 dark:text-gray-300 leading-relaxed">{{ $acc['confirmed_observation'] }}</span>
+                                                </div>
+                                            </div>
+                                        @endif
+
+                                        @if (!empty($acc['possible_implication']))
+                                            <div class="p-2.5 rounded-lg bg-amber-50/40 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/30 text-xs">
+                                                <div class="flex items-start gap-2">
+                                                    <span class="font-bold text-amber-900 dark:text-amber-300 flex-shrink-0">Possible Business Implication:</span>
+                                                    <span class="text-gray-700 dark:text-gray-300 leading-relaxed">{{ $acc['possible_implication'] }}</span>
+                                                </div>
+                                            </div>
+                                        @endif
+
+                                        @if (!empty($acc['recommended_action']))
+                                            <div class="p-2.5 rounded-lg bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/30 text-xs">
+                                                <div class="flex items-start gap-2">
+                                                    <x-heroicon-m-arrow-right-circle class="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
+                                                    <div class="leading-relaxed">
+                                                        <span class="font-bold text-emerald-900 dark:text-emerald-300">Recommended Action:</span>
+                                                        <span class="text-gray-700 dark:text-gray-300 ml-1">{{ $acc['recommended_action'] }}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        @endif
+                                    </div>
+
+                                    {{-- Expand Toggle & Audit Trail / Methodology --}}
+                                    <div class="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-gray-800/80 text-xs">
+                                        <div class="text-[11px] text-gray-500">
+                                            Finding #{{ $acc['finding_id'] }} &bull; Scope: {{ $acc['scope_label'] ?? 'Site-wide' }}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            @click="expanded = !expanded"
+                                            class="inline-flex items-center gap-1 text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline px-1.5 py-0.5 rounded hover:bg-primary-50 dark:hover:bg-primary-950/40"
+                                        >
+                                            <span x-text="expanded ? 'Hide Diagnostic Details' : 'View Diagnostic Evidence'"></span>
+                                            <x-heroicon-m-chevron-down class="w-3.5 h-3.5 transition-transform duration-150" ::class="{ 'rotate-180': expanded }" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {{-- Expandable Drawer: Diagnostic Evidence & Audit Trail --}}
+                                <div x-show="expanded" x-cloak class="border-t border-gray-200 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 p-4 space-y-3 text-xs">
+                                    @php $details = $acc['expandable_details'] ?? []; @endphp
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div class="space-y-1.5 bg-white dark:bg-gray-900 p-3 rounded-lg border border-gray-200/80 dark:border-gray-700/80">
+                                            <div class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                                                <x-heroicon-m-document-magnifying-glass class="w-3.5 h-3.5 text-primary-500" />
+                                                <span>Diagnostic Telemetry &amp; Detector Context</span>
+                                            </div>
+                                            <div class="text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
+                                                <div>Detector: <strong class="text-gray-800 dark:text-gray-200">{{ $details['detector_name'] ?? 'N/A' }}</strong></div>
+                                                <div>Observation Period: <strong class="text-gray-800 dark:text-gray-200">{{ $acc['observation_period'] ?? 'Recent 30 Days' }}</strong></div>
+                                                <div>Data Freshness: <strong class="text-gray-800 dark:text-gray-200">{{ $acc['freshness_badge'] ?? 'Recent' }}</strong></div>
+                                                @if (!empty($details['diagnostic_details']['detector_description']))
+                                                    <div class="pt-1 text-gray-500 text-[10px] leading-relaxed">
+                                                        {{ $details['diagnostic_details']['detector_description'] }}
+                                                    </div>
+                                                @endif
+                                            </div>
+                                        </div>
+
+                                        <div class="space-y-1.5 bg-white dark:bg-gray-900 p-3 rounded-lg border border-gray-200/80 dark:border-gray-700/80">
+                                            <div class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                                                <x-heroicon-m-finger-print class="w-3.5 h-3.5 text-gray-500" />
+                                                <span>Execution &amp; Governance Trail</span>
+                                            </div>
+                                            <div class="text-[11px] text-gray-600 dark:text-gray-400 space-y-0.5">
+                                                <div>Assigned To: <strong>{{ $acc['assigned_user_name'] ?? 'Unassigned' }}</strong></div>
+                                                @if (!empty($acc['approved_by_name']))
+                                                    <div>Approved By: <strong>{{ $acc['approved_by_name'] }}</strong></div>
+                                                @endif
+                                                @if (!empty($acc['resolution_notes']))
+                                                    <div>Resolution: <em class="text-gray-700 dark:text-gray-300">"{{ $acc['resolution_notes'] }}"</em></div>
+                                                @endif
+                                                <div class="text-[10px] text-gray-500 pt-1">
+                                                    Individual finding approval is recorded in the Forge audit trail.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        @endif
                     @endforeach
                 </div>
 

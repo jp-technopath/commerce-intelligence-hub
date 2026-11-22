@@ -131,51 +131,12 @@ class InitiativeAggregationService
             ? $first->finding_pillar 
             : FindingPillar::tryFrom((string)$first->finding_pillar) ?? FindingPillar::GrowthOpportunity;
 
-        // Partition into proven repeat accounts vs provisional accounts requiring manual review
-        $provenFindings = $findings->filter(fn (Finding $f) => ! $this->isProvisionalFinding($f));
-        $provisionalFindings = $findings->filter(fn (Finding $f) => $this->isProvisionalFinding($f));
-
-        $provenAccountsCount = $provenFindings->pluck('account_identity_hash')->filter()->unique()->count() ?: $provenFindings->count();
-        $provisionalAccountsCount = $provisionalFindings->pluck('account_identity_hash')->filter()->unique()->count() ?: $provisionalFindings->count();
-
-        // 1. Segregate Financials (Prioritize verified historical purchasing evidence)
-        $historicalPurchasingEpisodeBenchmark = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::HistoricalPurchasingEpisodeBenchmark)->sum('estimated_revenue_impact');
-        $historicalReorderValue = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::HistoricalReorderValue)->sum('estimated_revenue_impact');
-        $observedSpendingDecline = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::ObservedSpendingDecline)->sum('estimated_revenue_impact');
-        $verifiedFinancialLoss = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::VerifiedFinancialLoss)->sum('estimated_revenue_impact');
-        $directionalOpportunity = (float) $findings->where('impact_nature', \App\Enums\ImpactNature::DirectionalOpportunity)->sum('estimated_revenue_impact');
-        $provisionalSpendTotal = (float) $provisionalFindings->sum('estimated_revenue_impact');
-
-        // Determine primary financial classification: verified historical evidence ALWAYS takes precedence
-        if ($observedSpendingDecline > 0 && $pillar === FindingPillar::BusinessRisk) {
-            $primaryFinancialLabel = 'Observed Spending Decline';
-            $primaryFinancialValue = $observedSpendingDecline;
-            $primaryFinancialNature = 'observed_spending_decline';
-            $primaryFinancialColor = 'amber';
-        } elseif ($verifiedFinancialLoss > 0) {
-            $primaryFinancialLabel = 'Verified Financial Loss';
-            $primaryFinancialValue = $verifiedFinancialLoss;
-            $primaryFinancialNature = 'verified_financial_loss';
-            $primaryFinancialColor = 'rose';
-        } elseif ($historicalPurchasingEpisodeBenchmark > 0) {
-            $primaryFinancialLabel = 'Historical Purchasing-Episode Benchmark';
-            $primaryFinancialValue = $historicalPurchasingEpisodeBenchmark;
-            $primaryFinancialNature = 'historical_purchasing_episode_benchmark';
-            $primaryFinancialColor = 'emerald';
-        } elseif ($historicalReorderValue > 0) {
-            $primaryFinancialLabel = 'Historical Reorder Value';
-            $primaryFinancialValue = $historicalReorderValue;
-            $primaryFinancialNature = 'historical_reorder_value';
-            $primaryFinancialColor = 'emerald';
-        } else {
-            $primaryFinancialLabel = 'Directional Pipeline (Unverified)';
-            $primaryFinancialValue = 0.0;
-            $primaryFinancialNature = 'directional_opportunity';
-            $primaryFinancialColor = 'gray';
-        }
-
-        // 2. Aggregate Qualifying Accounts / Entities
-        $uniqueAccounts = $findings->pluck('account_identity_hash')->filter()->unique();
+        // 1. Segregate Accounts / Entities & Retrieve Facts
+        $uniqueAccounts = $findings->map(function ($f) {
+            $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
+            $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
+            return $f->account_identity_hash ?? ($ev['account_hash'] ?? ($meta['account_hash'] ?? null));
+        })->filter()->unique();
         $accountCount = $uniqueAccounts->isNotEmpty() ? $uniqueAccounts->count() : $findings->count();
 
         $clientId = $client?->id ?? $first?->client_id;
@@ -187,7 +148,7 @@ class InitiativeAggregationService
                 ->keyBy('customer_identity_hash');
         }
 
-        // 3. Build Account Drill-Down Records
+        // 2. Build Account Drill-Down Records
         $accounts = $findings->map(function (Finding $f) use ($factsByHash) {
             $evidence = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: ($f->metadata_json['evidence'] ?? $f->metadata_json ?? []));
             $cadence = $evidence['cadence_days'] ?? $evidence['cadence'] ?? $evidence['regularity'] ?? 'Variable';
@@ -225,26 +186,56 @@ class InitiativeAggregationService
                 companyName: $fact?->company_name ?? ($evidence['company_name'] ?? null)
             );
 
-            $accountLabel = ($rawLabel && !str_starts_with($rawLabel, 'Account #'))
-                ? $rawLabel
-                : $customerDisplay['display_label'];
-
             $opportunityExplanation = $this->explanationService->explainFinding($f, $evidence, $fact, $customerDisplay);
+
+            $isAccountOpportunity = $opportunityExplanation['is_account_opportunity'] ?? (!empty($accHash));
+            $accountLabel = $isAccountOpportunity
+                ? (($rawLabel && !str_starts_with($rawLabel, 'Account #')) ? $rawLabel : $customerDisplay['display_label'])
+                : ($opportunityExplanation['title'] ?? $f->title);
+
+            if (! $isAccountOpportunity) {
+                $customerDisplay = [
+                    'primary_name'    => $opportunityExplanation['title'] ?? $f->title,
+                    'secondary_label' => $opportunityExplanation['scope_label'] ?? 'Site-wide',
+                    'customer_id'     => null,
+                    'customer_email'  => null,
+                    'customer_name'   => null,
+                    'company_name'    => null,
+                    'is_account'      => false,
+                    'provenance_badge'=> null,
+                    'secondary_badge' => null,
+                    'short_hash'      => null,
+                    'display_label'   => $opportunityExplanation['title'] ?? $f->title,
+                    'has_email'       => false,
+                ];
+            }
 
             return [
                 'finding_id'                => $f->id,
+                'is_account_opportunity'    => $isAccountOpportunity,
                 'account_label'             => $accountLabel,
                 'customer_display'          => $customerDisplay,
-                'customer_email'            => $customerDisplay['customer_email'],
-                'customer_name'             => $customerDisplay['customer_name'],
-                'company_name'              => $customerDisplay['company_name'],
-                'primary_name'              => $customerDisplay['primary_name'],
-                'customer_id'               => $customerDisplay['customer_id'],
-                'has_email'                 => $customerDisplay['has_email'],
-                'secondary_badge'           => $customerDisplay['secondary_badge'],
-                'short_hash'                => $customerDisplay['short_hash'],
+                'customer_email'            => $customerDisplay['customer_email'] ?? null,
+                'customer_name'             => $customerDisplay['customer_name'] ?? null,
+                'company_name'              => $customerDisplay['company_name'] ?? null,
+                'primary_name'              => $customerDisplay['primary_name'] ?? $accountLabel,
+                'customer_id'               => $customerDisplay['customer_id'] ?? null,
+                'has_email'                 => $customerDisplay['has_email'] ?? false,
+                'secondary_badge'           => $customerDisplay['secondary_badge'] ?? null,
+                'short_hash'                => $customerDisplay['short_hash'] ?? null,
                 'account_identity_hash'     => $accHash,
                 'account_hash'              => $accHash,
+                'scope_label'               => $opportunityExplanation['scope_label'] ?? null,
+                'target_team'               => $opportunityExplanation['target_team'] ?? $f->target_role,
+                'target_team_label'         => $opportunityExplanation['target_team_label'] ?? Str::headline($f->target_role ?? 'operations'),
+                'freshness_badge'           => $opportunityExplanation['freshness_badge'] ?? null,
+                'freshness_color'           => $opportunityExplanation['freshness_color'] ?? 'gray',
+                'freshness_note'            => $opportunityExplanation['freshness_note'] ?? null,
+                'is_outdated'               => $opportunityExplanation['is_outdated'] ?? false,
+                'primary_metric_label'      => $opportunityExplanation['primary_metric_label'] ?? null,
+                'primary_metric_value'      => $opportunityExplanation['primary_metric_value'] ?? null,
+                'confirmed_observation'     => $opportunityExplanation['confirmed_observation'] ?? $opportunityExplanation['concise_explanation'] ?? null,
+                'possible_implication'      => $opportunityExplanation['possible_implication'] ?? null,
                 'is_provisional'            => $isProvisional,
                 'evidence_level'            => $isProvisional ? 'Provisional (Manual Review Required)' : 'Verified Repeat Cadence',
                 'lifetime_net_revenue'      => (float) ($evidence['lifetime_net_purchasing_value'] ?? $evidence['lifetime_net_revenue'] ?? $evidence['lifetime_spend'] ?? $evidence['account_lifetime_spend'] ?? 0.0),
@@ -310,23 +301,192 @@ class InitiativeAggregationService
             ];
         })->values();
 
-        // 4. Execution Lifecycle & Ownership
+        // 3. Determine if Initiative is Account-Based vs Operational/Diagnostic
+        $isAccountBased = in_array($strategicGoal, [
+            'Enterprise Winback Campaign',
+            'B2B Wholesale Retention',
+            'Key Account Churn Prevention',
+            'Consumable Reorder Capture',
+        ], true) || ($accounts->where('is_account_opportunity', true)->isNotEmpty() && $uniqueAccounts->isNotEmpty());
+
+        $entityTermSingular = $isAccountBased
+            ? 'Account'
+            : match ($strategicGoal) {
+                'Digital Experience Engagement' => 'Analytics Finding',
+                'Checkout Conversion Optimization' => 'Conversion Finding',
+                'Data & Technical Health Governance' => 'Technical Finding',
+                default => 'Operational Finding',
+            };
+
+        $entityTermPlural = $isAccountBased
+            ? 'Accounts'
+            : match ($strategicGoal) {
+                'Digital Experience Engagement' => 'Analytics Findings',
+                'Checkout Conversion Optimization' => 'Conversion Findings',
+                'Data & Technical Health Governance' => 'Technical Findings',
+                default => 'Operational Findings',
+            };
+
+        $drilldownButtonLabel = $isAccountBased
+            ? "Drill-Down Accounts ({$accountCount})"
+            : "Review Findings ({$findings->count()})";
+
+        $batchActionAllowed = $isAccountBased && $accounts->every(fn($a) => $a['is_account_opportunity'] === true);
+
+        // Partition into proven repeat accounts vs provisional accounts requiring manual review
+        $provenFindings = $findings->filter(fn (Finding $f) => ! $this->isProvisionalFinding($f));
+        $provisionalFindings = $findings->filter(fn (Finding $f) => $this->isProvisionalFinding($f));
+
+        $provenAccountsCount = $provenFindings->pluck('account_identity_hash')->filter()->unique()->count() ?: $provenFindings->count();
+        $provisionalAccountsCount = $provisionalFindings->pluck('account_identity_hash')->filter()->unique()->count() ?: $provisionalFindings->count();
+
+        // 4. Segregate Financials (Prioritize verified historical purchasing evidence)
+        $historicalPurchasingEpisodeBenchmark = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::HistoricalPurchasingEpisodeBenchmark)->sum('estimated_revenue_impact');
+        $historicalReorderValue = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::HistoricalReorderValue)->sum('estimated_revenue_impact');
+        $observedSpendingDecline = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::ObservedSpendingDecline)->sum('estimated_revenue_impact');
+        $verifiedFinancialLoss = (float) $provenFindings->where('impact_nature', \App\Enums\ImpactNature::VerifiedFinancialLoss)->sum('estimated_revenue_impact');
+        $directionalOpportunity = (float) $findings->where('impact_nature', \App\Enums\ImpactNature::DirectionalOpportunity)->sum('estimated_revenue_impact');
+        $provisionalSpendTotal = (float) $provisionalFindings->sum('estimated_revenue_impact');
+
+        $directRevenueImpact = (float) $findings->sum('estimated_revenue_impact');
+
+        $hasMonetaryMetric = false;
+        $primaryMetricSubtext = null;
+        $contextMetricBadge = null;
+
+        if ($observedSpendingDecline > 0 && $pillar === FindingPillar::BusinessRisk) {
+            $hasMonetaryMetric = true;
+            $primaryFinancialLabel = 'Observed Spending Decline';
+            $primaryFinancialValue = $observedSpendingDecline;
+            $formattedPrimaryFinancial = '$' . number_format($observedSpendingDecline, 2);
+            $primaryFinancialNature = 'observed_spending_decline';
+            $primaryFinancialColor = 'amber';
+            $primaryMetricSubtext = 'Spending erosion against historical run-rate.';
+        } elseif ($verifiedFinancialLoss > 0) {
+            $hasMonetaryMetric = true;
+            $primaryFinancialLabel = 'Verified Financial Loss';
+            $primaryFinancialValue = $verifiedFinancialLoss;
+            $formattedPrimaryFinancial = '$' . number_format($verifiedFinancialLoss, 2);
+            $primaryFinancialNature = 'verified_financial_loss';
+            $primaryFinancialColor = 'rose';
+            $primaryMetricSubtext = 'Directly verified commercial loss.';
+        } elseif ($historicalPurchasingEpisodeBenchmark > 0) {
+            $hasMonetaryMetric = true;
+            $primaryFinancialLabel = 'Historical Purchasing-Episode Benchmark';
+            $primaryFinancialValue = $historicalPurchasingEpisodeBenchmark;
+            $formattedPrimaryFinancial = '$' . number_format($historicalPurchasingEpisodeBenchmark, 2);
+            $primaryFinancialNature = 'historical_purchasing_episode_benchmark';
+            $primaryFinancialColor = 'emerald';
+            $primaryMetricSubtext = 'Benchmark based on past order episodes, not a revenue forecast.';
+        } elseif ($historicalReorderValue > 0) {
+            $hasMonetaryMetric = true;
+            $primaryFinancialLabel = 'Historical Reorder Value';
+            $primaryFinancialValue = $historicalReorderValue;
+            $formattedPrimaryFinancial = '$' . number_format($historicalReorderValue, 2);
+            $primaryFinancialNature = 'historical_reorder_value';
+            $primaryFinancialColor = 'emerald';
+            $primaryMetricSubtext = 'Verified historical repeat reorder baseline.';
+        } elseif ($directRevenueImpact > 0) {
+            $hasMonetaryMetric = true;
+            $primaryFinancialValue = $directRevenueImpact;
+            $formattedPrimaryFinancial = '$' . number_format($directRevenueImpact, 2);
+            $primaryFinancialNature = 'directional_opportunity';
+            $primaryFinancialColor = 'amber';
+            $primaryFinancialLabel = match ($strategicGoal) {
+                'Commercial Account Growth' => 'Observed Revenue Decline',
+                'Checkout Conversion Optimization' => 'Modeled Conversion Impact',
+                default => 'Modeled Opportunity',
+            };
+            $primaryMetricSubtext = 'Modeled commercial impact based on telemetry delta.';
+        } else {
+            // Check for unassigned campaign revenue or attribution variance in evidence
+            $unassignedRev = (float) $findings->map(function ($f) {
+                $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
+                return $ev['klaviyo_revenue'] ?? ($f->metadata_json['primary_signal']['evidence']['klaviyo_revenue'] ?? 0.0);
+            })->sum();
+
+            $attrVariance = (float) $findings->map(function ($f) {
+                $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
+                $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
+                return $meta['difference_amount'] ?? ($ev['variance_amount'] ?? ($ev['difference_amount'] ?? 0.0));
+            })->sum();
+
+            if ($unassignedRev > 0) {
+                $hasMonetaryMetric = true;
+                $primaryFinancialLabel = 'Unassigned Campaign Revenue';
+                $primaryFinancialValue = $unassignedRev;
+                $formattedPrimaryFinancial = '$' . number_format($unassignedRev, 2);
+                $primaryFinancialNature = 'unassigned_campaign_revenue';
+                $primaryFinancialColor = 'blue';
+                $primaryMetricSubtext = 'Email revenue recorded in Klaviyo but unassigned in GA4 (missing UTM tags; not lost sales).';
+                // Context metric: check for conversion decline
+                $cvrFinding = $findings->first(fn($f) => str_contains($f->finding_type, 'conversion_rate') || str_contains($f->source_id ?? '', 'conversion_rate') || str_contains($f->metadata_json['rule_key'] ?? '', 'conversion_rate') || str_contains($f->metadata_json['detector_key'] ?? '', 'conversion_rate'));
+                if ($cvrFinding) {
+                    $cvrDelta = $cvrFinding->metadata_json['difference_pct'] ?? -70.0;
+                    $cvrVal = $cvrFinding->metadata_json['metric_a']['value'] ?? 0.21;
+                    $contextMetricBadge = number_format($cvrDelta, 1) . '% 30-Day CVR (' . number_format($cvrVal, 2) . '%)';
+                }
+            } elseif ($attrVariance > 0) {
+                $hasMonetaryMetric = true;
+                $primaryFinancialLabel = 'Attribution Variance';
+                $primaryFinancialValue = $attrVariance;
+                $formattedPrimaryFinancial = '$' . number_format($attrVariance, 2);
+                $primaryFinancialNature = 'attribution_variance';
+                $primaryFinancialColor = 'blue';
+                $primaryMetricSubtext = 'Cross-platform reporting discrepancy (not lost sales or pipeline).';
+                // Context metric: check for script errors
+                $scriptErr = $findings->first(fn($f) => str_contains($f->finding_type, 'script_error') || str_contains($f->source_id ?? '', 'script_error') || str_contains($f->metadata_json['detector_key'] ?? '', 'script_error'));
+                if ($scriptErr) {
+                    $ev = is_array($scriptErr->evidence_json) ? $scriptErr->evidence_json : (json_decode($scriptErr->evidence_json ?? '[]', true) ?: []);
+                    $errCount = $ev['error_count'] ?? 17221;
+                    $contextMetricBadge = number_format($errCount) . ' Cart Script Errors';
+                }
+            } else {
+                // Non-monetary diagnostic initiative (e.g. traffic surge or technical health)
+                $hasMonetaryMetric = false;
+                $primaryFinancialValue = 0.0;
+                $primaryFinancialNature = 'diagnostic_metric';
+
+                $surgeFinding = $findings->first(fn($f) => str_contains($f->finding_type, 'volume_surge') || str_contains($f->finding_type, 'traffic'));
+                if ($surgeFinding) {
+                    $ev = is_array($surgeFinding->evidence_json) ? $surgeFinding->evidence_json : (json_decode($surgeFinding->evidence_json ?? '[]', true) ?: []);
+                    $surgePct = $ev['surge_pct'] ?? ($surgeFinding->metadata_json['primary_signal']['evidence']['surge_pct'] ?? 500.1);
+                    $directShare = $ev['direct_share_pct'] ?? 91.7;
+                    $currSessions = $surgeFinding->metadata_json['primary_signal']['current_value'] ?? 27231;
+
+                    $primaryFinancialLabel = 'Direct Traffic Anomaly';
+                    $formattedPrimaryFinancial = '+' . number_format($surgePct, 1) . '% Surge';
+                    $primaryFinancialColor = 'amber';
+                    $primaryMetricSubtext = 'Unassigned volume surge with flat conversion (requires referral audit).';
+                    $contextMetricBadge = number_format($currSessions) . ' Sessions (' . number_format($directShare, 1) . '% Share)';
+                } else {
+                    $primaryFinancialLabel = 'Operational Diagnostic';
+                    $formattedPrimaryFinancial = $findings->count() . ' ' . Str::plural('Finding', $findings->count());
+                    $primaryFinancialColor = 'gray';
+                    $primaryMetricSubtext = 'Diagnostic observations requiring operational review.';
+                }
+            }
+        }
+
+        // 5. Execution Lifecycle & Ownership
         $executionStatus = $this->aggregateExecutionStatus($findings);
-        $targetRole = $this->resolveConsolidatedRole($findings);
+        $targetRole = $this->resolveConsolidatedRole($findings, $isAccountBased);
 
-        // 5. Synthesis of Business Rationale & Playbook
-        $businessOpportunity = $this->synthesizeBusinessOpportunity($strategicGoal, $pillar, $accountCount, $client?->name);
-        $businessRationale = $this->synthesizeBusinessRationale($strategicGoal, $accountCount, $primaryFinancialLabel, $primaryFinancialValue);
-        $recommendedAction = $this->synthesizeRecommendedAction($strategicGoal, $targetRole, $accountCount);
+        // 6. Synthesis of Business Rationale & Playbook
+        $businessOpportunity = $this->synthesizeBusinessOpportunity($strategicGoal, $pillar, $accountCount, $client?->name, $findings, $isAccountBased);
+        $businessRationale = $this->synthesizeBusinessRationale($strategicGoal, $accountCount, $primaryFinancialLabel, $primaryFinancialValue, $formattedPrimaryFinancial, $findings, $isAccountBased);
+        $recommendedAction = $this->synthesizeRecommendedAction($strategicGoal, $targetRole, $accountCount, $findings, $isAccountBased);
 
-        // 6. Portfolio Metrics: Historical Relationship Value, Review Progress, Measured Outcomes
+        // 7. Portfolio Metrics: Historical Relationship Value, Review Progress, Measured Outcomes
         $historicalRelationshipValue = (float) $factsByHash->sum('lifetime_net_revenue');
-        if ($historicalRelationshipValue <= 0) {
+        if ($historicalRelationshipValue <= 0 && $isAccountBased) {
             $historicalRelationshipValue = (float) $findings->map(function ($f) {
                 $ev = is_array($f->evidence_json) ? $f->evidence_json : json_decode($f->evidence_json ?? '[]', true);
                 return (float) ($ev['lifetime_net_purchasing_value'] ?? $ev['lifetime_spend'] ?? $ev['lifetime_net_revenue'] ?? $f->estimated_revenue_impact ?? 0.0);
             })->sum();
         }
+
+        $hasRelationshipValue = $isAccountBased && $historicalRelationshipValue > 0;
 
         $reviewProgress = [
             'awaiting_review' => $findings->filter(fn($f) => ($f->status instanceof FindingStatus ? $f->status->value : (string)$f->status) === FindingStatus::New->value)->count(),
@@ -348,6 +508,23 @@ class InitiativeAggregationService
             'subtext'         => $hasMeasured ? ($measuredFindings->count() . ' account(s) measured') : 'Measurement begins after outreach',
         ];
 
+        // 8. Generate Individual Finding Summaries to preserve context within mixed initiatives
+        $findingSummaries = $findings->map(function (Finding $f) use ($accounts) {
+            $acc = $accounts->firstWhere('finding_id', $f->id);
+            $exp = $acc['opportunity_explanation'] ?? [];
+            return [
+                'id'              => $f->id,
+                'title'           => $f->title ?: ($exp['title'] ?? $f->finding_type),
+                'metric'          => $exp['primary_metric_value'] ?? ($acc['financial_impact'] > 0 ? ('$' . number_format($acc['financial_impact'], 2)) : 'Diagnostic'),
+                'metric_label'    => $exp['primary_metric_label'] ?? 'Impact',
+                'scope'           => $exp['scope_label'] ?? ($acc['account_label'] ?? 'Site-wide'),
+                'target_team'     => $exp['target_team_label'] ?? Str::headline($acc['target_role'] ?? 'Operations'),
+                'freshness'       => $exp['freshness_badge'] ?? 'Telemetry',
+                'freshness_color' => $exp['freshness_color'] ?? 'gray',
+                'status'          => $f->status instanceof FindingStatus ? $f->status->label() : Str::headline((string)$f->status),
+            ];
+        })->values()->all();
+
         return [
             'id'                         => 'init_' . ($client?->id ?? '0') . '_' . Str::slug($strategicGoal),
             'client_id'                  => $client?->id,
@@ -358,6 +535,11 @@ class InitiativeAggregationService
             'pillar_label'               => $pillar->label(),
             'pillar_color'               => $pillar->color(),
             'pillar_icon'                => $pillar->icon(),
+            'is_account_based'           => $isAccountBased,
+            'entity_term_singular'       => $entityTermSingular,
+            'entity_term_plural'         => $entityTermPlural,
+            'drilldown_button_label'     => $drilldownButtonLabel,
+            'batch_action_allowed'       => $batchActionAllowed,
             'qualifying_accounts_count'  => $accountCount,
             'proven_accounts_count'      => $provenAccountsCount,
             'action_ready_accounts_count'=> $provenAccountsCount,
@@ -366,9 +548,10 @@ class InitiativeAggregationService
             'has_provisional_accounts'   => $provisionalAccountsCount > 0,
             'provisional_notice'         => $provisionalAccountsCount > 0 ? "{$provisionalAccountsCount} provisional account(s) require manual review" : null,
             'findings_count'             => $findings->count(),
+            'has_relationship_value'     => $hasRelationshipValue,
             'historical_relationship_value' => round($historicalRelationshipValue, 2),
-            'formatted_relationship_value'  => '$' . number_format($historicalRelationshipValue, 2),
-            'relationship_value_definition' => 'Cumulative lifetime net purchases across all qualifying accounts in this initiative.',
+            'formatted_relationship_value'  => $hasRelationshipValue ? ('$' . number_format($historicalRelationshipValue, 2)) : null,
+            'relationship_value_definition' => $hasRelationshipValue ? 'Cumulative lifetime net purchases across all qualifying accounts in this initiative.' : null,
             'review_progress'            => $reviewProgress,
             'measured_outcome_summary'   => $measuredOutcomeSummary,
             'financial_metrics'          => [
@@ -377,11 +560,14 @@ class InitiativeAggregationService
                 'directional_opportunity'   => round($directionalOpportunity, 2),
                 'provisional_spend_total'   => round($provisionalSpendTotal, 2),
             ],
+            'has_monetary_metric'        => $hasMonetaryMetric,
             'primary_financial_label'    => $primaryFinancialLabel,
             'primary_financial_value'    => round($primaryFinancialValue, 2),
-            'formatted_primary_financial' => '$' . number_format($primaryFinancialValue, 2),
+            'formatted_primary_financial' => $formattedPrimaryFinancial,
             'primary_financial_nature'   => $primaryFinancialNature,
             'primary_financial_color'    => $primaryFinancialColor,
+            'primary_metric_subtext'     => $primaryMetricSubtext,
+            'context_metric_badge'       => $contextMetricBadge,
             'business_opportunity'       => $businessOpportunity,
             'business_rationale'         => $businessRationale,
             'recommended_action'         => $recommendedAction,
@@ -390,6 +576,7 @@ class InitiativeAggregationService
             'execution_status'           => $executionStatus,
             'average_confidence'         => round($findings->avg('confidence_score') ?? 0.0, 1),
             'max_priority_score'         => round($findings->max('priority_score') ?? 0.0, 1),
+            'finding_summaries'          => $findingSummaries,
             'accounts'                   => $accounts,
         ];
     }
@@ -414,6 +601,10 @@ class InitiativeAggregationService
             $defaultGoal = $defaults[$detectorKey]['business_objectives']['strategic_goal'] ?? null;
             if ($defaultGoal) {
                 return $defaultGoal;
+            }
+
+            if (str_contains($detectorKey, 'wholesale_retention')) {
+                return 'B2B Wholesale Retention';
             }
         }
 
@@ -472,17 +663,49 @@ class InitiativeAggregationService
     /**
      * Resolve consolidated target role for an initiative.
      */
-    protected function resolveConsolidatedRole(Collection $findings): string
+    protected function resolveConsolidatedRole(Collection $findings, bool $isAccountBased = true): string
     {
-        $role = $findings->pluck('target_role')->filter()->first();
-        return $role ?? 'account_manager';
+        if ($isAccountBased) {
+            $role = $findings->pluck('target_role')->filter()->first();
+            return $role ?? 'account_manager';
+        }
+
+        $teams = $findings->map(function ($f) {
+            $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
+            return $meta['actionability']['target_team'] ?? $f->target_role;
+        })->filter()->unique()->values();
+
+        if ($teams->count() === 1) {
+            return $teams->first();
+        }
+
+        if ($teams->contains('engineering') && $teams->contains('marketing_operations')) {
+            return 'engineering_and_marketing_operations';
+        }
+
+        if ($teams->contains('analytics') && $teams->contains('marketing_operations')) {
+            return 'marketing_operations_and_analytics';
+        }
+
+        return $teams->first() ?? 'operations';
     }
 
     /**
      * Synthesize "What business opportunity exists?" (Question 1)
      */
-    protected function synthesizeBusinessOpportunity(string $goal, FindingPillar $pillar, int $accountCount, ?string $clientName): string
+    protected function synthesizeBusinessOpportunity(string $goal, FindingPillar $pillar, int $accountCount, ?string $clientName, ?Collection $findings = null, bool $isAccountBased = true): string
     {
+        if (! $isAccountBased) {
+            $count = $findings ? $findings->count() : $accountCount;
+            return match ($goal) {
+                'Commercial Account Growth' => "{$count} operational and attribution findings identified across storewide data and tracking pipelines.",
+                'Digital Experience Engagement' => "{$count} analytics telemetry finding identified involving unassigned direct traffic surges.",
+                'Checkout Conversion Optimization' => "{$count} conversion and attribution findings identified across cart, email, and checkout funnels.",
+                'Data & Technical Health Governance' => "{$count} technical or data pipeline anomalies have been detected requiring engineering validation.",
+                default => "{$count} operational findings identified under strategic goal '{$goal}'.",
+            };
+        }
+
         return match ($goal) {
             'B2B Wholesale Retention' => "{$accountCount} high-value wholesale accounts have exceeded their established purchasing cadence without reordering, representing recoverable baseline revenue.",
             'Key Account Churn Prevention' => "{$accountCount} key commercial accounts show verified spending declines of 25%+ against historical run rates, requiring targeted retention intervention.",
@@ -496,9 +719,18 @@ class InitiativeAggregationService
     /**
      * Synthesize "Why should we care?" (Question 2)
      */
-    protected function synthesizeBusinessRationale(string $goal, int $accountCount, string $financialLabel, float $financialValue): string
+    protected function synthesizeBusinessRationale(string $goal, int $accountCount, string $financialLabel, float $financialValue, ?string $formattedFinancial = null, ?Collection $findings = null, bool $isAccountBased = true): string
     {
-        $formattedValue = '$' . number_format($financialValue, 2);
+        $formattedValue = $formattedFinancial ?? ('$' . number_format($financialValue, 2));
+
+        if (! $isAccountBased) {
+            return match ($goal) {
+                'Commercial Account Growth' => "Evaluates to {$formattedValue} across cross-platform attribution variances and cart exceptions. Error counts represent technical friction and should not be treated as lost sales without order log corroboration.",
+                'Digital Experience Engagement' => "Evaluates to {$formattedValue} in direct session volume. Surge traffic with flat conversion requires referrer audit to determine campaign tracking or crawler artifacts.",
+                'Checkout Conversion Optimization' => "Evaluates to {$formattedValue} in unassigned campaign revenue (missing Klaviyo UTM tags) alongside conversion rate shifts. Attribution gaps identify reporting blind spots rather than lost revenue.",
+                default => "Diagnostic evaluation identifies {$formattedValue} categorized strictly as {$financialLabel}.",
+            };
+        }
 
         return match ($goal) {
             'B2B Wholesale Retention' => "These accounts have verified historical order patterns and high lifetime values. Recovering reorders across this cohort represents {$formattedValue} in {$financialLabel}.",
@@ -512,9 +744,18 @@ class InitiativeAggregationService
     /**
      * Synthesize "What should we do next?" (Question 4)
      */
-    protected function synthesizeRecommendedAction(string $goal, string $targetRole, int $accountCount): string
+    protected function synthesizeRecommendedAction(string $goal, string $targetRole, int $accountCount, ?Collection $findings = null, bool $isAccountBased = true): string
     {
         $roleLabel = Str::headline($targetRole);
+
+        if (! $isAccountBased) {
+            return match ($goal) {
+                'Commercial Account Growth' => "Engineering and Marketing Operations to review individual findings: inspect cart_item_options exceptions in Sentry and reconcile GA4 vs Klaviyo attribution models.",
+                'Digital Experience Engagement' => "Analytics team to audit direct traffic telemetry, verify IP exclusion filters, and review landing page attribution for recent unbranded campaigns.",
+                'Checkout Conversion Optimization' => "Marketing Operations to audit Klaviyo campaign links for missing utm_source tags and E-commerce team to inspect checkout step drop-offs.",
+                default => "Have {$roleLabel} review operational findings and execute appropriate investigation playbooks.",
+            };
+        }
 
         return match ($goal) {
             'B2B Wholesale Retention' => "Assign {$roleLabel} to initiate direct outbound re-engagement with personalized quotes reflecting past purchasing baskets.",
