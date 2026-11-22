@@ -70,13 +70,15 @@ class OpportunityExplanationService
             ?? ''
         );
 
-        $detectorKey = str_starts_with($rawKey, 'opportunity.') ? Str::after($rawKey, 'opportunity.') : $rawKey;
+        $detectorKey = str_starts_with($rawKey, 'opportunity.') 
+            ? Str::after($rawKey, 'opportunity.') 
+            : (str_starts_with($rawKey, 'risk.') ? Str::after($rawKey, 'risk.') : $rawKey);
 
         $impactNature = $finding->impact_nature instanceof \App\Enums\ImpactNature 
             ? $finding->impact_nature->value 
             : (string) ($finding->impact_nature ?? '');
 
-        if (!$detectorKey || $detectorKey === 'opportunity' || $detectorKey === '') {
+        if (!$detectorKey || $detectorKey === 'opportunity' || $detectorKey === 'risk' || $detectorKey === '') {
             if ($impactNature === 'historical_purchasing_episode_benchmark' || str_contains(strtolower($finding->title ?? ''), 'winback')) {
                 $detectorKey = 'long_term_winback';
             } elseif ($impactNature === 'historical_reorder_value' || str_contains(strtolower($finding->title ?? ''), 'replenishment')) {
@@ -102,23 +104,39 @@ class OpportunityExplanationService
 
         $revalidation = $this->validateFindingEvidence($finding, $evidence, $fact);
 
+        $isAccountOpportunity = !empty($finding->account_identity_hash) 
+            || !empty($evidence['account_hash'])
+            || !empty($finding->metadata_json['account_hash'])
+            || in_array($detectorKey, ['long_term_winback', 'b2b_account_reactivation', 'replenishment_cadence', 'account_contraction', 'wholesale_retention'], true)
+            || !empty($finding->customer_name)
+            || !empty($finding->customer_email)
+            || !empty($finding->metadata_json['account_label'])
+            || !empty($evidence['account_label']);
+
         $res = match ($detectorKey) {
             'long_term_winback'         => $this->explainLongTermWinback($finding, $evidence, $fact, $customerDisplay, $contactAssessment, $profile, $revalidation),
             'b2b_account_reactivation'   => $this->explainB2bReactivation($finding, $evidence, $fact, $customerDisplay, $contactAssessment, $profile, $revalidation),
             'replenishment_cadence'      => $this->explainReplenishment($finding, $evidence, $fact, $customerDisplay, $contactAssessment, $profile, $revalidation),
             'account_contraction'       => $this->explainContraction($finding, $evidence, $fact, $customerDisplay, $contactAssessment, $profile, $revalidation),
-            default                      => $this->explainGenericOrTechnical($finding, $evidence, $fact, $customerDisplay, $contactAssessment, $revalidation),
+            default                      => $isAccountOpportunity
+                ? $this->explainGenericOrTechnical($finding, $evidence, $fact, $customerDisplay, $contactAssessment, $revalidation)
+                : $this->explainOperationalOrDiagnostic($finding, $evidence, $revalidation),
         };
 
-        $res['requires_revalidation'] = $revalidation['requires_revalidation'];
-        $res['revalidation_reason']   = $revalidation['revalidation_reason'];
-        $res['detector_version']      = $revalidation['detector_version'];
-        $res['evaluated_at']          = $revalidation['evaluated_at'];
-        $res['contact_status']        = $contactAssessment['status_key'];
-        $res['contact_badge']         = $contactAssessment['badge_text'];
-        $res['contact_badge_color']   = $contactAssessment['badge_color'];
-        $res['contact_status_label']   = $contactAssessment['status_label'];
-        $res['contact_provenance']    = $contactAssessment['provenance'];
+        if ($isAccountOpportunity) {
+            $res['is_account_opportunity'] = true;
+            $res['requires_revalidation'] = $revalidation['requires_revalidation'];
+            $res['revalidation_reason']   = $revalidation['revalidation_reason'];
+            $res['detector_version']      = $revalidation['detector_version'];
+            $res['evaluated_at']          = $revalidation['evaluated_at'];
+            $res['contact_status']        = $contactAssessment['status_key'];
+            $res['contact_badge']         = $contactAssessment['badge_text'];
+            $res['contact_badge_color']   = $contactAssessment['badge_color'];
+            $res['contact_status_label']   = $contactAssessment['status_label'];
+            $res['contact_provenance']    = $contactAssessment['provenance'];
+        } else {
+            $res['is_account_opportunity'] = false;
+        }
 
         return $res;
     }
@@ -603,6 +621,250 @@ class OpportunityExplanationService
                 'revalidation_reason'   => $revalidation['revalidation_reason'] ?? null,
                 'detector_version'      => $revalidation['detector_version'] ?? ($evidence['detector_version'] ?? '2.0.0'),
                 'evaluated_at'          => $revalidation['evaluated_at'] ?? ($evidence['evaluated_at'] ?? null),
+            ],
+        ];
+    }
+
+    /**
+     * Explanation for operational, analytics, marketing, and technical findings.
+     * Prevents assuming non-account findings are customers, avoids misleading $0.00 pipeline,
+     * distinguishes observations from implications, and provides freshness badges.
+     */
+    public function explainOperationalOrDiagnostic(
+        Finding $finding,
+        array $evidence,
+        array $revalidation = []
+    ): array {
+        $metadata = is_array($finding->metadata_json)
+            ? $finding->metadata_json
+            : (json_decode($finding->metadata_json ?? '[]', true) ?: []);
+
+        $type = (string) ($finding->finding_type ?? '');
+        $ruleKey = (string) ($metadata['rule_key'] ?? '');
+        $family = (string) ($metadata['primary_signal']['family'] ?? '');
+        $category = (string) ($finding->finding_category?->value ?? $finding->finding_category ?? '');
+
+        // 1. Resolve Scope & Target Team
+        $scopeType = $metadata['scope_type'] ?? null;
+        $scopeTarget = $metadata['scope_target'] ?? null;
+        $scopeLabel = $scopeType && $scopeTarget
+            ? (Str::headline($scopeType) . ': ' . $scopeTarget)
+            : ($scopeTarget ?? 'Site-wide');
+
+        $targetTeam = $metadata['actionability']['target_team'] ?? $finding->target_role;
+        if (! $targetTeam) {
+            $targetTeam = match ($category) {
+                'Technical' => 'engineering',
+                'Conversion', 'Attribution' => 'marketing_operations',
+                'Behavioral' => 'analytics',
+                default => 'ecommerce_operations',
+            };
+        }
+
+        $targetTeamLabel = match ($targetTeam) {
+            'engineering' => 'Engineering',
+            'marketing_operations', 'marketing' => 'Marketing Operations',
+            'analytics' => 'Analytics',
+            'ecommerce_operations' => 'E-commerce Operations',
+            'sales', 'executive_sales' => 'Executive Sales',
+            default => Str::headline($targetTeam),
+        };
+
+        // 2. Data Freshness & Observation Period
+        $lastObservedAt = $metadata['last_observed_at'] ?? $finding->updated_at?->toIso8601String();
+        $detectedAt = $metadata['primary_signal']['detected_at'] ?? $metadata['detected_at'] ?? $finding->created_at?->toIso8601String();
+        $periodDays = $metadata['period_days'] ?? null;
+
+        $isOutdated = false;
+        $freshnessBadge = 'Diagnostic Observation';
+        $freshnessColor = 'gray';
+        $freshnessNote = 'Diagnostic observation recorded from telemetry.';
+
+        if ($lastObservedAt) {
+            try {
+                $observedDate = \Carbon\Carbon::parse($lastObservedAt);
+                $daysAgo = (int) round($observedDate->diffInDays(now()));
+                if ($daysAgo > 7) {
+                    $isOutdated = true;
+                    $freshnessBadge = 'Historical Observation (' . $observedDate->format('M j, Y') . ')';
+                    $freshnessColor = 'amber';
+                    $freshnessNote = 'Historical observation (' . $daysAgo . ' days ago): requires re-validation against current logs.';
+                } else {
+                    $freshnessBadge = 'Active Episode (' . $observedDate->format('M j, Y') . ')';
+                    $freshnessColor = 'emerald';
+                    $freshnessNote = 'Active episode observed in recent monitoring.';
+                }
+            } catch (\Throwable $e) {
+                // Keep defaults
+            }
+        }
+
+        $observationPeriodText = $periodDays ? "Trailing {$periodDays} days" : 'Monitoring episode';
+
+        // 3. Scenario-Specific Evidence Extraction (Reusable without hardcoding IDs)
+        $isScriptError = str_contains($type, 'script_error') || str_contains($family, 'script_error');
+        $isCampaignTagging = str_contains($type, 'campaign_tagging') || str_contains($family, 'campaign_tagging');
+        $isTrafficSurge = str_contains($type, 'volume_surge') || str_contains($family, 'volume_surge') || str_contains($type, 'traffic');
+        $isCvrDecline = str_contains($type, 'conversion_rate') || str_contains($ruleKey, 'conversion_rate');
+        $isAttributionVariance = str_contains($type, 'attribution_variance') || str_contains($type, 'platform_variance') || str_contains($ruleKey, 'attribution_variance');
+        $isRevenueDrop = str_contains($type, 'revenue_drop') || str_contains($ruleKey, 'revenue_drop');
+
+        $opportunityType = Str::headline($finding->finding_type ?? 'Operational Finding');
+        $supportingMetrics = [];
+
+        if ($isScriptError) {
+            $errorCount = (int) ($evidence['error_count'] ?? $metadata['primary_signal']['evidence']['error_count'] ?? 0);
+            $claritySessions = (int) ($evidence['clarity_sessions'] ?? $metadata['primary_signal']['evidence']['clarity_sessions'] ?? 0);
+            $affectedUrl = $evidence['affected_url'] ?? $metadata['primary_signal']['evidence']['affected_url'] ?? 'Packaging tapes catalog';
+            $exceptionType = $evidence['exception_type'] ?? $metadata['primary_signal']['evidence']['exception_type'] ?? 'cart_item_options';
+
+            $primaryMetricValue = number_format($errorCount) . ' Errors';
+            $primaryMetricLabel = 'Front-End Script Exception';
+
+            $confirmedObservation = number_format($errorCount) . " JavaScript exceptions ({$exceptionType}) recorded across " . number_format($claritySessions) . " sessions on {$affectedUrl}.";
+            $possibleImplication = "Front-end script errors during option selection may degrade buyer user experience and disrupt catalog interactions. (Note: Error counts identify technical friction; they do not automatically imply verified lost revenue).";
+            $recommendedAction = "Task {$targetTeamLabel} with reproducing the {$exceptionType} exception on {$affectedUrl} and deploying a front-end script fix.";
+
+            $supportingMetrics = [
+                ['label' => 'Error Volume', 'value' => number_format($errorCount), 'subtext' => 'JS exceptions logged', 'color' => 'rose'],
+                ['label' => 'Sessions Affected', 'value' => number_format($claritySessions), 'subtext' => 'Impacted user sessions', 'color' => 'amber'],
+                ['label' => 'Exception', 'value' => $exceptionType, 'subtext' => 'Error signature', 'color' => 'gray'],
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Remediation owner', 'color' => 'primary'],
+            ];
+        } elseif ($isCampaignTagging) {
+            $klaviyoRev = (float) ($evidence['klaviyo_revenue'] ?? $metadata['primary_signal']['evidence']['klaviyo_revenue'] ?? 0.0);
+            $ga4EmailRev = (float) ($evidence['ga4_email_revenue'] ?? $metadata['primary_signal']['evidence']['ga4_email_revenue'] ?? 0.0);
+            $issue = $evidence['issue'] ?? $metadata['primary_signal']['evidence']['issue'] ?? 'Missing campaign UTM parameters';
+
+            $primaryMetricValue = '$' . number_format($klaviyoRev, 2);
+            $primaryMetricLabel = 'Unassigned Campaign Revenue';
+
+            $confirmedObservation = "Promotional email platform recorded $" . number_format($klaviyoRev, 2) . " in campaign revenue, while web analytics recorded $" . number_format($ga4EmailRev, 2) . " due to missing utm_source parameters.";
+            $possibleImplication = "Campaign links lacking standard UTM tags prevent web analytics from crediting the promotional email channel. (Note: Unassigned campaign revenue reflects reporting misattribution, not lost sales).";
+            $recommendedAction = "Task {$targetTeamLabel} with auditing promotional email template links and configuring standardized utm_source=klaviyo parameters.";
+
+            $supportingMetrics = [
+                ['label' => 'Unassigned Revenue', 'value' => '$' . number_format($klaviyoRev, 2), 'subtext' => 'Platform reported email spend', 'color' => 'blue'],
+                ['label' => 'GA4 Email Revenue', 'value' => '$0.00', 'subtext' => 'Unassigned in web analytics', 'color' => 'gray'],
+                ['label' => 'Tracking Issue', 'value' => 'Missing UTM Tags', 'subtext' => $issue, 'color' => 'amber'],
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Configuration owner', 'color' => 'primary'],
+            ];
+        } elseif ($isTrafficSurge) {
+            $surgePct = (float) ($evidence['surge_pct'] ?? $metadata['primary_signal']['evidence']['surge_pct'] ?? 0.0);
+            $directShare = (float) ($evidence['direct_share_pct'] ?? $metadata['primary_signal']['evidence']['direct_share_pct'] ?? 0.0);
+            $currentVal = (int) ($metadata['primary_signal']['current_value'] ?? 0);
+            $previousVal = (int) ($metadata['primary_signal']['previous_value'] ?? 0);
+
+            $primaryMetricValue = '+' . number_format($surgePct, 1) . '% Surge';
+            $primaryMetricLabel = 'Direct Traffic Volume Surge';
+
+            $confirmedObservation = "Direct traffic volume surged by +" . number_format($surgePct, 1) . "% (" . number_format($previousVal) . " → " . number_format($currentVal) . " sessions), representing " . number_format($directShare, 1) . "% of total store traffic with flat conversion.";
+            $possibleImplication = "Unassigned volume spikes without revenue lift can indicate untagged marketing campaigns, referral tracking loss, or automated traffic. (Note: Do not classify as bot traffic without verifying referral headers and user-agent distributions).";
+            $recommendedAction = "Task {$targetTeamLabel} with inspecting referral headers, user-agent distributions, and session drop-off rates on landing pages to isolate traffic origin.";
+
+            $supportingMetrics = [
+                ['label' => 'Session Volume', 'value' => number_format($currentVal), 'subtext' => 'Baseline: ' . number_format($previousVal), 'color' => 'amber'],
+                ['label' => 'Channel Share', 'value' => number_format($directShare, 1) . '%', 'subtext' => 'Dominant direct share', 'color' => 'blue'],
+                ['label' => 'Conversion Impact', 'value' => 'Flat Conversion', 'subtext' => 'No conversion lift observed', 'color' => 'gray'],
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Investigation owner', 'color' => 'primary'],
+            ];
+        } elseif ($isCvrDecline) {
+            $diffPct = (float) ($metadata['difference_pct'] ?? 0.0);
+            $currentCvr = (float) ($metadata['metric_a']['value'] ?? 0.0);
+            $period = (int) ($metadata['period_days'] ?? 30);
+            $revImpact = (float) ($finding->estimated_revenue_impact ?? 0.0);
+
+            $primaryMetricValue = number_format($diffPct, 1) . '% CVR';
+            $primaryMetricLabel = "{$period}-Day Conversion Decline";
+
+            $confirmedObservation = "Storewide conversion rate dropped by " . number_format(abs($diffPct), 1) . "% over trailing {$period} days (to " . number_format($currentCvr, 2) . "%).";
+            $possibleImplication = "Sustained conversion rate decline indicates checkout funnel friction, catalog pricing sensitivity, or traffic quality dilution.";
+            $recommendedAction = "Task {$targetTeamLabel} with auditing checkout drop-off rates and analyzing conversion by device and traffic channel.";
+
+            $supportingMetrics = [
+                ['label' => 'Observed CVR', 'value' => number_format($currentCvr, 2) . '%', 'subtext' => "Trailing {$period}-day rate", 'color' => 'rose'],
+                ['label' => 'Rate Delta', 'value' => number_format($diffPct, 1) . '%', 'subtext' => 'Period change', 'color' => 'rose'],
+                ($revImpact > 0
+                    ? ['label' => 'Modeled Impact', 'value' => '$' . number_format($revImpact, 2), 'subtext' => 'Estimated impact', 'color' => 'amber']
+                    : ['label' => 'Impact Modeling', 'value' => 'Volatile Traffic', 'subtext' => 'Excluded to prevent distortion', 'color' => 'gray']),
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Remediation owner', 'color' => 'primary'],
+            ];
+        } elseif ($isAttributionVariance) {
+            $diffPct = (float) ($metadata['difference_pct'] ?? $evidence['variance_pct'] ?? 0.0);
+            $diffAmount = (float) ($metadata['difference_amount'] ?? 0.0);
+
+            $primaryMetricValue = ($diffAmount > 0 ? ('$' . number_format($diffAmount, 2)) : (number_format($diffPct, 1) . '%')) . ' Variance';
+            $primaryMetricLabel = 'Cross-Platform Attribution Discrepancy';
+
+            $confirmedObservation = "Reporting platforms recorded a " . number_format($diffPct, 1) . "% reporting discrepancy" . ($diffAmount > 0 ? " ($" . number_format($diffAmount, 2) . " variance)" : "") . " across reporting systems.";
+            $possibleImplication = "Cross-platform attribution and tracking variance represents reporting alignment differences across attribution models and windows, not lost sales or recoverable cash.";
+            $recommendedAction = "Task {$targetTeamLabel} with aligning cross-platform tracking parameters, attribution windows, and cookie consent policies.";
+
+            $supportingMetrics = [
+                ['label' => 'Variance Amount', 'value' => ($diffAmount > 0 ? '$' . number_format($diffAmount, 2) : number_format($diffPct, 1) . '%'), 'subtext' => 'Cross-platform delta', 'color' => 'amber'],
+                ['label' => 'Discrepancy Rate', 'value' => number_format($diffPct, 1) . '%', 'subtext' => 'Tracking difference', 'color' => 'blue'],
+                ['label' => 'Classification', 'value' => 'Alignment Gap', 'subtext' => 'Not lost sales or pipeline', 'color' => 'gray'],
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Alignment owner', 'color' => 'primary'],
+            ];
+        } elseif ($isRevenueDrop) {
+            $diffPct = (float) ($metadata['difference_pct'] ?? 0.0);
+            $diffAmount = (float) ($metadata['difference_amount'] ?? $finding->estimated_revenue_impact ?? 0.0);
+            $period = (int) ($metadata['period_days'] ?? 14);
+
+            $primaryMetricValue = '$' . number_format($diffAmount, 2) . ' Drop';
+            $primaryMetricLabel = 'Observed Revenue Drop';
+
+            $confirmedObservation = "Observed Commerce revenue dropped by $" . number_format($diffAmount, 2) . " (" . number_format(abs($diffPct), 1) . "%) over trailing {$period} days.";
+            $possibleImplication = "Sustained revenue drop indicates catalog or commercial order volume contraction.";
+            $recommendedAction = "Task {$targetTeamLabel} with auditing order intake and validating ERP synchronization.";
+
+            $supportingMetrics = [
+                ['label' => 'Revenue Drop', 'value' => '$' . number_format($diffAmount, 2), 'subtext' => 'Observed period delta', 'color' => 'rose'],
+                ['label' => 'Decline Rate', 'value' => number_format($diffPct, 1) . '%', 'subtext' => "Trailing {$period} days", 'color' => 'rose'],
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Operations owner', 'color' => 'primary'],
+            ];
+        } else {
+            $impact = (float) ($finding->estimated_revenue_impact ?? 0.0);
+            $primaryMetricValue = $impact > 0 ? ('$' . number_format($impact, 2)) : 'Diagnostic';
+            $primaryMetricLabel = $impact > 0 ? 'Modeled Impact' : 'Diagnostic Finding';
+
+            $confirmedObservation = $finding->description ?: "Identified {$opportunityType} on {$scopeLabel}.";
+            $possibleImplication = "Operational condition requiring verification by {$targetTeamLabel}.";
+            $recommendedAction = $finding->suggested_action ?: "Have {$targetTeamLabel} investigate {$scopeLabel} and verify system telemetry.";
+
+            $supportingMetrics = [
+                ['label' => 'Impact', 'value' => $impact > 0 ? ('$' . number_format($impact, 2)) : 'Non-Monetary', 'subtext' => 'Modeled value', 'color' => $impact > 0 ? 'emerald' : 'gray'],
+                ['label' => 'Scope', 'value' => $scopeLabel, 'subtext' => 'Target entity', 'color' => 'blue'],
+                ['label' => 'Responsible Team', 'value' => $targetTeamLabel, 'subtext' => 'Remediation owner', 'color' => 'primary'],
+            ];
+        }
+
+        return [
+            'is_account_opportunity' => false,
+            'opportunity_type'       => $opportunityType,
+            'title'                  => $finding->title ?: $opportunityType,
+            'scope_label'            => $scopeLabel,
+            'target_team'            => $targetTeam,
+            'target_team_label'      => $targetTeamLabel,
+            'freshness_badge'        => $freshnessBadge,
+            'freshness_color'        => $freshnessColor,
+            'freshness_note'         => $freshnessNote,
+            'is_outdated'            => $isOutdated,
+            'primary_metric_label'   => $primaryMetricLabel,
+            'primary_metric_value'   => $primaryMetricValue,
+            'concise_explanation'   => $confirmedObservation,
+            'confirmed_observation'  => $confirmedObservation,
+            'possible_implication'   => $possibleImplication,
+            'recommended_action'     => $recommendedAction,
+            'supporting_metrics'     => $supportingMetrics,
+            'outcome_presentation'   => $this->buildOutcomePresentation($finding),
+            'expandable_details'     => [
+                'observation_period'    => $observationPeriodText,
+                'last_observed_at'      => $lastObservedAt ? \Carbon\Carbon::parse($lastObservedAt)->format('M j, Y H:i T') : 'N/A',
+                'scope'                 => $scopeLabel,
+                'target_team'           => $targetTeamLabel,
+                'requires_revalidation' => $isOutdated,
+                'revalidation_reason'   => $isOutdated ? 'Historical observation older than 7 days requires re-validation' : null,
             ],
         ];
     }

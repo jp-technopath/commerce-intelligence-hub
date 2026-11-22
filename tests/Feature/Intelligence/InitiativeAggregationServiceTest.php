@@ -297,5 +297,97 @@ class InitiativeAggregationServiceTest extends TestCase
         $this->assertEquals('executive_sales', $winbackInit['target_role']);
         $this->assertEquals('new', $winbackInit['execution_status']['status']);
     }
+
+    public function test_operational_and_diagnostic_findings_aggregate_with_scenario_aware_metrics_and_safeguards(): void
+    {
+        // 1. Create JS script error finding (Commercial Account Growth)
+        $findingJs = Finding::create([
+            'client_id'                  => $this->goldkamp->id,
+            'finding_type'               => 'risk',
+            'fingerprint'                => hash('sha256', 'gk_js_err_test_1'),
+            'source_type'                => 'detector',
+            'source_id'                  => 'diagnostic.script_errors',
+            'title'                      => 'Front-End JavaScript Exceptions on Checkout Page',
+            'severity'                   => FindingSeverity::High,
+            'finding_pillar'             => null,
+            'finding_category'           => FindingCategory::Technical,
+            'status'                     => FindingStatus::New,
+            'impact_nature'              => null,
+            'estimated_revenue_impact'   => 0.0,
+            'confidence_score'           => 90.0,
+            'priority_score'             => 85.0,
+            'target_role'                => 'engineering',
+            'suggested_action'           => 'Investigate cart.js bundle unhandled Promise rejection',
+            'metadata_json'              => [
+                'actionability' => ['target_team' => 'engineering', 'page_scope' => 'checkout'],
+            ],
+            'evidence_json'              => [
+                'error_count'   => 17221,
+                'affected_page' => 'tapes_packaging_tapes',
+                'observed_at'   => '2026-11-10',
+            ],
+        ]);
+
+        // 2. Create attribution discrepancy finding (Commercial Account Growth)
+        $findingAttr = Finding::create([
+            'client_id'                  => $this->goldkamp->id,
+            'finding_type'               => 'risk',
+            'fingerprint'                => hash('sha256', 'gk_attr_var_test_1'),
+            'source_type'                => 'detector',
+            'source_id'                  => 'diagnostic.ga4_klaviyo_attribution_variance',
+            'title'                      => 'Klaviyo vs GA4 Email Attribution Discrepancy',
+            'severity'                   => FindingSeverity::Medium,
+            'finding_pillar'             => FindingPillar::GrowthOpportunity,
+            'finding_category'           => FindingCategory::Revenue,
+            'status'                     => FindingStatus::New,
+            'impact_nature'              => null,
+            'estimated_revenue_impact'   => null,
+            'confidence_score'           => 80.0,
+            'priority_score'             => 75.0,
+            'target_role'                => 'marketing_operations',
+            'suggested_action'           => 'Align GA4 UTM tracking parameters with Klaviyo campaign links',
+            'metadata_json'              => [
+                'actionability'     => ['target_team' => 'marketing_operations', 'channel_scope' => 'email_klaviyo'],
+                'difference_amount' => 4846.63,
+            ],
+            'evidence_json'              => [
+                'variance_amount' => 4846.63,
+                'channel'         => 'email_klaviyo',
+                'observed_at'     => '2026-11-15',
+            ],
+        ]);
+
+        $initiatives = $this->service->getInitiatives($this->goldkamp);
+        $cag = $initiatives->firstWhere('strategic_goal', 'Commercial Account Growth');
+
+        $this->assertNotNull($cag);
+        $this->assertFalse($cag['is_account_based']);
+        $this->assertEquals('Operational Finding', $cag['entity_term_singular']);
+        $this->assertEquals('Operational Findings', $cag['entity_term_plural']);
+        $this->assertStringContainsString('Review Findings', $cag['drilldown_button_label']);
+        $this->assertFalse($cag['batch_action_allowed']);
+        $this->assertFalse($cag['has_relationship_value']);
+        $this->assertEquals('$4,846.63', $cag['formatted_primary_financial']);
+        $this->assertEquals('Attribution Variance', $cag['primary_financial_label']);
+        $this->assertNotEmpty($cag['context_metric_badge']);
+        $this->assertCount(2, $cag['finding_summaries']);
+
+        // Verify drilldown accounts data structure preserves individual diagnostic context
+        $drilldownItems = $cag['accounts'];
+        $this->assertCount(2, $drilldownItems);
+        $jsItem = collect($drilldownItems)->firstWhere('finding_id', $findingJs->id);
+        $this->assertNotNull($jsItem);
+        $this->assertFalse($jsItem['is_account_opportunity']);
+        $this->assertNotEmpty($jsItem['confirmed_observation']);
+        $this->assertNotEmpty($jsItem['possible_implication']);
+        $this->assertNotEmpty($jsItem['recommended_action']);
+        $this->assertEquals('Engineering', $jsItem['target_team_label']);
+        $this->assertNotEmpty($jsItem['freshness_badge']);
+
+        $attrItem = collect($drilldownItems)->firstWhere('finding_id', $findingAttr->id);
+        $this->assertNotNull($attrItem);
+        $this->assertFalse($attrItem['is_account_opportunity']);
+        $this->assertEquals('Marketing Operations', $attrItem['target_team_label']);
+    }
 }
 
