@@ -16,6 +16,11 @@ interface OpportunityDetectorInterface
     public function key(): string;
 
     /**
+     * Active version string for this detector (e.g. '2.1.0-method-d' or '2.0.0').
+     */
+    public function version(): string;
+
+    /**
      * Human-readable detector name.
      */
     public function name(): string;

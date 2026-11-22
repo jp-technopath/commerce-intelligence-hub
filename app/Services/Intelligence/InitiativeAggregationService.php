@@ -20,6 +20,12 @@ class InitiativeAggregationService
      */
     protected array $configCache = [];
 
+    public function __construct(
+        protected ?OpportunityExplanationService $explanationService = null
+    ) {
+        $this->explanationService = $explanationService ?? app(OpportunityExplanationService::class);
+    }
+
     /**
      * Aggregate open/active findings into management strategic initiatives.
      * Enforces client authorization for authenticated users while supporting CLI/worker context.
@@ -223,6 +229,8 @@ class InitiativeAggregationService
                 ? $rawLabel
                 : $customerDisplay['display_label'];
 
+            $opportunityExplanation = $this->explanationService->explainFinding($f, $evidence, $fact, $customerDisplay);
+
             return [
                 'finding_id'                => $f->id,
                 'account_label'             => $accountLabel,
@@ -257,6 +265,21 @@ class InitiativeAggregationService
                 'confidence_score'          => (float) ($f->confidence_score ?? 0.0),
                 'priority_score'            => (float) ($f->priority_score ?? 0.0),
                 'suggested_action'          => $f->suggested_action ?? ($isProvisional ? 'Review account purchase history manually to confirm reorder cadence' : 'Review account order history and reach out to primary buyer'),
+                'opportunity_explanation'   => $opportunityExplanation,
+                'opportunity_type'          => $opportunityExplanation['opportunity_type'],
+                'concise_explanation'       => $opportunityExplanation['concise_explanation'],
+                'primary_explanation'       => $opportunityExplanation['concise_explanation'],
+                'supporting_metrics'        => $opportunityExplanation['supporting_metrics'],
+                'recommended_action'        => $opportunityExplanation['recommended_action'],
+                'outcome_presentation'      => $opportunityExplanation['outcome_presentation'],
+                'expandable_details'        => $opportunityExplanation['expandable_details'],
+                'requires_revalidation'     => $opportunityExplanation['requires_revalidation'] ?? false,
+                'revalidation_reason'       => $opportunityExplanation['revalidation_reason'] ?? null,
+                'contact_status'            => $opportunityExplanation['contact_status'] ?? 'not_recorded',
+                'contact_badge'             => $opportunityExplanation['contact_badge'] ?? 'No Contact Recorded',
+                'contact_badge_color'       => $opportunityExplanation['contact_badge_color'] ?? 'slate',
+                'contact_status_label'      => $opportunityExplanation['contact_status_label'] ?? 'No contact recorded in Magento',
+                'contact_provenance'        => $opportunityExplanation['contact_provenance'] ?? null,
                 'status'                    => $f->status instanceof FindingStatus ? $f->status->value : (string) ($f->status ?? 'new'),
                 'status_label'              => $f->status instanceof FindingStatus ? $f->status->label() : Str::headline((string)$f->status),
                 'status_color'              => $f->status instanceof FindingStatus ? $f->status->color() : 'gray',
@@ -296,6 +319,35 @@ class InitiativeAggregationService
         $businessRationale = $this->synthesizeBusinessRationale($strategicGoal, $accountCount, $primaryFinancialLabel, $primaryFinancialValue);
         $recommendedAction = $this->synthesizeRecommendedAction($strategicGoal, $targetRole, $accountCount);
 
+        // 6. Portfolio Metrics: Historical Relationship Value, Review Progress, Measured Outcomes
+        $historicalRelationshipValue = (float) $factsByHash->sum('lifetime_net_revenue');
+        if ($historicalRelationshipValue <= 0) {
+            $historicalRelationshipValue = (float) $findings->map(function ($f) {
+                $ev = is_array($f->evidence_json) ? $f->evidence_json : json_decode($f->evidence_json ?? '[]', true);
+                return (float) ($ev['lifetime_net_purchasing_value'] ?? $ev['lifetime_spend'] ?? $ev['lifetime_net_revenue'] ?? $f->estimated_revenue_impact ?? 0.0);
+            })->sum();
+        }
+
+        $reviewProgress = [
+            'awaiting_review' => $findings->filter(fn($f) => ($f->status instanceof FindingStatus ? $f->status->value : (string)$f->status) === FindingStatus::New->value)->count(),
+            'under_review'    => $findings->filter(fn($f) => ($f->status instanceof FindingStatus ? $f->status->value : (string)$f->status) === FindingStatus::UnderReview->value)->count(),
+            'in_progress'     => $findings->filter(fn($f) => in_array($f->status instanceof FindingStatus ? $f->status->value : (string)$f->status, [FindingStatus::Approved->value, FindingStatus::Assigned->value]))->count(),
+            'completed'       => $findings->filter(fn($f) => ($f->status instanceof FindingStatus ? $f->status->value : (string)$f->status) === FindingStatus::Resolved->value)->count(),
+            'total'           => $findings->count(),
+        ];
+
+        $measuredFindings = $findings->filter(fn($f) => ($f->outcome_status instanceof \App\Enums\FindingOutcomeStatus ? $f->outcome_status->value : (string)$f->outcome_status) === \App\Enums\FindingOutcomeStatus::OutcomeMeasured->value);
+        $hasMeasured = $measuredFindings->isNotEmpty();
+        $measuredOrdersRevenue = (float) $measuredFindings->sum(fn($f) => $f->getObservedPostActionRevenue());
+        $measuredOutcomeSummary = [
+            'is_measured'     => $hasMeasured,
+            'label'           => $hasMeasured ? ('$' . number_format($measuredOrdersRevenue, 2) . ' observed orders') : 'Not yet measured',
+            'badge_color'     => $hasMeasured ? ($measuredOrdersRevenue > 0 ? 'emerald' : 'gray') : 'gray',
+            'value'           => $hasMeasured ? $measuredOrdersRevenue : null,
+            'measured_count'  => $measuredFindings->count(),
+            'subtext'         => $hasMeasured ? ($measuredFindings->count() . ' account(s) measured') : 'Measurement begins after outreach',
+        ];
+
         return [
             'id'                         => 'init_' . ($client?->id ?? '0') . '_' . Str::slug($strategicGoal),
             'client_id'                  => $client?->id,
@@ -308,11 +360,17 @@ class InitiativeAggregationService
             'pillar_icon'                => $pillar->icon(),
             'qualifying_accounts_count'  => $accountCount,
             'proven_accounts_count'      => $provenAccountsCount,
+            'action_ready_accounts_count'=> $provenAccountsCount,
             'provisional_accounts_count' => $provisionalAccountsCount,
             'provisional_spend_total'    => round($provisionalSpendTotal, 2),
             'has_provisional_accounts'   => $provisionalAccountsCount > 0,
             'provisional_notice'         => $provisionalAccountsCount > 0 ? "{$provisionalAccountsCount} provisional account(s) require manual review" : null,
             'findings_count'             => $findings->count(),
+            'historical_relationship_value' => round($historicalRelationshipValue, 2),
+            'formatted_relationship_value'  => '$' . number_format($historicalRelationshipValue, 2),
+            'relationship_value_definition' => 'Cumulative lifetime net purchases across all qualifying accounts in this initiative.',
+            'review_progress'            => $reviewProgress,
+            'measured_outcome_summary'   => $measuredOutcomeSummary,
             'financial_metrics'          => [
                 'historical_reorder_value'  => round($historicalReorderValue, 2),
                 'observed_spending_decline' => round($observedSpendingDecline, 2),
