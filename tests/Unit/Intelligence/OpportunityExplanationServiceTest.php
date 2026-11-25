@@ -108,7 +108,17 @@ class OpportunityExplanationServiceTest extends TestCase
         $this->assertSame('In Observation', $presentation['label']);
         $this->assertSame('amber', $presentation['badge_color']);
         $this->assertNull($presentation['observed_revenue']);
-        $this->assertStringContainsString('Action completed', $presentation['description']);
+        $this->assertSame(30, $presentation['window_days']);
+        $this->assertStringContainsString('30-day post-action observation window', $presentation['description']);
+
+        $customWindowFinding = new Finding([
+            'status'         => FindingStatus::Approved,
+            'outcome_status' => FindingOutcomeStatus::AwaitingResults,
+            'metadata_json'  => ['attribution_window_days' => 45],
+        ]);
+        $customPres = $this->service->buildOutcomePresentation($customWindowFinding);
+        $this->assertSame(45, $customPres['window_days']);
+        $this->assertStringContainsString('45-day post-action observation window', $customPres['description']);
     }
 
     public function test_build_outcome_presentation_for_measured_zero(): void

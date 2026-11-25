@@ -389,5 +389,127 @@ class InitiativeAggregationServiceTest extends TestCase
         $this->assertFalse($attrItem['is_account_opportunity']);
         $this->assertEquals('Marketing Operations', $attrItem['target_team_label']);
     }
+
+    public function test_domain_aware_card_presentation_selects_meaningful_metrics_and_verified_discrepancy_direction(): void
+    {
+        // 1. Checkout Conversion Optimization with BOTH CVR drop (-70%) and unassigned Klaviyo revenue ($4,658.47)
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'attribution.campaign_tagging',
+            'fingerprint'      => hash('sha256', 'gk_cco_utm'),
+            'source_type'      => 'detector',
+            'source_id'        => 'email_klaviyo',
+            'title'            => 'Email campaign revenue unassigned in GA4',
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Conversion->value,
+            'status'           => FindingStatus::New->value,
+            'evidence_json'    => ['klaviyo_revenue' => 4658.47, 'ga4_email_revenue' => 0],
+        ]);
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'gk_ga4_conversion_rate_decline_30d',
+            'fingerprint'      => hash('sha256', 'gk_cco_cvr'),
+            'source_type'      => 'rule',
+            'title'            => 'Conversion rate deteriorating (30 days) (-70%)',
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Conversion->value,
+            'status'           => FindingStatus::New->value,
+            'metadata_json'    => [
+                'rule_key'       => 'gk_ga4_conversion_rate_decline_30d',
+                'period_days'    => 30,
+                'difference_pct' => -70.0,
+                'metric_a'       => ['value' => 0.21],
+            ],
+        ]);
+
+        // 2. Commercial Account Growth with verified GA4 > Commerce (24.1%) + Klaviyo variance ($4,846.63) + Script errors (17,221)
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'ga4_klaviyo_attribution_variance',
+            'fingerprint'      => hash('sha256', 'gk_cag_klav'),
+            'source_type'      => 'rule',
+            'title'            => 'GA4 vs Klaviyo Attribution Variance (100% Discrepancy)',
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'metadata_json'    => ['rule_key' => 'ga4_klaviyo_attribution_variance', 'difference_amount' => 4846.63],
+        ]);
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'attribution.platform_variance',
+            'fingerprint'      => hash('sha256', 'gk_cag_plat'),
+            'source_type'      => 'detector',
+            'source_id'        => 'ga4_vs_commerce',
+            'title'            => 'GA4 vs Commerce revenue variance (24.1% discrepancy)',
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'evidence_json'    => ['variance_pct' => 24.1],
+            'metadata_json'    => [
+                'primary_signal' => [
+                    'family'         => 'attribution.platform_variance',
+                    'current_value'  => 89180.11, // GA4
+                    'previous_value' => 71876.70, // Commerce
+                    'evidence'       => ['variance_pct' => 24.1],
+                ],
+            ],
+        ]);
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'technical.script_error',
+            'fingerprint'      => hash('sha256', 'gk_cag_js'),
+            'source_type'      => 'detector',
+            'source_id'        => 'tapes_packaging_tapes',
+            'title'            => 'JavaScript error rate increased on packaging tapes',
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'evidence_json'    => ['error_count' => 17221, 'clarity_sessions' => 8010],
+        ]);
+
+        // 3. Percentage-only attribution variance on Cambro (should show 37.7% instead of "1 Finding")
+        Finding::create([
+            'client_id'        => $this->cambro->id,
+            'finding_type'     => 'attribution.platform_variance',
+            'fingerprint'      => hash('sha256', 'cb_plat_only'),
+            'source_type'      => 'detector',
+            'source_id'        => 'ga4_vs_commerce',
+            'title'            => 'GA4 vs Commerce revenue variance (37.7% discrepancy)',
+            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'evidence_json'    => ['variance_pct' => 37.7],
+            'metadata_json'    => [
+                'primary_signal' => [
+                    'family'         => 'attribution.platform_variance',
+                    'current_value'  => 164657.98,
+                    'previous_value' => 119611.47,
+                    'evidence'       => ['variance_pct' => 37.7],
+                ],
+            ],
+        ]);
+
+        $gkInits = $this->service->getInitiatives($this->goldkamp);
+
+        $cco = $gkInits->firstWhere('strategic_goal', 'Checkout Conversion Optimization');
+        $this->assertEquals('Checkout Conversion Optimization', $cco['display_title']);
+        $this->assertEquals('70%', $cco['card_metric_value']);
+        $this->assertEquals('conversion rate decline', $cco['card_metric_label']);
+
+        $cag = $gkInits->firstWhere('strategic_goal', 'Commercial Account Growth');
+        $this->assertEquals('Revenue Attribution & Cart Health', $cag['display_title']);
+        $this->assertEquals('Commercial Account Growth', $cag['strategic_goal']);
+        $this->assertEquals('$4,847', $cag['card_metric_value']);
+        $this->assertEquals('attribution discrepancy', $cag['card_metric_label']);
+        $this->assertStringContainsString('GA4 exceeds Commerce revenue by 24.1%', $cag['card_summary']);
+        $this->assertStringNotContainsString('underreports', $cag['card_summary']);
+
+        $cbInits = $this->service->getInitiatives($this->cambro);
+        $cbAttr = $cbInits->firstWhere('strategic_goal', 'Commercial Account Growth');
+        $this->assertEquals('Revenue & Channel Attribution', $cbAttr['display_title']);
+        $this->assertEquals('37.7%', $cbAttr['card_metric_value']);
+        $this->assertEquals('attribution discrepancy', $cbAttr['card_metric_label']);
+        $this->assertStringContainsString('GA4 exceeds Commerce revenue by 37.7%', $cbAttr['card_summary']);
+    }
 }
 

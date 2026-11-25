@@ -3,21 +3,56 @@
     $selectedInitiative = $this->selectedInitiative;
     $auditFinding = $this->auditFinding;
 
-    // Portfolio Totals (Strictly Segregated & Authoritative)
-    $totalReorderValue = $initiatives->sum(fn($i) => $i['financial_metrics']['historical_reorder_value'] ?? 0.0);
-    $totalSpendingDecline = $initiatives->sum(fn($i) => $i['financial_metrics']['observed_spending_decline'] ?? 0.0);
-    $totalProvenAccounts = $initiatives->where('is_account_based', true)->sum('proven_accounts_count');
-    $totalProvisionalAccounts = $initiatives->where('is_account_based', true)->sum('provisional_accounts_count');
-    $totalAccounts = $initiatives->where('is_account_based', true)->sum('qualifying_accounts_count');
-    $totalOperationalFindings = $initiatives->where('is_account_based', false)->sum('qualifying_accounts_count');
-    $totalRelationshipValue = $initiatives->sum('historical_relationship_value');
+    // Portfolio Totals (Strictly Deduplicated & Authoritative)
+    $allItems = $initiatives->flatMap(fn($i) => $i['accounts']);
+    $distinctFlaggedItems = $allItems
+        ->filter(fn($a) => !empty($a['is_provisional']) || !empty($a['is_outdated']) || !empty($a['requires_revalidation']) || ($a['contact_status'] ?? '') === 'requires_review')
+        ->unique(fn($a) => !empty($a['account_identity_hash']) ? ('acc_' . $a['account_identity_hash']) : ('finding_' . $a['finding_id']))
+        ->values();
 
-    // Portfolio Progress & Outcome Totals
-    $totalAwaitingReview = $initiatives->sum(fn($i) => $i['review_progress']['awaiting_review'] ?? 0);
-    $totalInProgress = $initiatives->sum(fn($i) => $i['review_progress']['in_progress'] ?? 0);
+    $manualVerificationCount = $distinctFlaggedItems->count();
+    $manualVerificationAccounts = $distinctFlaggedItems->where('is_account_opportunity', true)->count();
+    $manualVerificationFindings = $distinctFlaggedItems->where('is_account_opportunity', false)->count();
+
+    $totalAwaitingDecision = $initiatives->sum(fn($i) => ($i['review_progress']['awaiting_review'] ?? 0) + ($i['review_progress']['under_review'] ?? 0));
+    $awaitingAccountsCount = $initiatives->where('is_account_based', true)->sum(fn($i) => ($i['review_progress']['awaiting_review'] ?? 0) + ($i['review_progress']['under_review'] ?? 0));
+    $awaitingFindingsCount = $initiatives->where('is_account_based', false)->sum(fn($i) => ($i['review_progress']['awaiting_review'] ?? 0) + ($i['review_progress']['under_review'] ?? 0));
+    $awaitingReviewParts = [];
+    if ($awaitingAccountsCount > 0) {
+        $awaitingReviewParts[] = $awaitingAccountsCount . ' ' . \Illuminate\Support\Str::plural('account', $awaitingAccountsCount);
+    }
+    if ($awaitingFindingsCount > 0) {
+        $awaitingReviewParts[] = $awaitingFindingsCount . ' ' . \Illuminate\Support\Str::plural('finding', $awaitingFindingsCount);
+    }
+    $awaitingReviewSubtext = ! empty($awaitingReviewParts) ? implode(' · ', $awaitingReviewParts) : 'No items awaiting review';
+
+    $totalApprovedOrAssigned = $initiatives->sum(fn($i) => $i['review_progress']['approved_or_assigned'] ?? 0);
+    $totalWorkInProgress = $initiatives->sum(fn($i) => $i['review_progress']['work_in_progress'] ?? 0);
     $totalCompleted = $initiatives->sum(fn($i) => $i['review_progress']['completed'] ?? 0);
+    $wipSubtextParts = [];
+    if ($totalApprovedOrAssigned > 0) {
+        $wipSubtextParts[] = "{$totalApprovedOrAssigned} approved/assigned";
+    }
+    if ($totalCompleted > 0) {
+        $wipSubtextParts[] = "{$totalCompleted} completed";
+    }
+    $wipSubtext = ! empty($wipSubtextParts) ? implode(' · ', $wipSubtextParts) : 'No active execution yet';
+
     $totalMeasuredRevenue = $initiatives->sum(fn($i) => $i['measured_outcome_summary']['value'] ?? 0.0);
     $totalMeasuredCount = $initiatives->sum(fn($i) => $i['measured_outcome_summary']['measured_count'] ?? 0);
+    $totalInObservation = $initiatives->sum(fn($i) => $i['measured_outcome_summary']['in_observation_count'] ?? 0);
+    $totalNoOrdersMeasured = $initiatives->sum(fn($i) => $i['measured_outcome_summary']['no_orders_count'] ?? 0);
+    $showPortfolioOutcomes = $totalMeasuredCount > 0 || $totalInObservation > 0 || $totalNoOrdersMeasured > 0;
+    $defaultWindowDays = (int) config('intelligence.outcome_measurement.window_days', 30);
+    $activeObsWindows = $allItems
+        ->filter(fn($a) => ($a['outcome_status'] ?? '') === 'awaiting_results')
+        ->map(fn($a) => $a['outcome_presentation']['window_days'] ?? null)
+        ->filter()
+        ->unique()
+        ->values();
+    $portfolioObsWindowText = $activeObsWindows->count() === 1
+        ? ('In ' . $activeObsWindows->first() . '-day observation window')
+        : 'In active observation windows';
 @endphp
 
 <div class="space-y-6">
@@ -26,18 +61,18 @@
             .fi-sidebar, .fi-sidebar-close-overlay { display: none !important; }
         }
     </style>
-    {{-- Header & Filters Bar --}}
+    {{-- Header, Filters & Compact Portfolio Summary --}}
     <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm p-5 space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-gray-200 dark:border-gray-800">
             <div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2.5">
                     <div class="p-2 bg-primary-50 dark:bg-primary-950 text-primary-600 dark:text-primary-400 rounded-lg">
                         <x-heroicon-m-briefcase class="w-5 h-5" />
                     </div>
                     <div>
                         <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100">Strategic Business Initiatives</h2>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                            Executive opportunity and risk portfolio answering the 5 management questions with verified, segregated financials.
+                            Prioritized customer opportunities and operational findings requiring review.
                         </p>
                     </div>
                 </div>
@@ -71,77 +106,85 @@
             </div>
         </div>
 
-        {{-- Executive Portfolio Summary Badges (Segregated Financials & Authoritative Progress) --}}
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
-            {{-- 1. Active Initiatives & Accounts / Operational Findings --}}
-            <div class="p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60 rounded-xl">
+        {{-- Simplified, Visually Neutral Portfolio Summary --}}
+        <div class="grid grid-cols-1 sm:grid-cols-3 {{ $showPortfolioOutcomes ? 'lg:grid-cols-4' : '' }} gap-3 pt-1">
+            {{-- 1. Awaiting Review --}}
+            <div class="p-3.5 bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200/80 dark:border-gray-800 rounded-xl">
                 <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    @if ($totalAccounts > 0 && $totalOperationalFindings > 0)
-                        Accounts &amp; Findings
-                    @elseif ($totalOperationalFindings > 0)
-                        Operational Findings
-                    @else
-                        Qualified Accounts
-                    @endif
+                    Awaiting Review
                 </span>
-                <div class="text-xl font-black text-gray-900 dark:text-gray-100 mt-1">
-                    {{ $totalAccounts + $totalOperationalFindings }}
+                <div class="text-2xl font-black text-gray-900 dark:text-gray-100 mt-0.5 tabular-nums">
+                    {{ $totalAwaitingDecision }}
                 </div>
-                <span class="text-[11px] text-gray-500 dark:text-gray-400">
-                    @if ($totalAccounts > 0)
-                        {{ $totalProvenAccounts }} action-ready &bull; {{ $totalProvisionalAccounts }} provisional
-                        @if ($totalOperationalFindings > 0) &bull; {{ $totalOperationalFindings }} operational @endif
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ $awaitingReviewSubtext }}
+                </span>
+            </div>
+
+            {{-- 2. Manual Verification (Strictly Deduplicated) --}}
+            <div class="p-3.5 bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200/80 dark:border-gray-800 rounded-xl">
+                <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    Manual Verification
+                </span>
+                <div class="text-2xl font-black {{ $manualVerificationCount > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-gray-900 dark:text-gray-100' }} mt-0.5 tabular-nums">
+                    {{ $manualVerificationCount }}
+                </div>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                    @if ($manualVerificationCount === 0)
+                        No manual checks required
+                    @elseif ($manualVerificationAccounts > 0 && $manualVerificationFindings > 0)
+                        {{ $manualVerificationAccounts }} {{ \Illuminate\Support\Str::plural('account', $manualVerificationAccounts) }} &middot; {{ $manualVerificationFindings }} {{ \Illuminate\Support\Str::plural('finding', $manualVerificationFindings) }}
+                    @elseif ($manualVerificationAccounts > 0)
+                        {{ $manualVerificationAccounts }} {{ \Illuminate\Support\Str::plural('account', $manualVerificationAccounts) }} flagged for review
                     @else
-                        {{ $totalOperationalFindings }} operational finding(s)
+                        {{ $manualVerificationFindings }} {{ \Illuminate\Support\Str::plural('finding', $manualVerificationFindings) }} with stale evidence
                     @endif
                 </span>
             </div>
 
-            {{-- 2. Historical Relationship Value --}}
-            <div class="p-3 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 rounded-xl">
-                <div class="flex items-center justify-between">
-                    <span class="text-[11px] font-semibold text-blue-800 dark:text-blue-300 uppercase tracking-wider">Relationship Value</span>
-                    <span class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200">Historical</span>
+            {{-- 3. Work in Progress (True Active Execution Status) --}}
+            <div class="p-3.5 bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200/80 dark:border-gray-800 rounded-xl">
+                <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    Work in Progress
+                </span>
+                <div class="text-2xl font-black text-gray-900 dark:text-gray-100 mt-0.5 tabular-nums">
+                    {{ $totalWorkInProgress }}
                 </div>
-                <div class="text-xl font-black text-blue-700 dark:text-blue-400 mt-1">
-                    ${{ number_format($totalRelationshipValue, 2) }}
-                </div>
-                <span class="text-[11px] text-blue-600/80 dark:text-blue-400/70" title="Cumulative lifetime net purchases across distinct qualifying accounts">Cumulative lifetime spend</span>
-            </div>
-
-            {{-- 3. Review & Execution Progress --}}
-            <div class="p-3 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl">
-                <div class="flex items-center justify-between">
-                    <span class="text-[11px] font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wider">Review Queue</span>
-                    <span class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-200">Execution</span>
-                </div>
-                <div class="text-xl font-black text-amber-700 dark:text-amber-400 mt-1">
-                    {{ $totalAwaitingReview }}
-                </div>
-                <span class="text-[11px] text-amber-600/80 dark:text-amber-400/70">{{ $totalInProgress }} in progress &bull; {{ $totalCompleted }} completed</span>
-            </div>
-
-            {{-- 4. Measured Outcomes (Strictly Gated) --}}
-            <div class="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-xl">
-                <div class="flex items-center justify-between">
-                    <span class="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">Commercial Outcomes</span>
-                    <span class="px-1.5 py-0.5 text-[9px] font-bold rounded {{ $totalMeasuredCount > 0 ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-200' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400' }}">{{ $totalMeasuredCount > 0 ? 'Verified' : 'Pending' }}</span>
-                </div>
-                <div class="text-xl font-black {{ $totalMeasuredCount > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400' }} mt-1">
-                    @if ($totalMeasuredCount > 0)
-                        ${{ number_format($totalMeasuredRevenue, 2) }}
-                    @else
-                        Not yet measured
-                    @endif
-                </div>
-                <span class="text-[11px] {{ $totalMeasuredCount > 0 ? 'text-emerald-600/80 dark:text-emerald-400/70' : 'text-gray-400 dark:text-gray-500' }}">
-                    {{ $totalMeasuredCount > 0 ? ($totalMeasuredCount . ' account(s) measured') : 'Measurement begins after outreach' }}
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ $wipSubtext }}
                 </span>
             </div>
+
+            {{-- 4. Measured Outcomes (Conditional — Only Shown When Relevant) --}}
+            @if ($showPortfolioOutcomes)
+                <div class="p-3.5 bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200/80 dark:border-gray-800 rounded-xl">
+                    <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Measured Outcomes
+                    </span>
+                    <div class="text-2xl font-black {{ $totalMeasuredCount > 0 && $totalMeasuredRevenue > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-gray-100' }} mt-0.5 tabular-nums">
+                        @if ($totalMeasuredCount > 0)
+                            ${{ number_format($totalMeasuredRevenue, 0) }}
+                        @elseif ($totalInObservation > 0)
+                            {{ $totalInObservation }} active
+                        @else
+                            $0
+                        @endif
+                    </div>
+                    <span class="text-xs text-gray-500 dark:text-gray-400">
+                        @if ($totalMeasuredCount > 0)
+                            {{ $totalMeasuredCount }} measured{{ $totalInObservation > 0 ? " · {$totalInObservation} in observation" : '' }}
+                        @elseif ($totalInObservation > 0)
+                            {{ $portfolioObsWindowText }}
+                        @else
+                            {{ $totalNoOrdersMeasured }} completed with 0 orders
+                        @endif
+                    </span>
+                </div>
+            @endif
         </div>
     </div>
 
-    {{-- Initiative Cards Grid --}}
+    {{-- Simplified Executive Initiative Cards Grid (Natural Card Heights) --}}
     @if ($initiatives->isEmpty())
         <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-12 text-center">
             <x-heroicon-o-check-circle class="w-12 h-12 text-emerald-500 mx-auto mb-3" />
@@ -151,180 +194,68 @@
             </p>
         </div>
     @else
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
             @foreach ($initiatives as $initiative)
-                <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm hover:shadow-md transition flex flex-col justify-between overflow-hidden">
-                    {{-- Card Header --}}
-                    <div class="p-5 border-b border-gray-100 dark:border-gray-800/80 space-y-3">
-                        <div class="flex items-start justify-between gap-3">
-                            <div class="space-y-1">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="px-2 py-0.5 text-[11px] font-bold rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
-                                        {{ $initiative['client_name'] }}
-                                    </span>
-                                    <span class="px-2 py-0.5 text-[11px] font-semibold rounded-md {{ $initiative['pillar'] === 'business_risk' ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300' : ($initiative['pillar'] === 'growth_opportunity' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-700') }}">
-                                        {{ $initiative['pillar_label'] }}
-                                    </span>
-                                    <span class="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
-                                        {{ $initiative['execution_status']['status_label'] ?? $initiative['execution_status']['label'] ?? 'New' }}
-                                    </span>
-                                    @if (!empty($initiative['has_provisional_accounts']))
-                                        <span class="px-2 py-0.5 text-[11px] font-semibold rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                                            {{ $initiative['provisional_notice'] }}
-                                        </span>
-                                    @endif
-                                </div>
-                                <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">
-                                    {{ $initiative['strategic_goal'] }}
-                                </h3>
-                            </div>
-
-                            {{-- Financial Value Badge & Relationship Scale / Diagnostic Metric --}}
-                            <div class="text-right flex-shrink-0">
-                                <div class="text-xl font-black text-gray-900 dark:text-gray-100">
-                                    {{ $initiative['formatted_primary_financial'] }}
-                                </div>
-                                <span class="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-bold rounded {{ $initiative['primary_financial_nature'] === 'observed_spending_decline' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200' : ($initiative['primary_financial_nature'] === 'historical_reorder_value' || $initiative['primary_financial_nature'] === 'historical_purchasing_episode_benchmark' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200' : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200') }}">
-                                    {{ $initiative['primary_financial_label'] }}
-                                </span>
-                                @if ($initiative['has_relationship_value'])
-                                    <div class="text-[11px] text-gray-500 dark:text-gray-400 mt-1" title="{{ $initiative['relationship_value_definition'] }}">
-                                        Relationship: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['formatted_relationship_value'] }}</strong>
-                                    </div>
-                                @elseif (!empty($initiative['context_metric_badge']))
-                                    <div class="mt-1">
-                                        <span class="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60">
-                                            {{ $initiative['context_metric_badge'] }}
-                                        </span>
-                                    </div>
-                                @endif
-                                @if (!empty($initiative['primary_metric_subtext']))
-                                    <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 max-w-[200px] text-right truncate" title="{{ $initiative['primary_metric_subtext'] }}">
-                                        {{ $initiative['primary_metric_subtext'] }}
-                                    </div>
-                                @endif
-                            </div>
-                        </div>
-
-                        {{-- Question 1: What business opportunity exists? --}}
-                        <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
-                            {{ $initiative['business_opportunity'] }}
-                        </p>
-                    </div>
-
-                    {{-- Card Body: 5 Management Questions Synthesis --}}
-                    <div class="p-5 space-y-3.5 bg-gray-50/50 dark:bg-gray-900/40 text-xs">
-                        {{-- Question 2: Why should we care? --}}
-                        <div class="flex items-start gap-2">
-                            <x-heroicon-m-chart-bar class="w-4 h-4 text-primary-500 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <span class="font-bold text-gray-900 dark:text-gray-200">Commercial Rationale:</span>
-                                <span class="text-gray-600 dark:text-gray-400 ml-1">{{ $initiative['business_rationale'] }}</span>
-                            </div>
-                        </div>
-
-                        {{-- Question 4: What should we do next? --}}
-                        <div class="flex items-start gap-2">
-                            <x-heroicon-m-arrow-right-circle class="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <span class="font-bold text-gray-900 dark:text-gray-200">Recommended Action:</span>
-                                <span class="text-gray-600 dark:text-gray-400 ml-1">{{ $initiative['recommended_action'] }}</span>
-                            </div>
-                        </div>
-
-                        @if (! $initiative['is_account_based'] && !empty($initiative['finding_summaries']))
-                            {{-- Distinct Operational Findings Breakdown --}}
-                            <div class="p-2.5 rounded-lg bg-white dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 space-y-1.5">
-                                <div class="text-[11px] font-bold text-gray-700 dark:text-gray-300 flex items-center justify-between">
-                                    <span>Distinct Findings ({{ count($initiative['finding_summaries']) }}):</span>
-                                    <span class="text-[10px] font-normal text-gray-500">Individual scope &amp; telemetry</span>
-                                </div>
-                                <div class="space-y-1">
-                                    @foreach ($initiative['finding_summaries'] as $summary)
-                                        <div class="p-1.5 rounded bg-gray-50 dark:bg-gray-900/60 border border-gray-100 dark:border-gray-800 flex items-center justify-between text-[11px] gap-2">
-                                            <div class="flex items-center gap-1.5 truncate">
-                                                <span class="font-mono font-bold text-primary-700 dark:text-primary-300 px-1 py-0.2 bg-primary-50 dark:bg-primary-950 rounded text-[10px]">
-                                                    {{ $summary['metric'] }}
-                                                </span>
-                                                <span class="truncate text-gray-800 dark:text-gray-200 font-medium" title="{{ $summary['title'] }}">
-                                                    {{ $summary['title'] }}
-                                                </span>
-                                            </div>
-                                            <div class="flex items-center gap-1.5 flex-shrink-0 text-[10px]">
-                                                <span class="px-1 py-0.2 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-                                                    {{ $summary['target_team'] }}
-                                                </span>
-                                                <span class="text-gray-500 dark:text-gray-400">
-                                                    {{ $summary['freshness'] }}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    @endforeach
-                                </div>
+                <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm hover:border-gray-300 dark:hover:border-gray-700 transition p-5 space-y-3.5">
+                    {{-- 1. Initiative Title (Full Width) & Primary Metric Directly Underneath --}}
+                    <div class="space-y-1">
+                        @if (empty($this->selectedClientId))
+                            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                                {{ $initiative['client_name'] }}
                             </div>
                         @endif
-
-                        {{-- Review Progress & Commercial Outcomes Row --}}
-                        <div class="p-2.5 rounded-lg bg-white dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 space-y-1.5">
-                            <div class="flex items-center justify-between text-[11px]">
-                                <span class="text-gray-500 dark:text-gray-400">Review &amp; Execution Queue:</span>
-                                <span class="text-gray-800 dark:text-gray-200 font-medium">
-                                    <strong class="text-amber-600 dark:text-amber-400">{{ $initiative['review_progress']['awaiting_review'] }}</strong> awaiting review &bull;
-                                    <strong>{{ $initiative['review_progress']['in_progress'] }}</strong> in progress &bull;
-                                    <strong class="text-emerald-600 dark:text-emerald-400">{{ $initiative['review_progress']['completed'] }}</strong> done
-                                </span>
-                            </div>
-                            <div class="flex items-center justify-between text-[11px] pt-1 border-t border-gray-100 dark:border-gray-700/50">
-                                <span class="text-gray-500 dark:text-gray-400">Measured Outcome:</span>
-                                @php
-                                    $outSummary = $initiative['measured_outcome_summary'] ?? ['label' => 'Not yet measured', 'badge_color' => 'gray'];
-                                    $outColor = $outSummary['badge_color'] ?? 'gray';
-                                @endphp
-                                <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-{{ $outColor }}-100 text-{{ $outColor }}-800 dark:bg-{{ $outColor }}-950 dark:text-{{ $outColor }}-300">
-                                    {{ $outSummary['label'] }}
-                                </span>
-                            </div>
-                        </div>
-
-                        {{-- Question 5: Who is responsible? --}}
-                        <div class="flex items-center justify-between pt-2 border-t border-gray-200/60 dark:border-gray-800 text-[11px]">
-                            <div class="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-                                <x-heroicon-m-user class="w-3.5 h-3.5" />
-                                <span>Target Role: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['target_role_label'] }}</strong></span>
-                            </div>
-
-                            <div class="text-gray-500 dark:text-gray-400">
-                                @if ($initiative['is_account_based'])
-                                    <span>Accounts: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['qualifying_accounts_count'] }}</strong> ({{ $initiative['action_ready_accounts_count'] }} action-ready &bull; {{ $initiative['provisional_accounts_count'] }} provisional)</span>
-                                @else
-                                    <span>Findings: <strong class="text-gray-800 dark:text-gray-200">{{ $initiative['qualifying_accounts_count'] }}</strong> {{ strtolower($initiative['entity_term_plural']) }}</span>
-                                @endif
-                            </div>
+                        <h3 class="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 leading-snug">
+                            {{ $initiative['display_title'] }}
+                        </h3>
+                        <div class="flex flex-wrap items-baseline gap-2 pt-0.5">
+                            <span class="text-2xl font-black tracking-tight text-gray-900 dark:text-gray-100 tabular-nums">
+                                {{ $initiative['card_metric_value'] }}
+                            </span>
+                            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                {{ $initiative['card_metric_label'] }}
+                            </span>
                         </div>
                     </div>
 
-                    {{-- Card Actions Footer --}}
-                    <div class="p-4 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3">
+                    {{-- 2. What Forge Found (Concise Summary) --}}
+                    <p class="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                        {{ $initiative['card_summary'] }}
+                    </p>
+
+                    {{-- 3. Decision-Relevant Warning (When Applicable) --}}
+                    @if (!empty($initiative['card_warning_text']))
+                        <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/60 text-xs font-medium text-amber-800 dark:text-amber-300">
+                            <x-heroicon-m-exclamation-triangle class="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                            <span>{{ $initiative['card_warning_text'] }}</span>
+                        </div>
+                    @endif
+
+                    {{-- 4. One Concise Recommended Next Step --}}
+                    <p class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+                        <strong class="font-semibold text-gray-800 dark:text-gray-200">Next step:</strong>
+                        {{ $initiative['card_next_step'] }}
+                    </p>
+
+                    {{-- 5. Compact Review Status & Single Primary Action --}}
+                    <div class="pt-3.5 border-t border-gray-100 dark:border-gray-800 flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                            <span class="font-medium">{{ $initiative['compact_status_text'] }}</span>
+                            @if (!empty($initiative['measured_outcome_summary']['is_relevant']) && !empty($initiative['measured_outcome_summary']['card_badge_label']))
+                                @php $mColor = $initiative['measured_outcome_summary']['card_badge_color'] ?? 'gray'; @endphp
+                                <span class="px-2 py-0.5 text-[11px] font-semibold rounded-md {{ $mColor === 'emerald' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800' : ($mColor === 'amber' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300') }}">
+                                    {{ $initiative['measured_outcome_summary']['card_badge_label'] }}
+                                </span>
+                            @endif
+                        </div>
+
                         <button
                             type="button"
                             wire:click="openDrillDown('{{ $initiative['id'] }}')"
-                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950 hover:bg-primary-100 rounded-lg border border-primary-200 dark:border-primary-800 transition"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950 hover:bg-primary-100 dark:hover:bg-primary-900/60 rounded-lg border border-primary-200 dark:border-primary-800 transition"
                         >
-                            <x-heroicon-m-magnifying-glass-plus class="w-4 h-4" />
-                            <span>{{ $initiative['drilldown_button_label'] }}</span>
+                            <span>{{ $initiative['primary_action_label'] }}</span>
+                            <x-heroicon-m-arrow-right class="w-3.5 h-3.5" />
                         </button>
-
-                        @if (!empty($initiative['batch_action_allowed']))
-                            <button
-                                type="button"
-                                wire:click="openBatchApproveModal('{{ $initiative['id'] }}')"
-                                class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 rounded-lg border border-emerald-200 dark:border-emerald-800 transition"
-                                title="Open batch approval confirmation modal"
-                            >
-                                <x-heroicon-m-check class="w-3.5 h-3.5" />
-                                <span>Batch Approve</span>
-                            </button>
-                        @endif
                     </div>
                 </div>
             @endforeach
@@ -335,47 +266,90 @@
     @if ($selectedInitiative)
         <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 md:p-8">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-4 sm:my-6">
-                {{-- Modal Header --}}
-                <div class="p-6 border-b border-gray-200 dark:border-gray-800 flex items-start justify-between gap-4 bg-gray-50/70 dark:bg-gray-800/40">
-                    <div>
-                        <div class="flex items-center gap-2">
-                            <span class="px-2 py-0.5 text-xs font-bold rounded bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
-                                {{ $selectedInitiative['client_name'] }}
-                            </span>
-                            <span class="px-2 py-0.5 text-xs font-semibold rounded bg-primary-100 dark:bg-primary-950 text-primary-700 dark:text-primary-300">
-                                {{ $selectedInitiative['strategic_goal'] }}
-                            </span>
+                {{-- Modal Header (Surfaces Moved Intelligence & Batch Approval) --}}
+                <div class="p-6 border-b border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/40 space-y-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="space-y-1.5">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="px-2 py-0.5 text-xs font-bold rounded bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+                                    {{ $selectedInitiative['client_name'] }}
+                                </span>
+                                <span class="px-2 py-0.5 text-xs font-semibold rounded bg-primary-100 dark:bg-primary-950 text-primary-700 dark:text-primary-300">
+                                    {{ $selectedInitiative['display_title'] }}
+                                </span>
+                                @if ($selectedInitiative['display_title'] !== $selectedInitiative['strategic_goal'])
+                                    <span class="px-2 py-0.5 text-[11px] font-medium rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700">
+                                        Strategic Goal: {{ $selectedInitiative['strategic_goal'] }}
+                                    </span>
+                                @endif
+                            </div>
+                            <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100">
+                                {{ $selectedInitiative['is_account_based'] ? 'Account-Level Drill-Down & Evidence' : 'Operational & Diagnostic Findings Review' }}
+                            </h2>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                                {{ $selectedInitiative['business_rationale'] }}
+                            </p>
                         </div>
-                        <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mt-2">
-                            {{ $selectedInitiative['is_account_based'] ? 'Account-Level Drill-Down & Evidence' : 'Operational & Diagnostic Findings Review' }}
-                        </h2>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            {{ $selectedInitiative['business_rationale'] }}
-                        </p>
+
+                        <div class="flex items-start gap-3 flex-shrink-0">
+                            <div class="text-right">
+                                <div class="text-lg font-black text-gray-900 dark:text-gray-100 tabular-nums">
+                                    {{ $selectedInitiative['formatted_primary_financial'] }}
+                                </div>
+                                <div class="text-[10px] font-bold text-gray-600 dark:text-gray-300">
+                                    {{ $selectedInitiative['primary_financial_label'] }}
+                                </div>
+                                @if ($selectedInitiative['has_relationship_value'])
+                                    <div class="text-[11px] text-gray-500 dark:text-gray-400 mt-1" title="{{ $selectedInitiative['relationship_value_definition'] }}">
+                                        Relationship Value: <strong class="text-gray-800 dark:text-gray-200">{{ $selectedInitiative['formatted_relationship_value'] }}</strong>
+                                    </div>
+                                @endif
+                                @if (!empty($selectedInitiative['context_metric_badge']))
+                                    <div class="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 mt-0.5">
+                                        {{ $selectedInitiative['context_metric_badge'] }}
+                                    </div>
+                                @endif
+                                @if (!empty($selectedInitiative['primary_metric_subtext']))
+                                    <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 max-w-[220px]">
+                                        {{ $selectedInitiative['primary_metric_subtext'] }}
+                                    </div>
+                                @endif
+                            </div>
+
+                            <button
+                                type="button"
+                                wire:click="closeDrillDown"
+                                class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                            >
+                                <x-heroicon-m-x-mark class="w-6 h-6" />
+                            </button>
+                        </div>
                     </div>
 
-                    <div class="flex items-center gap-2">
-                        <div class="text-right mr-3">
-                            <div class="text-lg font-black text-gray-900 dark:text-gray-100">
-                                {{ $selectedInitiative['formatted_primary_financial'] }}
-                            </div>
-                            <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400">
-                                {{ $selectedInitiative['primary_financial_label'] }}
-                            </span>
-                            @if (!empty($selectedInitiative['context_metric_badge']))
-                                <div class="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 mt-0.5">
-                                    {{ $selectedInitiative['context_metric_badge'] }}
-                                </div>
+                    {{-- Moved Initiative Governance Bar (Target Role, Status, Provisional Warning, Batch Approve) --}}
+                    <div class="pt-3 border-t border-gray-200/80 dark:border-gray-700/60 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div class="flex flex-wrap items-center gap-3 text-gray-600 dark:text-gray-400">
+                            <span>Target Role: <strong class="text-gray-900 dark:text-gray-200">{{ $selectedInitiative['target_role_label'] }}</strong></span>
+                            <span class="text-gray-300 dark:text-gray-700">&bull;</span>
+                            <span>{{ $selectedInitiative['compact_status_text'] }}</span>
+                            @if (!empty($selectedInitiative['provisional_notice']))
+                                <span class="px-2 py-0.5 text-[11px] font-semibold rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                                    {{ $selectedInitiative['provisional_notice'] }}
+                                </span>
                             @endif
                         </div>
 
-                        <button
-                            type="button"
-                            wire:click="closeDrillDown"
-                            class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-                        >
-                            <x-heroicon-m-x-mark class="w-6 h-6" />
-                        </button>
+                        @if (!empty($selectedInitiative['batch_action_allowed']))
+                            <button
+                                type="button"
+                                wire:click="openBatchApproveModal('{{ $selectedInitiative['id'] }}')"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 rounded-lg border border-emerald-200 dark:border-emerald-800 transition"
+                                title="Review eligibility breakdown and batch approve proven recurring accounts"
+                            >
+                                <x-heroicon-m-check class="w-3.5 h-3.5" />
+                                <span>Batch Approve{{ ($selectedInitiative['review_progress']['proven_eligible_count'] ?? 0) > 0 ? ' (' . $selectedInitiative['review_progress']['proven_eligible_count'] . ' Eligible)' : '' }}</span>
+                            </button>
+                        @endif
                     </div>
                 </div>
 
@@ -865,7 +839,7 @@
 
     {{-- Assign Finding Modal --}}
     @if ($assignFindingId)
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
                 <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Assign Finding to Team Member</h3>
                 <p class="text-xs text-gray-500">Select an authorized Forge team member eligible to work on this customer account.</p>
@@ -953,7 +927,7 @@
 
     {{-- Create PM Work Item Modal --}}
     @if ($createPmFindingId)
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4">
                 <div class="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-gray-800">
                     <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Create Jira Work Item</h3>
@@ -1071,7 +1045,7 @@
 
     {{-- Link PM Work Item Modal --}}
     @if ($linkPmFindingId)
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
                 <div class="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-gray-800">
                     <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Link Existing Jira Work Item</h3>
@@ -1121,10 +1095,16 @@
 
     {{-- Resolve Finding Modal --}}
     @if ($resolveFindingId)
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        @php
+            $resolveFindingModel = \App\Models\Finding::find($resolveFindingId);
+            $resolveWindowDays = $resolveFindingModel
+                ? app(\App\Services\Intelligence\OpportunityExplanationService::class)->resolveObservationWindowDays($resolveFindingModel)
+                : $defaultWindowDays;
+        @endphp
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
                 <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Complete Commercial Action</h3>
-                <p class="text-xs text-gray-500">Record commercial outreach or technical work completed. Note: Marking an action completed documents representative execution and initiates the 30-day outcome observation window — it does NOT assume or claim recovered revenue.</p>
+                <p class="text-xs text-gray-500">Record commercial outreach or technical work completed. Note: Marking an action completed documents representative execution and initiates the {{ $resolveWindowDays }}-day outcome observation window — it does NOT assume or claim recovered revenue.</p>
 
                 @php $modalCust = $this->getActiveFindingCustomerDisplay(); @endphp
                 @if (!empty($modalCust))
@@ -1198,7 +1178,7 @@
 
     {{-- Dismiss Finding Modal --}}
     @if ($dismissFindingId)
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
                 <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">Dismiss Finding</h3>
                 <p class="text-xs text-gray-500">Specify why this account opportunity is being dismissed (e.g., account closed, known business change).</p>
@@ -1235,7 +1215,7 @@
 
     {{-- Batch Approval Confirmation Modal --}}
     @if ($batchApproveInitiativeId && !empty($batchApproveSummary))
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4">
                 <div class="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-800">
                     <div>
@@ -1315,7 +1295,7 @@
 
     {{-- Audit Trail Modal --}}
     @if ($auditFinding)
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="fixed inset-0 z-[60] overflow-y-auto bg-gray-900/60 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4">
                 <div class="flex items-center justify-between">
                     <div>

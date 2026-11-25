@@ -922,11 +922,62 @@ class OpportunityExplanationService
     }
 
     /**
+     * Resolve the configured or stored post-action observation window duration in days.
+     * Strictly prioritizes finding-specific stored outcome/metadata/evidence values before falling back to global config.
+     */
+    public function resolveObservationWindowDays(Finding $finding): int
+    {
+        $windowDays = null;
+
+        if ($finding->relationLoaded('outcomes')) {
+            $windowDays = $finding->outcomes->max('attribution_window_days');
+        } elseif ($finding->exists) {
+            $windowDays = $finding->outcomes()->max('attribution_window_days');
+        }
+
+        if (! $windowDays) {
+            $metadata = is_array($finding->metadata_json)
+                ? $finding->metadata_json
+                : (json_decode($finding->metadata_json ?? '[]', true) ?: []);
+            $windowDays = $metadata['attribution_window_days']
+                ?? $metadata['observation_window_days']
+                ?? $metadata['window_days']
+                ?? null;
+        }
+
+        if (! $windowDays) {
+            $evidence = is_array($finding->evidence_json)
+                ? $finding->evidence_json
+                : (json_decode($finding->evidence_json ?? '[]', true) ?: []);
+            $windowDays = $evidence['attribution_window_days']
+                ?? $evidence['observation_window_days']
+                ?? $evidence['window_days']
+                ?? null;
+        }
+
+        if (! $windowDays) {
+            $assumptions = is_array($finding->impact_assumptions_json)
+                ? $finding->impact_assumptions_json
+                : (json_decode($finding->impact_assumptions_json ?? '[]', true) ?: []);
+            $windowDays = $assumptions['attribution_window_days']
+                ?? $assumptions['observation_window_days']
+                ?? $assumptions['window_days']
+                ?? null;
+        }
+
+        $resolved = (int) ($windowDays ?: config('intelligence.outcome_measurement.window_days', 30));
+
+        return $resolved > 0 ? $resolved : 30;
+    }
+
+    /**
      * Build outcome presentation structure.
      * Prevents misleading '$0.00' display for unworked or actively observing opportunities.
      */
     public function buildOutcomePresentation(Finding $finding): array
     {
+        $windowDays = $this->resolveObservationWindowDays($finding);
+
         $outcomeStatus = $finding->outcome_status instanceof FindingOutcomeStatus 
             ? $finding->outcome_status 
             : ($finding->outcome_status ? FindingOutcomeStatus::tryFrom($finding->outcome_status) : null);
@@ -962,12 +1013,13 @@ class OpportunityExplanationService
                     'state'            => 'measured_positive',
                     'label'            => '$' . number_format($observedRevenue, 2) . ' observed reorders',
                     'badge_color'      => 'emerald',
-                    'description'      => "Verified orders placed during the 60-day post-action window.{$liftNote}",
+                    'description'      => "Verified orders placed during the {$windowDays}-day post-action window.{$liftNote}",
                     'is_measured'      => true,
                     'has_revenue'      => true,
                     'value'            => $observedRevenue,
                     'observed_revenue' => $observedRevenue,
                     'modeled_lift'     => $lift,
+                    'window_days'      => $windowDays,
                 ];
             }
 
@@ -976,12 +1028,13 @@ class OpportunityExplanationService
                 'state'            => 'measured_zero',
                 'label'            => '$0.00 observed (0 orders)',
                 'badge_color'      => 'gray',
-                'description'      => '0 post-action reorders observed during the completed 60-day observation window.',
+                'description'      => "0 post-action reorders observed during the completed {$windowDays}-day observation window.",
                 'is_measured'      => true,
                 'has_revenue'      => true,
                 'value'            => 0.00,
                 'observed_revenue' => 0.00,
                 'modeled_lift'     => 0.00,
+                'window_days'      => $windowDays,
             ];
         }
 
@@ -991,12 +1044,13 @@ class OpportunityExplanationService
                 'state'            => 'in_observation',
                 'label'            => 'In Observation',
                 'badge_color'      => 'amber',
-                'description'      => 'Action completed; currently active in the 60-day post-action observation window.',
+                'description'      => "Action completed; currently active in the {$windowDays}-day post-action observation window.",
                 'is_measured'      => false,
                 'has_revenue'      => false,
                 'value'            => null,
                 'observed_revenue' => null,
                 'modeled_lift'     => null,
+                'window_days'      => $windowDays,
             ];
         }
 
@@ -1011,6 +1065,7 @@ class OpportunityExplanationService
             'value'            => null,
             'observed_revenue' => null,
             'modeled_lift'     => null,
+            'window_days'      => $windowDays,
         ];
     }
 
