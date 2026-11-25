@@ -276,6 +276,15 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Outcome Measurement & Attribution Window Configuration
+    |--------------------------------------------------------------------------
+    */
+    'outcome_measurement' => [
+        'window_days' => (int) env('OUTCOME_OBSERVATION_WINDOW_DAYS', 30),
+    ],
+
 ];
 
 

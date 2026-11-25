@@ -121,9 +121,18 @@ class BusinessInitiativesUiAndLifecycleTest extends TestCase
             ->assertSee('Strategic Business Initiatives')
             ->assertSee('GoldKamp')
             ->assertSee('Enterprise Winback Campaign')
+            ->assertSee('$6,000')
+            ->assertSee('historical reorder benchmark')
+            ->assertSee('2 awaiting review')
+            ->assertSee('Review Accounts')
+            ->assertDontSee('Commercial Rationale:')
+            ->assertDontSee('Not yet measured')
+            ->assertDontSee('Batch Approve')
+            ->call('openDrillDown', 'init_' . $this->goldkamp->id . '_enterprise-winback-campaign')
             ->assertSee('$6,000.00')
             ->assertSee('Historical Reorder Value')
-            ->assertSee('Executive Sales');
+            ->assertSee('Executive Sales')
+            ->assertSee('Batch Approve');
     }
 
     public function test_initiative_drill_down_shows_account_details_and_lifecycle_controls(): void
@@ -366,5 +375,169 @@ class BusinessInitiativesUiAndLifecycleTest extends TestCase
         Livewire::test(BusinessInitiativesOverviewWidget::class)
             ->dispatch('finding-client-filter-changed', selectedClientId: $this->cambro->id)
             ->assertSet('selectedClientId', $this->cambro->id);
+    }
+
+    public function test_simplified_overview_hides_customer_badge_when_filtered_and_tracks_true_work_in_progress_and_outcomes(): void
+    {
+        $this->actingAs($this->adminUser);
+
+        // 1. Overlapping manual verification flags on ONE account (provisional + discordant contact)
+        Finding::create([
+            'client_id'                => $this->goldkamp->id,
+            'finding_type'             => 'opportunity',
+            'fingerprint'              => hash('sha256', 'gk_overlap_1'),
+            'source_type'              => 'detector',
+            'source_id'                => 'opportunity.long_term_winback',
+            'finding_pillar'           => FindingPillar::GrowthOpportunity->value,
+            'finding_category'         => FindingCategory::Revenue->value,
+            'status'                   => FindingStatus::New->value,
+            'execution_status'         => \App\Enums\FindingExecutionStatus::New->value,
+            'outcome_status'           => \App\Enums\FindingOutcomeStatus::PendingExecution->value,
+            'estimated_revenue_impact' => 2500.00,
+            'impact_nature'            => ImpactNature::HistoricalPurchasingEpisodeBenchmark->value,
+            'title'                    => 'Dormant Enterprise Account Overlap',
+            'evidence_json'            => [
+                'account_hash'  => 'hash_overlap_1',
+                'account_label' => 'Acme Supply Co',
+                'company_name'  => 'Acme Supply Co',
+                'customer_name' => 'John Doe',
+                'customer_email'=> 'someone@unrelated-domain.com',
+                'is_provisional'=> true,
+            ],
+        ]);
+
+        // 2. Approved/Assigned finding is NOT yet work_in_progress
+        Finding::create([
+            'client_id'                => $this->goldkamp->id,
+            'finding_type'             => 'opportunity',
+            'fingerprint'              => hash('sha256', 'gk_assigned_not_wip'),
+            'source_type'              => 'detector',
+            'source_id'                => 'opportunity.long_term_winback',
+            'finding_pillar'           => FindingPillar::GrowthOpportunity->value,
+            'finding_category'         => FindingCategory::Revenue->value,
+            'status'                   => FindingStatus::Assigned->value,
+            'execution_status'         => \App\Enums\FindingExecutionStatus::Assigned->value,
+            'outcome_status'           => \App\Enums\FindingOutcomeStatus::PendingExecution->value,
+            'estimated_revenue_impact' => 3000.00,
+            'impact_nature'            => ImpactNature::HistoricalPurchasingEpisodeBenchmark->value,
+            'title'                    => 'Assigned Enterprise Account',
+            'evidence_json'            => [
+                'account_hash'     => 'hash_assigned_1',
+                'account_label'    => 'Beta Corp',
+                'company_name'     => 'Beta Corp',
+                'customer_name'    => 'Jane Smith',
+                'customer_email'   => 'jane@beta-corp.com',
+                'detector_version' => \App\Services\Intelligence\Detectors\LongTermWinbackDetector::VERSION,
+                'cadence_threshold_days' => 180,
+                'days_since_last_purchase' => 220,
+                'days_overdue' => 40,
+                'median_interval_days' => 60,
+                'evaluated_at' => now()->toIso8601String(),
+            ],
+        ]);
+
+        // 3. True work_in_progress finding
+        Finding::create([
+            'client_id'                => $this->goldkamp->id,
+            'finding_type'             => 'opportunity',
+            'fingerprint'              => hash('sha256', 'gk_true_wip'),
+            'source_type'              => 'detector',
+            'source_id'                => 'opportunity.long_term_winback',
+            'finding_pillar'           => FindingPillar::GrowthOpportunity->value,
+            'finding_category'         => FindingCategory::Revenue->value,
+            'status'                   => FindingStatus::Assigned->value,
+            'execution_status'         => \App\Enums\FindingExecutionStatus::WorkInProgress->value,
+            'outcome_status'           => \App\Enums\FindingOutcomeStatus::PendingExecution->value,
+            'estimated_revenue_impact' => 4000.00,
+            'impact_nature'            => ImpactNature::HistoricalPurchasingEpisodeBenchmark->value,
+            'title'                    => 'Active WIP Enterprise Account',
+            'evidence_json'            => [
+                'account_hash'     => 'hash_wip_1',
+                'account_label'    => 'Gamma Industrial',
+                'company_name'     => 'Gamma Industrial',
+                'customer_name'    => 'Bob Jones',
+                'customer_email'   => 'bob@gamma-ind.com',
+                'detector_version' => \App\Services\Intelligence\Detectors\LongTermWinbackDetector::VERSION,
+                'cadence_threshold_days' => 180,
+                'days_since_last_purchase' => 240,
+                'days_overdue' => 60,
+                'median_interval_days' => 70,
+                'evaluated_at' => now()->toIso8601String(),
+            ],
+        ]);
+
+        // Filtered to GoldKamp: hide redundant customer eyebrow on card, suppress Measured Outcomes,
+        // deduplicate overlapping manual verification flags (1 account flagged, not multiple),
+        // and show Work in Progress = 1 (true execution status, excluding merely Assigned finding).
+        Livewire::test(BusinessInitiativesOverviewWidget::class, ['selectedClientId' => $this->goldkamp->id])
+            ->assertSee('Awaiting Review')
+            ->assertSee('Manual Verification')
+            ->assertSee('1 account flagged for review')
+            ->assertSee('Work in Progress')
+            ->assertSee('1 approved/assigned')
+            ->assertDontSee('Measured Outcomes')
+            ->assertSee('1 awaiting review · 1 approved · 1 in progress');
+
+        // Unfiltered (All Customers): customer eyebrow renders above title
+        Livewire::test(BusinessInitiativesOverviewWidget::class)
+            ->assertSeeInOrder(['GoldKamp', 'Enterprise Winback Campaign']);
+
+        // When an action enters observation window with a finding-specific 45-day window,
+        // sibling default-window findings must NOT override its 45-day duration
+        $obs45 = Finding::create([
+            'client_id'                => $this->goldkamp->id,
+            'finding_type'             => 'opportunity',
+            'fingerprint'              => hash('sha256', 'gk_in_observation_45'),
+            'source_type'              => 'detector',
+            'source_id'                => 'opportunity.long_term_winback',
+            'finding_pillar'           => FindingPillar::GrowthOpportunity->value,
+            'finding_category'         => FindingCategory::Revenue->value,
+            'status'                   => FindingStatus::Resolved->value,
+            'execution_status'         => \App\Enums\FindingExecutionStatus::ActionCompleted->value,
+            'outcome_status'           => \App\Enums\FindingOutcomeStatus::AwaitingResults->value,
+            'estimated_revenue_impact' => 5000.00,
+            'impact_nature'            => ImpactNature::HistoricalPurchasingEpisodeBenchmark->value,
+            'title'                    => 'Observed Enterprise Account (45d)',
+            'metadata_json'            => ['attribution_window_days' => 45],
+            'evidence_json'            => ['account_hash' => 'hash_obs_45'],
+        ]);
+
+        Livewire::test(BusinessInitiativesOverviewWidget::class, ['selectedClientId' => $this->goldkamp->id])
+            ->assertSee('Measured Outcomes')
+            ->assertSee('1 active')
+            ->assertSee('In 45-day observation window')
+            ->assertSee('1 in 45d observation');
+
+        // When a second finding uses a distinct 60-day window, mixed-window summary stays accurate
+        // without forcing a single false duration, while each finding retains its own window_days
+        $obs60 = Finding::create([
+            'client_id'                => $this->goldkamp->id,
+            'finding_type'             => 'opportunity',
+            'fingerprint'              => hash('sha256', 'gk_in_observation_60'),
+            'source_type'              => 'detector',
+            'source_id'                => 'opportunity.long_term_winback',
+            'finding_pillar'           => FindingPillar::GrowthOpportunity->value,
+            'finding_category'         => FindingCategory::Revenue->value,
+            'status'                   => FindingStatus::Resolved->value,
+            'execution_status'         => \App\Enums\FindingExecutionStatus::ActionCompleted->value,
+            'outcome_status'           => \App\Enums\FindingOutcomeStatus::AwaitingResults->value,
+            'estimated_revenue_impact' => 6000.00,
+            'impact_nature'            => ImpactNature::HistoricalPurchasingEpisodeBenchmark->value,
+            'title'                    => 'Observed Enterprise Account (60d)',
+            'metadata_json'            => ['attribution_window_days' => 60],
+            'evidence_json'            => ['account_hash' => 'hash_obs_60'],
+        ]);
+
+        Livewire::test(BusinessInitiativesOverviewWidget::class, ['selectedClientId' => $this->goldkamp->id])
+            ->assertSee('2 active')
+            ->assertSee('In active observation windows')
+            ->assertSee('2 in observation');
+
+        $svc = app(\App\Services\Intelligence\InitiativeAggregationService::class);
+        $winbackInit = $svc->getInitiatives($this->goldkamp)->firstWhere('strategic_goal', 'Enterprise Winback Campaign');
+        $acc45 = collect($winbackInit['accounts'])->firstWhere('finding_id', $obs45->id);
+        $acc60 = collect($winbackInit['accounts'])->firstWhere('finding_id', $obs60->id);
+        $this->assertSame(45, $acc45['outcome_presentation']['window_days']);
+        $this->assertSame(60, $acc60['outcome_presentation']['window_days']);
     }
 }
