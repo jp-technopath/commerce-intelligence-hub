@@ -47,11 +47,13 @@ class OpportunityExplanationServiceTest extends TestCase
     {
         $result = $this->service->assessContactConsistency('Wendy Taylor', 'Wendy.Taylor@Sonoco.com', 'Sonoco');
 
-        $this->assertTrue($result['is_verified_buyer']);
+        $this->assertFalse($result['is_verified_buyer']);
+        $this->assertSame('records_consistent', $result['status_key']);
+        $this->assertTrue($result['is_records_consistent']);
         $this->assertTrue($result['name_email_concordant']);
         $this->assertTrue($result['email_domain_concordant']);
         $this->assertSame('Wendy Taylor', $result['display_contact_name']);
-        $this->assertStringContainsString('Verified concordant procurement contact', $result['notes']);
+        $this->assertStringContainsString('Store-record consistency signal only', $result['notes']);
     }
 
     public function test_assess_contact_consistency_qtran_discordant(): void
@@ -186,7 +188,7 @@ class OpportunityExplanationServiceTest extends TestCase
         $this->assertCount(3, $explanation['supporting_metrics']);
 
         $metricLabels = array_column($explanation['supporting_metrics'], 'label');
-        $this->assertSame(['Inactivity', 'Cadence Deviation', 'Historical Scale'], $metricLabels);
+        $this->assertSame(['Inactivity vs Threshold', 'Cadence & Interval Ratio', 'Commercial Scale'], $metricLabels);
 
         // Verify calibrated threshold in expandable details is 211d, not stale 264d
         $this->assertSame(211, $explanation['expandable_details']['calibrated_threshold_days']);
@@ -223,7 +225,7 @@ class OpportunityExplanationServiceTest extends TestCase
         // Since contact is discordant, action should recommend account review, not Jerry Carter
         $this->assertStringNotContainsString('Jerry Carter', $explanation['recommended_action']);
         $this->assertStringContainsString('identify the active procurement contact', $explanation['recommended_action']);
-        $this->assertStringContainsString('discordant email domain', $explanation['recommended_action']);
+        $this->assertStringContainsString('discordant email', $explanation['recommended_action']);
     }
 
     public function test_explain_finding_replenishment_cadence(): void
@@ -457,14 +459,14 @@ class OpportunityExplanationServiceTest extends TestCase
 
         // Verification of authoritative values in concise explanation
         $this->assertStringContainsString('301 days', $explanation['concise_explanation']);
-        $this->assertStringContainsString('211-day dormancy threshold', $explanation['concise_explanation']);
+        $this->assertStringContainsString('211-day Winback threshold', $explanation['concise_explanation']);
         $this->assertStringContainsString('90 days', $explanation['concise_explanation']);
 
         // Supporting metrics verify exact authoritative values
-        $this->assertSame('301d (Threshold: 211d)', $explanation['supporting_metrics'][0]['value']);
-        $this->assertSame('90d past dormancy line', $explanation['supporting_metrics'][0]['subtext']);
-        $this->assertSame('+90d (1.43x)', $explanation['supporting_metrics'][1]['value']);
-        $this->assertSame('Based on 66d median interval', $explanation['supporting_metrics'][1]['subtext']);
+        $this->assertSame('301d (Effective: 211d)', $explanation['supporting_metrics'][0]['value']);
+        $this->assertSame('+90d past Winback eligibility', $explanation['supporting_metrics'][0]['subtext']);
+        $this->assertSame('4.6x typical cycle', $explanation['supporting_metrics'][1]['value']);
+        $this->assertStringContainsString('66d median interval', $explanation['supporting_metrics'][1]['subtext']);
 
         // Expandable details preserve version and authoritative evaluation timestamp
         $this->assertFalse($explanation['requires_revalidation']);

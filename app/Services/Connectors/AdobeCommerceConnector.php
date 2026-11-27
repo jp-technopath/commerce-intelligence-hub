@@ -662,7 +662,9 @@ class AdobeCommerceConnector
         // Detect Cloudflare WAF Managed Challenge
         if (str_contains($body, 'Just a moment...') || str_contains($body, 'challenges.cloudflare.com') || str_contains($body, '_cf_chl_opt')) {
             $serverIp = $this->getServerPublicIp();
-            return "Cloudflare WAF Security Challenge (HTTP {$status}). Target store (www.tgoldkamp.com) Cloudflare firewall blocked the API request. Production server outbound IP: {$serverIp}. Ensure IP {$serverIp} is whitelisted in Cloudflare (Security > WAF > Tools > IP Access Rules) or set rule Action to 'Skip' / 'Bypass'.";
+            $configuredUrl = (string) ($this->integration->credentials_json['base_url'] ?? '');
+            $storeHost = $configuredUrl ? (parse_url($configuredUrl, PHP_URL_HOST) ?: $configuredUrl) : 'configured store';
+            return "Cloudflare WAF Security Challenge (HTTP {$status}). Target store ({$storeHost}) Cloudflare firewall blocked the API request. Production server outbound IP: {$serverIp}. Ensure IP {$serverIp} is whitelisted in Cloudflare (Security > WAF > Tools > IP Access Rules) or set rule Action to 'Skip' / 'Bypass'.";
         }
 
         $jsonMsg = $response->json('message');

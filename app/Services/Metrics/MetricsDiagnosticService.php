@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\CommerceOrder;
 use App\Models\CommerceMetric;
 use App\Models\AnalyticsPurchaseEvent;
+use App\Models\EmailMarketingMetric;
 use Carbon\Carbon;
 
 /**
@@ -218,6 +219,201 @@ class MetricsDiagnosticService
                 'transaction_diff_percent'  => $curRev['valid_orders'] > 0 ? round((abs($ga4UniqueTxCur - $curRev['valid_orders']) / $curRev['valid_orders']) * 100, 2) : 0.0,
                 'triggers_discrepancy_warning' => ($curRev['valid_orders'] > 0 && (abs($ga4UniqueTxCur - $curRev['valid_orders']) / $curRev['valid_orders']) > 0.05),
             ],
+        ];
+    }
+
+    /**
+     * Build segmented GA4 vs Magento conversion and traffic-dilution diagnostics
+     * for equivalent preceding and current periods.
+     *
+     * @return array<string, mixed>
+     */
+    public function buildConversionWindowDiagnostics(
+        Client $client,
+        Carbon $from,
+        Carbon $to,
+        Carbon $fromPrev,
+        Carbon $toPrev
+    ): array {
+        $curr = $this->summarizeConversionPeriod($client, $from, $to);
+        $prev = $this->summarizeConversionPeriod($client, $fromPrev, $toPrev);
+
+        $directSessionsDeltaPct = $prev['ga4_direct_sessions'] > 0
+            ? round((($curr['ga4_direct_sessions'] - $prev['ga4_direct_sessions']) / $prev['ga4_direct_sessions']) * 100, 1)
+            : null;
+        $nonDirectCvrDeltaPct = $prev['ga4_non_direct_cvr'] > 0
+            ? round((($curr['ga4_non_direct_cvr'] - $prev['ga4_non_direct_cvr']) / $prev['ga4_non_direct_cvr']) * 100, 1)
+            : null;
+        $magentoOrdersDeltaPct = $prev['magento_valid_orders'] > 0
+            ? round((($curr['magento_valid_orders'] - $prev['magento_valid_orders']) / $prev['magento_valid_orders']) * 100, 1)
+            : null;
+        $magentoNetRevDeltaPct = $prev['magento_valid_net_revenue'] > 0
+            ? round((($curr['magento_valid_net_revenue'] - $prev['magento_valid_net_revenue']) / $prev['magento_valid_net_revenue']) * 100, 1)
+            : null;
+
+        $diagnosisType = 'indeterminate';
+        if ($curr['ga4_direct_share_pct'] >= 70.0 && ($directSessionsDeltaPct ?? 0) >= 100.0) {
+            if (($magentoOrdersDeltaPct ?? 0) >= 0 && ($nonDirectCvrDeltaPct ?? 0) >= -5.0) {
+                $diagnosisType = 'traffic_denominator_dilution';
+            } else {
+                $diagnosisType = 'mixed_dilution_and_commercial_softness';
+            }
+        } elseif (($magentoOrdersDeltaPct ?? 0) <= -10.0 || ($nonDirectCvrDeltaPct ?? 0) <= -10.0) {
+            $diagnosisType = 'commercial_or_funnel_deterioration';
+        }
+
+        return [
+            'source_window_start'       => $from->toDateString(),
+            'source_window_end'         => $to->toDateString(),
+            'prior_window_start'        => $fromPrev->toDateString(),
+            'prior_window_end'          => $toPrev->toDateString(),
+            'diagnosis_type'            => $diagnosisType,
+            'current'                   => $curr,
+            'previous'                  => $prev,
+            'direct_sessions_delta_pct' => $directSessionsDeltaPct,
+            'non_direct_cvr_delta_pct'  => $nonDirectCvrDeltaPct,
+            'magento_orders_delta_pct'  => $magentoOrdersDeltaPct,
+            'magento_net_rev_delta_pct' => $magentoNetRevDeltaPct,
+        ];
+    }
+
+    /**
+     * Build GA4 vs Klaviyo attribution-model diagnostics for a given closed window.
+     *
+     * @return array<string, mixed>
+     */
+    public function buildKlaviyoAttributionDiagnostics(Client $client, Carbon $from, Carbon $to): array
+    {
+        $fromDate = $from->toDateString();
+        $toDate = $to->toDateString();
+
+        $emailRows = EmailMarketingMetric::where('client_id', $client->id)
+            ->whereBetween('date', [$fromDate, $toDate])
+            ->get();
+
+        $klaviyoRevenue = round((float) $emailRows->sum('revenue'), 2);
+        $flowRevenue = round((float) $emailRows->where('type', 'flow')->sum('revenue'), 2);
+        $campaignRevenue = round((float) $emailRows->where('type', 'campaign')->sum('revenue'), 2);
+        $zeroClickRevenue = round((float) $emailRows->filter(fn ($r) => (float) $r->revenue > 0 && (int) $r->clicks === 0)->sum('revenue'), 2);
+        $zeroClickConversions = (int) $emailRows->filter(fn ($r) => (float) $r->revenue > 0 && (int) $r->clicks === 0)->sum('conversions');
+        $clickedRevenue = round((float) $emailRows->filter(fn ($r) => (float) $r->revenue > 0 && (int) $r->clicks > 0)->sum('revenue'), 2);
+        $totalClicks = (int) $emailRows->sum('clicks');
+        $totalConversions = (int) $emailRows->sum('conversions');
+
+        $ga4Rows = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$fromDate, $toDate])
+            ->get();
+
+        $ga4EmailRev = 0.0;
+        $ga4EmailSessions = 0;
+        $ga4EmailTx = 0;
+        foreach ($ga4Rows as $r) {
+            $sb = is_array($r->source_breakdown_json) ? $r->source_breakdown_json : (json_decode($r->source_breakdown_json ?? '[]', true) ?: []);
+            $email = $sb['email'] ?? $sb['Email'] ?? null;
+            if (is_array($email)) {
+                $ga4EmailRev += (float) ($email['revenue'] ?? 0);
+                $ga4EmailSessions += (int) ($email['sessions'] ?? 0);
+                $ga4EmailTx += (int) ($email['transactions'] ?? 0);
+            } elseif (is_numeric($email)) {
+                $ga4EmailRev += (float) $email;
+            }
+        }
+        $ga4EmailRev = round($ga4EmailRev, 2);
+
+        $zeroClickSharePct = $klaviyoRevenue > 0 ? round(($zeroClickRevenue / $klaviyoRevenue) * 100, 1) : 0.0;
+        $diffAmount = round(abs($klaviyoRevenue - $ga4EmailRev), 2);
+        $diffPct = $klaviyoRevenue > 0 ? round(($diffAmount / $klaviyoRevenue) * 100, 1) : 0.0;
+
+        return [
+            'source_window_start'        => $fromDate,
+            'source_window_end'          => $toDate,
+            'klaviyo_attributed_revenue' => $klaviyoRevenue,
+            'ga4_email_revenue'          => $ga4EmailRev,
+            'ga4_email_sessions'         => $ga4EmailSessions,
+            'ga4_email_transactions'     => $ga4EmailTx,
+            'flow_revenue'               => $flowRevenue,
+            'campaign_revenue'           => $campaignRevenue,
+            'zero_click_revenue'         => $zeroClickRevenue,
+            'zero_click_conversions'     => $zeroClickConversions,
+            'zero_click_share_pct'       => $zeroClickSharePct,
+            'clicked_revenue'            => $clickedRevenue,
+            'total_clicks'               => $totalClicks,
+            'total_conversions'          => $totalConversions,
+            'variance_amount'            => $diffAmount,
+            'variance_pct'               => $diffPct,
+            'utm_links_inspected'        => false,
+        ];
+    }
+
+    /**
+     * Aggregate equivalent GA4 (including source breakdown and funnel) + Magento order totals for a window.
+     */
+    private function summarizeConversionPeriod(Client $client, Carbon $from, Carbon $to): array
+    {
+        $fromDate = $from->toDateString();
+        $toDate = $to->toDateString();
+
+        $ga4Rows = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$fromDate, $toDate])
+            ->get();
+
+        $totSess = (int) $ga4Rows->sum('sessions');
+        $totTx = (int) $ga4Rows->sum('orders');
+        $totRev = round((float) $ga4Rows->sum('revenue'), 2);
+        $directSess = 0;
+        $directTx = 0;
+        $funnel = ['view_item' => 0, 'add_to_cart' => 0, 'begin_checkout' => 0, 'purchase' => 0];
+        $hasFunnel = false;
+
+        foreach ($ga4Rows as $r) {
+            $sb = is_array($r->source_breakdown_json) ? $r->source_breakdown_json : (json_decode($r->source_breakdown_json ?? '[]', true) ?: []);
+            if (! empty($sb['direct']) && is_array($sb['direct'])) {
+                $directSess += (int) ($sb['direct']['sessions'] ?? 0);
+                $directTx += (int) ($sb['direct']['transactions'] ?? 0);
+            }
+            $md = is_array($r->metadata_json) ? $r->metadata_json : (json_decode($r->metadata_json ?? '[]', true) ?: []);
+            if (! empty($md['funnel']) && is_array($md['funnel'])) {
+                $hasFunnel = true;
+                foreach ($funnel as $fk => $_) {
+                    $funnel[$fk] += (int) ($md['funnel'][$fk] ?? 0);
+                }
+            }
+        }
+
+        $nonDirectSess = max(0, $totSess - $directSess);
+        $nonDirectTx = max(0, $totTx - $directTx);
+
+        $orders = CommerceOrder::where('client_id', $client->id)
+            ->whereBetween('order_date', [$fromDate . ' 00:00:00', $toDate . ' 23:59:59'])
+            ->get(['is_valid', 'net_revenue', 'gross_revenue']);
+
+        $validOrders = $orders->where('is_valid', true);
+        $excludedOrders = $orders->where('is_valid', false);
+
+        $checkoutCompletionPct = ($hasFunnel && $funnel['begin_checkout'] > 0)
+            ? round(($funnel['purchase'] / $funnel['begin_checkout']) * 100, 1)
+            : null;
+
+        return [
+            'ga4_sessions'              => $totSess,
+            'ga4_orders'                => $totTx,
+            'ga4_revenue'               => $totRev,
+            'ga4_overall_cvr'           => $totSess > 0 ? round(($totTx / $totSess) * 100, 3) : 0.0,
+            'ga4_direct_sessions'       => $directSess,
+            'ga4_direct_share_pct'      => $totSess > 0 ? round(($directSess / $totSess) * 100, 1) : 0.0,
+            'ga4_direct_orders'         => $directTx,
+            'ga4_direct_cvr'            => $directSess > 0 ? round(($directTx / $directSess) * 100, 3) : 0.0,
+            'ga4_non_direct_sessions'   => $nonDirectSess,
+            'ga4_non_direct_orders'     => $nonDirectTx,
+            'ga4_non_direct_cvr'        => $nonDirectSess > 0 ? round(($nonDirectTx / $nonDirectSess) * 100, 3) : 0.0,
+            'funnel'                    => $hasFunnel ? $funnel : null,
+            'checkout_completion_pct'   => $checkoutCompletionPct,
+            'magento_valid_orders'      => $validOrders->count(),
+            'magento_valid_net_revenue' => round((float) $validOrders->sum('net_revenue'), 2),
+            'magento_excluded_orders'   => $excludedOrders->count(),
+            'magento_excluded_gross'    => round((float) $excludedOrders->sum('gross_revenue'), 2),
         ];
     }
 }

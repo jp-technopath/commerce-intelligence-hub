@@ -3,6 +3,7 @@
 namespace App\Services\Intelligence\Replay;
 
 use App\Models\Client;
+use App\Models\CommerceMetric;
 use App\Models\Finding;
 use App\Services\Intelligence\DataQualification\DataQualificationService;
 use App\Services\Intelligence\DataQualification\IntegrationFreshnessTracker;
@@ -608,73 +609,67 @@ class ShadowEvaluationRunner
             $dailyWarnings[] = 'Clarity API timeout logged (cURL error 28). Underlying daily breakdown marked as estimated.';
         }
 
-        $scriptScopeKey = sprintf('%d:technical.script_error:page:tapes_packaging_tapes', $client->id);
+        $scriptScopeKey = sprintf('%d:technical.script_error:sitewide:clarity_script_errors', $client->id);
         $isScriptEpisodeActive = isset($activeEpisodes[$scriptScopeKey]);
         $isNewSpike = ($errorRateIncrease >= 50.0 && $dayStr >= '2026-11-05');
         $isElevatedContinuation = ($isScriptEpisodeActive && $errorRate >= 1.0);
 
-        if ($isNewSpike || $isElevatedContinuation) {
+        if (($isNewSpike || $isElevatedContinuation) && $scriptErrors > 0 && $clarityTraffic > 0) {
             $dailySignals[] = [
                 'family' => 'technical.script_error',
-                'scope_type' => 'page',
-                'scope_target' => 'tapes_packaging_tapes',
+                'scope_type' => 'sitewide',
+                'scope_target' => 'clarity_script_errors',
                 'metric' => 'script_errors_per_session',
-                'title' => sprintf('JavaScript error rate increased on packaging tapes (+%.1f%% per session)', max($errorRateIncrease, 216.5)),
-                'current_value' => round($errorRate, 2),
-                'previous_value' => round($priorRate, 2),
+                'title' => sprintf('Storewide JavaScript error rate increased (+%.1f%% per monitored session)', max(0.0, $errorRateIncrease)),
+                'current_value' => round($errorRate, 4),
+                'previous_value' => round($priorRate, 4),
                 'detected_at' => $simulatedNow->toDateTimeString(),
                 'evidence' => [
                     'error_count' => $scriptErrors,
+                    'monitored_sessions' => $clarityTraffic,
                     'clarity_sessions' => $clarityTraffic,
-                    'affected_url' => 'https://www.tgoldkamp.com/tapes/packaging-tapes.html',
-                    'exception_type' => 'cart_item_options',
-                    'data_quality' => [
-                        'status' => 'partially_estimated',
-                        'unverified_days' => ['2026-11-03', '2026-11-04'],
-                        'caveat' => '3-day aggregate verified from raw response; daily distribution estimated due to upstream API timeouts.',
-                    ],
+                    'scope_granularity' => 'sitewide',
                 ],
             ];
         }
 
-        // 3. Evaluate GA4 vs Klaviyo Email Attribution (Occurs from Nov 4 onwards)
-        if ($dayStr >= '2026-11-04') {
-            $dailySignals[] = [
-                'family' => 'attribution.campaign_tagging',
-                'scope_type' => 'channel',
-                'scope_target' => 'email_klaviyo',
-                'metric' => 'email_attributed_revenue',
-                'title' => 'Email campaign revenue unassigned in GA4 (Missing Klaviyo UTM tagging)',
-                'current_value' => 0.0,
-                'previous_value' => 4658.47,
-                'detected_at' => $simulatedNow->toDateTimeString(),
-                'evidence' => [
-                    'klaviyo_revenue' => 4658.47,
-                    'ga4_email_revenue' => 0.0,
-                    'issue' => 'Missing utm_source=klaviyo parameters on promotional campaign',
-                ],
-            ];
-        }
-
-        // 4. Evaluate Direct Traffic Surge (Occurs from Nov 5 onwards)
-        if ($dayStr >= '2026-11-05') {
-            $dailySignals[] = [
-                'family' => 'traffic.volume_surge',
-                'scope_type' => 'channel',
-                'scope_target' => 'direct',
-                'metric' => 'direct_sessions',
-                'title' => 'Sudden surge in Direct traffic (+915% volume with flat conversion)',
-                'current_value' => 6373,
-                'previous_value' => 628,
-                'detected_at' => $simulatedNow->toDateTimeString(),
-                'evidence' => [
-                    'surge_pct' => 915.0,
-                    'dominant_channel' => 'direct',
-                    'direct_share_pct' => 91.7,
-                    'requires_investigation' => true,
-                    'nature' => 'unassigned_traffic_volume',
-                ],
-            ];
+        // 3. Evaluate Direct Traffic Surge strictly from client CommerceMetric GA4 source_breakdown_json
+        $commCurr = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$simulatedNow->copy()->subDays(7)->toDateString(), $dayStr])
+            ->get();
+        $commPrev = CommerceMetric::where('client_id', $client->id)
+            ->where('source', 'ga4')
+            ->whereBetween('date', [$simulatedNow->copy()->subDays(14)->toDateString(), $simulatedNow->copy()->subDays(8)->toDateString()])
+            ->get();
+        if ($commCurr->isNotEmpty() && $commPrev->isNotEmpty()) {
+            $sumDirect = fn ($rows) => $rows->sum(fn ($r) => (int) (($r->source_breakdown_json['direct']['sessions'] ?? 0)));
+            $currDirect = $sumDirect($commCurr);
+            $prevDirect = $sumDirect($commPrev);
+            $currTotal = (int) $commCurr->sum('sessions');
+            if ($prevDirect >= 50 && $currTotal > 0) {
+                $surgePct = (($currDirect - $prevDirect) / $prevDirect) * 100;
+                $directShare = round(($currDirect / $currTotal) * 100, 1);
+                if ($surgePct >= 100.0) {
+                    $dailySignals[] = [
+                        'family' => 'traffic.volume_surge',
+                        'scope_type' => 'channel',
+                        'scope_target' => 'direct',
+                        'metric' => 'direct_sessions',
+                        'title' => sprintf('Sudden surge in Direct traffic (+%.1f%% Direct sessions; %.1f%% share)', $surgePct, $directShare),
+                        'current_value' => $currDirect,
+                        'previous_value' => $prevDirect,
+                        'detected_at' => $simulatedNow->toDateTimeString(),
+                        'evidence' => [
+                            'surge_pct' => round($surgePct, 1),
+                            'dominant_channel' => 'direct',
+                            'direct_share_pct' => $directShare,
+                            'requires_investigation' => true,
+                            'nature' => 'unassigned_traffic_volume',
+                        ],
+                    ];
+                }
+            }
         }
 
         // Synthesize signals through IncidentSynthesizer

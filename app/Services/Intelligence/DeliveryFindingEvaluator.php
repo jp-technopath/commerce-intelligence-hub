@@ -56,6 +56,8 @@ class DeliveryFindingEvaluator
 
             $severity = $daysBlocked >= 5 ? FindingSeverity::High : FindingSeverity::Medium;
 
+            $pillarVal = FindingTypeRegistry::resolvePillarValue('task_blocked', (string) $item->id);
+
             Finding::updateOrCreate(
                 ['fingerprint' => $fingerprint],
                 [
@@ -63,6 +65,7 @@ class DeliveryFindingEvaluator
                     'responsible_user_id'        => $item->user_id,
                     'project_id'                 => Project::where('id', $item->pm_project_id)->exists() ? $item->pm_project_id : null,
                     'finding_type'               => 'task_blocked',
+                    'finding_pillar'             => $pillarVal,
                     'source_type'                => 'pm_work_item',
                     'source_id'                  => (string) $item->id,
                     'finding_category'           => FindingCategory::WorkflowDelay,
@@ -105,6 +108,7 @@ class DeliveryFindingEvaluator
                     'responsible_user_id'        => $item->user_id,
                     'project_id'                 => Project::where('id', $item->pm_project_id)->exists() ? $item->pm_project_id : null,
                     'finding_type'               => 'task_overdue',
+                    'finding_pillar'             => FindingTypeRegistry::resolvePillarValue('task_overdue', (string) $item->id),
                     'source_type'                => 'pm_work_item',
                     'source_id'                  => (string) $item->id,
                     'finding_category'           => FindingCategory::WorkflowDelay,
@@ -148,6 +152,7 @@ class DeliveryFindingEvaluator
                     'responsible_user_id'        => $item->user_id,
                     'project_id'                 => Project::where('id', $item->pm_project_id)->exists() ? $item->pm_project_id : null,
                     'finding_type'               => 'qa_rework',
+                    'finding_pillar'             => FindingTypeRegistry::resolvePillarValue('qa_rework', (string) $item->id),
                     'source_type'                => 'pm_work_item',
                     'source_id'                  => (string) $item->id,
                     'finding_category'           => FindingCategory::WorkflowDelay,
@@ -186,6 +191,7 @@ class DeliveryFindingEvaluator
                         'client_id'                  => $client->id,
                         'responsible_user_id'        => null,
                         'finding_type'               => 'hours_allocation_exceeded',
+                        'finding_pillar'             => FindingTypeRegistry::resolvePillarValue('hours_allocation_exceeded', (string) $client->id),
                         'source_type'                => 'client',
                         'source_id'                  => (string) $client->id,
                         'finding_category'           => FindingCategory::TimeTracking,

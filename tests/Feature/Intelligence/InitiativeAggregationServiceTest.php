@@ -323,12 +323,12 @@ class InitiativeAggregationServiceTest extends TestCase
             ],
             'evidence_json'              => [
                 'error_count'   => 17221,
-                'affected_page' => 'tapes_packaging_tapes',
+                'affected_page' => 'catalog_category_page',
                 'observed_at'   => '2026-11-10',
             ],
         ]);
 
-        // 2. Create attribution discrepancy finding (Commercial Account Growth)
+        // 2. Create attribution discrepancy finding (Revenue & Channel Attribution under TechnicalHealth)
         $findingAttr = Finding::create([
             'client_id'                  => $this->goldkamp->id,
             'finding_type'               => 'risk',
@@ -337,7 +337,7 @@ class InitiativeAggregationServiceTest extends TestCase
             'source_id'                  => 'diagnostic.ga4_klaviyo_attribution_variance',
             'title'                      => 'Klaviyo vs GA4 Email Attribution Discrepancy',
             'severity'                   => FindingSeverity::Medium,
-            'finding_pillar'             => FindingPillar::GrowthOpportunity,
+            'finding_pillar'             => null,
             'finding_category'           => FindingCategory::Revenue,
             'status'                     => FindingStatus::New,
             'impact_nature'              => null,
@@ -357,25 +357,34 @@ class InitiativeAggregationServiceTest extends TestCase
             ],
         ]);
 
-        $initiatives = $this->service->getInitiatives($this->goldkamp);
-        $cag = $initiatives->firstWhere('strategic_goal', 'Commercial Account Growth');
+        $initiatives = $this->service->getInitiatives($this->goldkamp, FindingPillar::TechnicalHealth->value);
+        $scriptInit = $initiatives->firstWhere('strategic_goal', 'Storefront & Script Health');
+        $attrInit = $initiatives->firstWhere('strategic_goal', 'Revenue & Channel Attribution');
 
-        $this->assertNotNull($cag);
-        $this->assertFalse($cag['is_account_based']);
-        $this->assertEquals('Operational Finding', $cag['entity_term_singular']);
-        $this->assertEquals('Operational Findings', $cag['entity_term_plural']);
-        $this->assertStringContainsString('Review Findings', $cag['drilldown_button_label']);
-        $this->assertFalse($cag['batch_action_allowed']);
-        $this->assertFalse($cag['has_relationship_value']);
-        $this->assertEquals('$4,846.63', $cag['formatted_primary_financial']);
-        $this->assertEquals('Attribution Variance', $cag['primary_financial_label']);
-        $this->assertNotEmpty($cag['context_metric_badge']);
-        $this->assertCount(2, $cag['finding_summaries']);
+        $this->assertNotNull($scriptInit);
+        $this->assertNotNull($attrInit);
+        $this->assertSame(FindingPillar::TechnicalHealth->value, $scriptInit['pillar']);
+        $this->assertSame(FindingPillar::TechnicalHealth->value, $attrInit['pillar']);
 
-        // Verify drilldown accounts data structure preserves individual diagnostic context
-        $drilldownItems = $cag['accounts'];
-        $this->assertCount(2, $drilldownItems);
-        $jsItem = collect($drilldownItems)->firstWhere('finding_id', $findingJs->id);
+        $this->assertEquals('Technical Finding', $scriptInit['entity_term_singular']);
+        $this->assertEquals('Technical Findings', $scriptInit['entity_term_plural']);
+        $this->assertEquals('Attribution Finding', $attrInit['entity_term_singular']);
+        $this->assertEquals('Attribution Findings', $attrInit['entity_term_plural']);
+
+        foreach ([$scriptInit, $attrInit] as $init) {
+            $this->assertFalse($init['is_account_based']);
+            $this->assertStringNotContainsString('Account', $init['entity_term_singular']);
+            $this->assertStringContainsString('Review', $init['drilldown_button_label']);
+            $this->assertFalse($init['batch_action_allowed']);
+            $this->assertFalse($init['has_relationship_value']);
+            $this->assertNotEmpty($init['finding_summaries']);
+        }
+
+        $this->assertEquals('$4,846.63', $attrInit['formatted_primary_financial']);
+        $this->assertEquals('Attribution Variance', $attrInit['primary_financial_label']);
+
+        // Verify drilldown items preserve individual diagnostic context & target team metadata
+        $jsItem = collect($scriptInit['accounts'])->firstWhere('finding_id', $findingJs->id);
         $this->assertNotNull($jsItem);
         $this->assertFalse($jsItem['is_account_opportunity']);
         $this->assertNotEmpty($jsItem['confirmed_observation']);
@@ -384,15 +393,16 @@ class InitiativeAggregationServiceTest extends TestCase
         $this->assertEquals('Engineering', $jsItem['target_team_label']);
         $this->assertNotEmpty($jsItem['freshness_badge']);
 
-        $attrItem = collect($drilldownItems)->firstWhere('finding_id', $findingAttr->id);
+        $attrItem = collect($attrInit['accounts'])->firstWhere('finding_id', $findingAttr->id);
         $this->assertNotNull($attrItem);
         $this->assertFalse($attrItem['is_account_opportunity']);
         $this->assertEquals('Marketing Operations', $attrItem['target_team_label']);
+        $this->assertNotEmpty($attrItem['freshness_badge']);
     }
 
     public function test_domain_aware_card_presentation_selects_meaningful_metrics_and_verified_discrepancy_direction(): void
     {
-        // 1. Checkout Conversion Optimization with BOTH CVR drop (-70%) and unassigned Klaviyo revenue ($4,658.47)
+        // 1. Checkout Conversion Optimization with BOTH CVR drop (-70%) and unassigned Klaviyo revenue
         Finding::create([
             'client_id'        => $this->goldkamp->id,
             'finding_type'     => 'attribution.campaign_tagging',
@@ -400,7 +410,7 @@ class InitiativeAggregationServiceTest extends TestCase
             'source_type'      => 'detector',
             'source_id'        => 'email_klaviyo',
             'title'            => 'Email campaign revenue unassigned in GA4',
-            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_pillar'   => null,
             'finding_category' => FindingCategory::Conversion->value,
             'status'           => FindingStatus::New->value,
             'evidence_json'    => ['klaviyo_revenue' => 4658.47, 'ga4_email_revenue' => 0],
@@ -411,7 +421,7 @@ class InitiativeAggregationServiceTest extends TestCase
             'fingerprint'      => hash('sha256', 'gk_cco_cvr'),
             'source_type'      => 'rule',
             'title'            => 'Conversion rate deteriorating (30 days) (-70%)',
-            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_pillar'   => null,
             'finding_category' => FindingCategory::Conversion->value,
             'status'           => FindingStatus::New->value,
             'metadata_json'    => [
@@ -422,14 +432,14 @@ class InitiativeAggregationServiceTest extends TestCase
             ],
         ]);
 
-        // 2. Commercial Account Growth with verified GA4 > Commerce (24.1%) + Klaviyo variance ($4,846.63) + Script errors (17,221)
+        // 2. Technical Health attribution variance & script error findings
         Finding::create([
             'client_id'        => $this->goldkamp->id,
             'finding_type'     => 'ga4_klaviyo_attribution_variance',
             'fingerprint'      => hash('sha256', 'gk_cag_klav'),
             'source_type'      => 'rule',
             'title'            => 'GA4 vs Klaviyo Attribution Variance (100% Discrepancy)',
-            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_pillar'   => null,
             'finding_category' => FindingCategory::Revenue->value,
             'status'           => FindingStatus::New->value,
             'metadata_json'    => ['rule_key' => 'ga4_klaviyo_attribution_variance', 'difference_amount' => 4846.63],
@@ -441,7 +451,7 @@ class InitiativeAggregationServiceTest extends TestCase
             'source_type'      => 'detector',
             'source_id'        => 'ga4_vs_commerce',
             'title'            => 'GA4 vs Commerce revenue variance (24.1% discrepancy)',
-            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_pillar'   => null,
             'finding_category' => FindingCategory::Revenue->value,
             'status'           => FindingStatus::New->value,
             'evidence_json'    => ['variance_pct' => 24.1],
@@ -459,9 +469,9 @@ class InitiativeAggregationServiceTest extends TestCase
             'finding_type'     => 'technical.script_error',
             'fingerprint'      => hash('sha256', 'gk_cag_js'),
             'source_type'      => 'detector',
-            'source_id'        => 'tapes_packaging_tapes',
-            'title'            => 'JavaScript error rate increased on packaging tapes',
-            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'source_id'        => 'catalog_category_page',
+            'title'            => 'JavaScript error rate increased sitewide',
+            'finding_pillar'   => null,
             'finding_category' => FindingCategory::Revenue->value,
             'status'           => FindingStatus::New->value,
             'evidence_json'    => ['error_count' => 17221, 'clarity_sessions' => 8010],
@@ -475,7 +485,7 @@ class InitiativeAggregationServiceTest extends TestCase
             'source_type'      => 'detector',
             'source_id'        => 'ga4_vs_commerce',
             'title'            => 'GA4 vs Commerce revenue variance (37.7% discrepancy)',
-            'finding_pillar'   => FindingPillar::GrowthOpportunity->value,
+            'finding_pillar'   => null,
             'finding_category' => FindingCategory::Revenue->value,
             'status'           => FindingStatus::New->value,
             'evidence_json'    => ['variance_pct' => 37.7],
@@ -492,20 +502,29 @@ class InitiativeAggregationServiceTest extends TestCase
         $gkInits = $this->service->getInitiatives($this->goldkamp);
 
         $cco = $gkInits->firstWhere('strategic_goal', 'Checkout Conversion Optimization');
+        $this->assertNotNull($cco);
+        $this->assertEquals(FindingPillar::BusinessRisk->value, $cco['pillar']);
         $this->assertEquals('Checkout Conversion Optimization', $cco['display_title']);
         $this->assertEquals('70%', $cco['card_metric_value']);
         $this->assertEquals('conversion rate decline', $cco['card_metric_label']);
 
-        $cag = $gkInits->firstWhere('strategic_goal', 'Commercial Account Growth');
-        $this->assertEquals('Revenue Attribution & Cart Health', $cag['display_title']);
-        $this->assertEquals('Commercial Account Growth', $cag['strategic_goal']);
-        $this->assertEquals('$4,847', $cag['card_metric_value']);
-        $this->assertEquals('attribution discrepancy', $cag['card_metric_label']);
-        $this->assertStringContainsString('GA4 exceeds Commerce revenue by 24.1%', $cag['card_summary']);
-        $this->assertStringNotContainsString('underreports', $cag['card_summary']);
+        $attr = $gkInits->firstWhere('strategic_goal', 'Revenue & Channel Attribution');
+        $this->assertNotNull($attr);
+        $this->assertEquals(FindingPillar::TechnicalHealth->value, $attr['pillar']);
+        $this->assertEquals('Revenue & Channel Attribution', $attr['display_title']);
+        $this->assertEquals('$4,847', $attr['card_metric_value']);
+        $this->assertEquals('attribution discrepancy', $attr['card_metric_label']);
+        $this->assertStringContainsString('GA4 exceeds Commerce revenue by 24.1%', $attr['card_summary']);
+        $this->assertStringNotContainsString('underreports', $attr['card_summary']);
+
+        $script = $gkInits->firstWhere('strategic_goal', 'Storefront & Script Health');
+        $this->assertNotNull($script);
+        $this->assertEquals(FindingPillar::TechnicalHealth->value, $script['pillar']);
 
         $cbInits = $this->service->getInitiatives($this->cambro);
-        $cbAttr = $cbInits->firstWhere('strategic_goal', 'Commercial Account Growth');
+        $cbAttr = $cbInits->firstWhere('strategic_goal', 'Revenue & Channel Attribution');
+        $this->assertNotNull($cbAttr);
+        $this->assertEquals(FindingPillar::TechnicalHealth->value, $cbAttr['pillar']);
         $this->assertEquals('Revenue & Channel Attribution', $cbAttr['display_title']);
         $this->assertEquals('37.7%', $cbAttr['card_metric_value']);
         $this->assertEquals('attribution discrepancy', $cbAttr['card_metric_label']);

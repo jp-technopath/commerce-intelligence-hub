@@ -182,6 +182,9 @@ class MeetingIntelligenceService
                     $hoursUntil = round($now->diffInHours($m->meeting_start_at), 1);
                     $severity = $hoursUntil <= 12 ? FindingSeverity::High : FindingSeverity::Medium;
 
+                    $findingType = $isUnassigned ? 'unassigned_meeting_owner' : 'meeting_prep_' . $prepStage;
+                    $classification = FindingTypeRegistry::classifyByDescriptor(findingType: $findingType);
+
                     Finding::updateOrCreate(
                         [
                             'fingerprint' => $fingerprint,
@@ -191,7 +194,8 @@ class MeetingIntelligenceService
                             'responsible_user_id' => $m->internal_owner_id,
                             'source_type' => 'client_meeting',
                             'source_id' => (string) $m->id,
-                            'finding_type' => $isUnassigned ? 'unassigned_meeting_owner' : 'meeting_prep_'.$prepStage,
+                            'finding_type' => $findingType,
+                            'finding_pillar' => $classification['pillar_value'],
                             'finding_category' => FindingCategory::MeetingPreparation,
                             'title' => $title,
                             'description' => "Meeting starts {$m->meeting_start_at->diffForHumans()}. Current preparation stage: {$prepStage}.",
@@ -216,6 +220,9 @@ class MeetingIntelligenceService
                 if (in_array($followUpStage, ['needed', 'draft_generated'], true)) {
                     $fingerprint = hash('sha256', "meeting_followup_{$m->client_id}_{$m->id}");
 
+                    $followUpType = 'meeting_followup_' . $followUpStage;
+                    $followUpClassification = FindingTypeRegistry::classifyByDescriptor(findingType: $followUpType);
+
                     Finding::updateOrCreate(
                         [
                             'fingerprint' => $fingerprint,
@@ -225,7 +232,8 @@ class MeetingIntelligenceService
                             'responsible_user_id' => $m->internal_owner_id,
                             'source_type' => 'client_meeting',
                             'source_id' => (string) $m->id,
-                            'finding_type' => 'meeting_followup_'.$followUpStage,
+                            'finding_type' => $followUpType,
+                            'finding_pillar' => $followUpClassification['pillar_value'],
                             'finding_category' => FindingCategory::MeetingFollowUp,
                             'title' => "Meeting follow-up needed: {$m->title}",
                             'description' => "Meeting concluded {$m->meeting_start_at->diffForHumans()}. Action items and summary pending.",

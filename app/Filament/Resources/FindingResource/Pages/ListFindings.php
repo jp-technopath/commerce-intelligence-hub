@@ -10,6 +10,7 @@ use App\Jobs\Intelligence\GenerateAIAnalysis;
 use App\Models\Client;
 use App\Models\Finding;
 use App\Services\Intelligence\ChangeDetectionEngine;
+use App\Services\Intelligence\FindingTypeRegistry;
 use Filament\Actions;
 use Filament\Forms;
 use Filament\Notifications\Notification;
@@ -153,12 +154,48 @@ class ListFindings extends ListRecords
         }
 
         if ($this->selectedPillar) {
-            if ($this->activeTab !== 'technical_health' && in_array($this->selectedPillar, [FindingPillar::GrowthOpportunity->value, FindingPillar::BusinessRisk->value], true)) {
-                $query->where('finding_pillar', $this->selectedPillar);
-            }
+            $matchingNullIds = $this->resolveNullPillarIdsForPillar($this->selectedPillar);
+            $query->where(function (Builder $q) use ($matchingNullIds) {
+                $q->where('finding_pillar', $this->selectedPillar);
+                if (! empty($matchingNullIds)) {
+                    $q->orWhereIn('id', $matchingNullIds);
+                }
+            });
         }
 
         return $query;
+    }
+
+    /**
+     * Resolve IDs of findings whose stored `finding_pillar` is NULL but whose
+     * authoritative classification via FindingTypeRegistry maps to $targetPillar.
+     *
+     * @return array<int, int>
+     */
+    protected function resolveNullPillarIdsForPillar(string $targetPillar): array
+    {
+        $nullFindings = static::getResource()::getEloquentQuery()
+            ->when($this->selectedClientId, fn ($q) => $q->where('client_id', $this->selectedClientId))
+            ->whereNull('finding_pillar')
+            ->get();
+
+        return $nullFindings
+            ->filter(fn (Finding $f) => FindingTypeRegistry::classify($f)['pillar_value'] === $targetPillar)
+            ->pluck('id')
+            ->all();
+    }
+
+    protected function resolveUnclassifiedNullPillarIds(): array
+    {
+        $nullFindings = static::getResource()::getEloquentQuery()
+            ->when($this->selectedClientId, fn ($q) => $q->where('client_id', $this->selectedClientId))
+            ->whereNull('finding_pillar')
+            ->get();
+
+        return $nullFindings
+            ->filter(fn (Finding $f) => ! empty(FindingTypeRegistry::classify($f)['requires_classification']))
+            ->pluck('id')
+            ->all();
     }
 
     public function getTabs(): array
@@ -166,42 +203,84 @@ class ListFindings extends ListRecords
         $baseBadgeQuery = fn () => static::getResource()::getEloquentQuery()
             ->when($this->selectedClientId, fn ($q) => $q->where('client_id', $this->selectedClientId));
 
-        return [
+        $techNullIds = $this->resolveNullPillarIdsForPillar(FindingPillar::TechnicalHealth->value);
+        $unclassifiedIds = $this->resolveUnclassifiedNullPillarIds();
+
+        $applyNonTechFilter = function (Builder $query) use ($techNullIds, $unclassifiedIds): Builder {
+            $query->where(function (Builder $q) {
+                $q->whereNull('finding_pillar')
+                    ->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value);
+            });
+            $excludedIds = array_values(array_unique(array_merge($techNullIds, $unclassifiedIds)));
+            if (! empty($excludedIds)) {
+                $query->whereNotIn('id', $excludedIds);
+            }
+            return $query;
+        };
+
+        $applyTechFilter = function (Builder $query) use ($techNullIds): Builder {
+            return $query->where(function (Builder $q) use ($techNullIds) {
+                $q->where('finding_pillar', FindingPillar::TechnicalHealth->value);
+                if (! empty($techNullIds)) {
+                    $q->orWhereIn('id', $techNullIds);
+                }
+            });
+        };
+
+        $tabs = [
             'initiatives' => Tab::make('Strategic Initiatives')
                 ->icon('heroicon-m-briefcase')
-                ->badge($baseBadgeQuery()
-                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
-                    ->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
+                ->badge($applyNonTechFilter($baseBadgeQuery())
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])
                     ->count())
                 ->badgeColor('primary')
-                ->modifyQueryUsing(fn (Builder $query) => $query->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
-                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])),
+                ->modifyQueryUsing(fn (Builder $query) => $applyNonTechFilter($query)
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])),
 
-            'all_commercial' => Tab::make('All Commercial Opportunities')
+            'all_commercial' => Tab::make('All Commercial & Operational')
                 ->icon('heroicon-m-chart-bar')
                 ->badge($baseBadgeQuery()
-                    ->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])
                     ->count())
                 ->badgeColor('gray')
-                ->modifyQueryUsing(fn (Builder $query) => $query->where(fn($q) => $q->whereNull('finding_pillar')->orWhere('finding_pillar', '!=', FindingPillar::TechnicalHealth->value))),
+                ->modifyQueryUsing(fn (Builder $query) => $query->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])),
 
             'technical_health' => Tab::make('Technical & Data Health')
                 ->icon('heroicon-m-wrench-screwdriver')
-                ->badge($baseBadgeQuery()
-                    ->where('finding_pillar', FindingPillar::TechnicalHealth->value)
-                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
+                ->badge($applyTechFilter($baseBadgeQuery())
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])
                     ->count())
                 ->badgeColor('gray')
-                ->modifyQueryUsing(fn (Builder $query) => $query->where('finding_pillar', FindingPillar::TechnicalHealth->value)),
-
-            'archived' => Tab::make('Resolved / Dismissed')
-                ->icon('heroicon-m-archive-box')
-                ->badge($baseBadgeQuery()
-                    ->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])
-                    ->count())
-                ->badgeColor('gray')
-                ->modifyQueryUsing(fn (Builder $query) => $query->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value])),
+                ->modifyQueryUsing(fn (Builder $query) => $applyTechFilter($query)
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])),
         ];
+
+        $unclassifiedOpenCount = empty($unclassifiedIds)
+            ? 0
+            : $baseBadgeQuery()
+                ->whereIn('id', $unclassifiedIds)
+                ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])
+                ->count();
+
+        if ($unclassifiedOpenCount > 0) {
+            $tabs['classification_review'] = Tab::make('Classification Review')
+                ->icon('heroicon-m-exclamation-triangle')
+                ->badge($unclassifiedOpenCount)
+                ->badgeColor('warning')
+                ->modifyQueryUsing(fn (Builder $query) => $query
+                    ->whereIn('id', $unclassifiedIds)
+                    ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value]));
+        }
+
+        $tabs['archived'] = Tab::make('Resolved / Dismissed')
+            ->icon('heroicon-m-archive-box')
+            ->badge($baseBadgeQuery()
+                ->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value])
+                ->count())
+            ->badgeColor('gray')
+            ->modifyQueryUsing(fn (Builder $query) => $query->whereIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value, FindingStatus::Ignored->value]));
+
+        return $tabs;
     }
 
     protected function getHeaderActions(): array

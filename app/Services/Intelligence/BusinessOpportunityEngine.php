@@ -123,10 +123,11 @@ class BusinessOpportunityEngine
 
             $createdFinding = null;
             if (! $dryRun) {
+                $pillarVal = $data->pillar ?: FindingTypeRegistry::resolvePillarValue($data->detectorKey, $data->detectorKey);
                 $createdFinding = Finding::create([
                     'client_id'                 => $client->id,
                     'finding_type'              => 'opportunity',
-                    'finding_pillar'            => $data->pillar,
+                    'finding_pillar'            => $pillarVal,
                     'finding_category'          => $data->category,
                     'source_type'               => 'detector',
                     'source_id'                 => $data->detectorKey,
