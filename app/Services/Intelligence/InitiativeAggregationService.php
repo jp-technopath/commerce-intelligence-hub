@@ -10,9 +10,14 @@ use App\Enums\ImpactNature;
 use App\Models\Client;
 use App\Models\ClientFindingConfiguration;
 use App\Models\CommerceCustomerPurchaseFact;
+use App\Models\CommerceMetric;
 use App\Models\Finding;
 use App\Models\User;
+use App\Services\Intelligence\DataQualification\FindingFreshnessService;
+use App\Services\Metrics\MetricsDiagnosticService;
+use App\Services\Metrics\RevenueReconciler;
 use App\Services\Security\ClientScopeContext;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -23,10 +28,14 @@ class InitiativeAggregationService
      */
     protected array $configCache = [];
 
+    protected FindingFreshnessService $freshnessService;
+
     public function __construct(
-        protected ?OpportunityExplanationService $explanationService = null
+        protected ?OpportunityExplanationService $explanationService = null,
+        ?FindingFreshnessService $freshnessService = null
     ) {
         $this->explanationService = $explanationService ?? app(OpportunityExplanationService::class);
+        $this->freshnessService = $freshnessService ?? app(FindingFreshnessService::class);
     }
 
     /**
@@ -70,10 +79,28 @@ class InitiativeAggregationService
         }
 
         if ($pillarFilter) {
-            $query->where('finding_pillar', $pillarFilter);
+            if ($pillarFilter === 'unclassified') {
+                $query->whereNull('finding_pillar');
+            } else {
+                $query->where(function ($q) use ($pillarFilter) {
+                    $q->where('finding_pillar', $pillarFilter)
+                      ->orWhereNull('finding_pillar');
+                });
+            }
         }
 
         $findings = $query->orderByDesc('priority_score')->orderByDesc('confidence_score')->get();
+
+        // Constituent-finding-level pillar filtering (resolving known NULL pillars via FindingTypeRegistry without defaulting unknown types)
+        if ($pillarFilter) {
+            $findings = $findings->filter(function (Finding $finding) use ($pillarFilter) {
+                $resolved = $this->resolveFindingPillar($finding);
+                if ($pillarFilter === 'unclassified') {
+                    return ! empty($resolved['requires_classification']);
+                }
+                return $resolved['pillar_value'] === $pillarFilter;
+            })->values();
+        }
 
         // Group findings by client_id and strategic_goal
         $grouped = $findings->groupBy(function (Finding $finding) {
@@ -97,6 +124,41 @@ class InitiativeAggregationService
         return $initiatives->sortByDesc(function ($init) {
             return ($init['max_priority_score'] * 1000) + $init['primary_financial_value'];
         })->values();
+    }
+
+    /**
+     * Resolve authoritative FindingPillar for a finding without defaulting unknown types to GrowthOpportunity.
+     *
+     * @return array{pillar: ?FindingPillar, pillar_value: ?string, is_known: bool, requires_classification: bool}
+     */
+    protected function resolveFindingPillar(Finding $finding): array
+    {
+        if ($finding->finding_pillar instanceof FindingPillar) {
+            return [
+                'pillar'                  => $finding->finding_pillar,
+                'pillar_value'            => $finding->finding_pillar->value,
+                'is_known'                => true,
+                'requires_classification' => false,
+            ];
+        }
+
+        $raw = (string) ($finding->finding_pillar ?? '');
+        if ($raw !== '' && ($enum = FindingPillar::tryFrom($raw))) {
+            return [
+                'pillar'                  => $enum,
+                'pillar_value'            => $enum->value,
+                'is_known'                => true,
+                'requires_classification' => false,
+            ];
+        }
+
+        $reg = FindingTypeRegistry::classify($finding);
+        return [
+            'pillar'                  => $reg['pillar'],
+            'pillar_value'            => $reg['pillar_value'],
+            'is_known'                => $reg['is_known'],
+            'requires_classification' => $reg['requires_classification'],
+        ];
     }
 
     /**
@@ -130,11 +192,11 @@ class InitiativeAggregationService
     protected function buildInitiativeSummary(?Client $client, string $strategicGoal, Collection $findings): array
     {
         $first = $findings->first();
-        $pillar = $first->finding_pillar instanceof FindingPillar 
-            ? $first->finding_pillar 
-            : FindingPillar::tryFrom((string)$first->finding_pillar) ?? FindingPillar::GrowthOpportunity;
+        $pillarInfo = $this->resolveFindingPillar($first);
+        $pillar = $pillarInfo['pillar'];
+        $isUnclassifiedPillar = ! $pillarInfo['is_known'] || $pillar === null;
 
-        // 1. Segregate Accounts / Entities & Retrieve Facts
+        // 1. Segregate Accounts / Entities & Retrieve Batched Facts and Order Summaries (No N+1 queries)
         $uniqueAccounts = $findings->map(function ($f) {
             $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
             $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
@@ -144,15 +206,22 @@ class InitiativeAggregationService
 
         $clientId = $client?->id ?? $first?->client_id;
         $factsByHash = collect();
+        $winbackOrderSummaries = [];
         if ($clientId && $uniqueAccounts->isNotEmpty()) {
+            $hashList = $uniqueAccounts->values()->all();
             $factsByHash = CommerceCustomerPurchaseFact::where('client_id', $clientId)
-                ->whereIn('customer_identity_hash', $uniqueAccounts)
+                ->whereIn('customer_identity_hash', $hashList)
                 ->get()
                 ->keyBy('customer_identity_hash');
+
+            if (in_array($strategicGoal, ['Enterprise Winback Campaign', 'B2B Wholesale Retention'], true)) {
+                $winbackOrderSummaries = app(CustomerPurchaseAnalysisService::class)
+                    ->getWinbackOrderSummariesForHashes((int) $clientId, $hashList);
+            }
         }
 
         // 2. Build Account Drill-Down Records
-        $accounts = $findings->map(function (Finding $f) use ($factsByHash) {
+        $accounts = $findings->map(function (Finding $f) use ($factsByHash, $winbackOrderSummaries, $client) {
             $evidence = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: ($f->metadata_json['evidence'] ?? $f->metadata_json ?? []));
             $cadence = $evidence['cadence_days'] ?? $evidence['cadence'] ?? $evidence['regularity'] ?? 'Variable';
             if (is_numeric($cadence)) {
@@ -188,6 +257,28 @@ class InitiativeAggregationService
                 customerName: $fact?->customer_name ?? ($evidence['customer_name'] ?? $parsedName),
                 companyName: $fact?->company_name ?? ($evidence['company_name'] ?? null)
             );
+
+            // Inject batched order-header summary for Winback accounts
+            if ($accHash && isset($winbackOrderSummaries[$accHash])) {
+                $evidence['winback_order_summary'] = $winbackOrderSummaries[$accHash];
+            }
+
+            // Inject 6-timestamp freshness contract & authoritative diagnostics for operational findings
+            $isOperationalFinding = empty($accHash) && ! in_array($f->source_id ?? $f->finding_type, ['long_term_winback', 'opportunity.long_term_winback', 'b2b_account_reactivation', 'opportunity.b2b_account_reactivation', 'replenishment_cadence', 'opportunity.replenishment_cadence', 'account_contraction', 'risk.account_contraction'], true);
+            if ($isOperationalFinding) {
+                $freshnessContract = $this->freshnessService->evaluateFinding($f);
+                $evidence['freshness_contract'] = $freshnessContract;
+
+                if ($client && empty($evidence['reconciliation_summary']) && $this->findingMatchesSignal($f, ['platform_variance', 'ga4_vs_commerce'])) {
+                    $evidence['reconciliation_summary'] = $this->resolveOperationalReconciliationSummary($client, $freshnessContract);
+                }
+                if ($client && empty($evidence['conversion_diagnostics']) && empty($f->metadata_json['conversion_diagnostics']) && $this->findingMatchesSignal($f, ['conversion_rate'])) {
+                    $evidence['conversion_diagnostics'] = $this->resolveOperationalConversionDiagnostics($client, $f, $freshnessContract);
+                }
+                if ($client && empty($evidence['klaviyo_diagnostics']) && empty($f->metadata_json['klaviyo_diagnostics']) && $this->findingMatchesSignal($f, ['klaviyo']) && $this->findingMatchesSignal($f, ['attribution_variance'])) {
+                    $evidence['klaviyo_diagnostics'] = $this->resolveOperationalKlaviyoDiagnostics($client, $f, $freshnessContract);
+                }
+            }
 
             $opportunityExplanation = $this->explanationService->explainFinding($f, $evidence, $fact, $customerDisplay);
 
@@ -234,6 +325,11 @@ class InitiativeAggregationService
                 'freshness_badge'           => $opportunityExplanation['freshness_badge'] ?? null,
                 'freshness_color'           => $opportunityExplanation['freshness_color'] ?? 'gray',
                 'freshness_note'            => $opportunityExplanation['freshness_note'] ?? null,
+                'freshness_state'           => $opportunityExplanation['freshness_state'] ?? null,
+                'observation_period'        => $opportunityExplanation['observation_period'] ?? null,
+                'last_order_date_label'     => $opportunityExplanation['last_order_date_label'] ?? null,
+                'last_order_amount'         => $opportunityExplanation['last_order_amount'] ?? null,
+                'evaluated_date_label'      => $opportunityExplanation['evaluated_date_label'] ?? null,
                 'is_outdated'               => $opportunityExplanation['is_outdated'] ?? false,
                 'primary_metric_label'      => $opportunityExplanation['primary_metric_label'] ?? null,
                 'primary_metric_value'      => $opportunityExplanation['primary_metric_value'] ?? null,
@@ -315,18 +411,22 @@ class InitiativeAggregationService
         $entityTermSingular = $isAccountBased
             ? 'Account'
             : match ($strategicGoal) {
-                'Digital Experience Engagement' => 'Analytics Finding',
+                'Digital Experience Engagement', 'Direct Traffic & Referral Audit' => 'Analytics Finding',
                 'Checkout Conversion Optimization' => 'Conversion Finding',
-                'Data & Technical Health Governance' => 'Technical Finding',
+                'Revenue & Channel Attribution' => 'Attribution Finding',
+                'Storewide Revenue Performance' => 'Revenue Finding',
+                'Storefront & Script Health', 'Data & Technical Health Governance' => 'Technical Finding',
                 default => 'Operational Finding',
             };
 
         $entityTermPlural = $isAccountBased
             ? 'Accounts'
             : match ($strategicGoal) {
-                'Digital Experience Engagement' => 'Analytics Findings',
+                'Digital Experience Engagement', 'Direct Traffic & Referral Audit' => 'Analytics Findings',
                 'Checkout Conversion Optimization' => 'Conversion Findings',
-                'Data & Technical Health Governance' => 'Technical Findings',
+                'Revenue & Channel Attribution' => 'Attribution Findings',
+                'Storewide Revenue Performance' => 'Revenue Findings',
+                'Storefront & Script Health', 'Data & Technical Health Governance' => 'Technical Findings',
                 default => 'Operational Findings',
             };
 
@@ -414,22 +514,7 @@ class InitiativeAggregationService
                 return $meta['difference_amount'] ?? ($ev['variance_amount'] ?? ($ev['difference_amount'] ?? 0.0));
             })->sum();
 
-            if ($unassignedRev > 0) {
-                $hasMonetaryMetric = true;
-                $primaryFinancialLabel = 'Unassigned Campaign Revenue';
-                $primaryFinancialValue = $unassignedRev;
-                $formattedPrimaryFinancial = '$' . number_format($unassignedRev, 2);
-                $primaryFinancialNature = 'unassigned_campaign_revenue';
-                $primaryFinancialColor = 'blue';
-                $primaryMetricSubtext = 'Email revenue recorded in Klaviyo but unassigned in GA4 (missing UTM tags; not lost sales).';
-                // Context metric: check for conversion decline
-                $cvrFinding = $findings->first(fn($f) => str_contains($f->finding_type, 'conversion_rate') || str_contains($f->source_id ?? '', 'conversion_rate') || str_contains($f->metadata_json['rule_key'] ?? '', 'conversion_rate') || str_contains($f->metadata_json['detector_key'] ?? '', 'conversion_rate'));
-                if ($cvrFinding) {
-                    $cvrDelta = $cvrFinding->metadata_json['difference_pct'] ?? -70.0;
-                    $cvrVal = $cvrFinding->metadata_json['metric_a']['value'] ?? 0.21;
-                    $contextMetricBadge = number_format($cvrDelta, 1) . '% 30-Day CVR (' . number_format($cvrVal, 2) . '%)';
-                }
-            } elseif ($attrVariance > 0) {
+            if ($attrVariance > 0) {
                 $hasMonetaryMetric = true;
                 $primaryFinancialLabel = 'Attribution Variance';
                 $primaryFinancialValue = $attrVariance;
@@ -441,8 +526,25 @@ class InitiativeAggregationService
                 $scriptErr = $findings->first(fn($f) => str_contains($f->finding_type, 'script_error') || str_contains($f->source_id ?? '', 'script_error') || str_contains($f->metadata_json['detector_key'] ?? '', 'script_error'));
                 if ($scriptErr) {
                     $ev = is_array($scriptErr->evidence_json) ? $scriptErr->evidence_json : (json_decode($scriptErr->evidence_json ?? '[]', true) ?: []);
-                    $errCount = $ev['error_count'] ?? 17221;
-                    $contextMetricBadge = number_format($errCount) . ' Cart Script Errors';
+                    $errCount = $ev['error_count'] ?? null;
+                    if ($errCount !== null) {
+                        $contextMetricBadge = number_format((int) $errCount) . ' Clarity Script Errors';
+                    }
+                }
+            } elseif ($unassignedRev > 0) {
+                $hasMonetaryMetric = true;
+                $primaryFinancialLabel = 'Unassigned Campaign Revenue';
+                $primaryFinancialValue = $unassignedRev;
+                $formattedPrimaryFinancial = '$' . number_format($unassignedRev, 2);
+                $primaryFinancialNature = 'unassigned_campaign_revenue';
+                $primaryFinancialColor = 'blue';
+                $primaryMetricSubtext = 'Email revenue attributed in Klaviyo vs GA4 Email (attribution-window or tagging variance; not lost sales).';
+                // Context metric: check for conversion decline
+                $cvrFinding = $findings->first(fn($f) => str_contains($f->finding_type, 'conversion_rate') || str_contains($f->source_id ?? '', 'conversion_rate') || str_contains($f->metadata_json['rule_key'] ?? '', 'conversion_rate') || str_contains($f->metadata_json['detector_key'] ?? '', 'conversion_rate'));
+                if ($cvrFinding && isset($cvrFinding->metadata_json['difference_pct'], $cvrFinding->metadata_json['metric_a']['value'])) {
+                    $cvrDelta = (float) $cvrFinding->metadata_json['difference_pct'];
+                    $cvrVal = (float) $cvrFinding->metadata_json['metric_a']['value'];
+                    $contextMetricBadge = number_format($cvrDelta, 1) . '% 30-Day CVR (' . number_format($cvrVal, 2) . '%)';
                 }
             } else {
                 // Non-monetary diagnostic initiative (e.g. traffic surge or technical health)
@@ -453,14 +555,14 @@ class InitiativeAggregationService
                 $surgeFinding = $findings->first(fn($f) => str_contains($f->finding_type, 'volume_surge') || str_contains($f->finding_type, 'traffic'));
                 if ($surgeFinding) {
                     $ev = is_array($surgeFinding->evidence_json) ? $surgeFinding->evidence_json : (json_decode($surgeFinding->evidence_json ?? '[]', true) ?: []);
-                    $surgePct = $ev['surge_pct'] ?? ($surgeFinding->metadata_json['primary_signal']['evidence']['surge_pct'] ?? 500.1);
-                    $directShare = $ev['direct_share_pct'] ?? 91.7;
-                    $currSessions = $surgeFinding->metadata_json['primary_signal']['current_value'] ?? 27231;
+                    $surgePct = (float) ($ev['surge_pct'] ?? ($surgeFinding->metadata_json['primary_signal']['evidence']['surge_pct'] ?? 0.0));
+                    $directShare = (float) ($ev['direct_share_pct'] ?? 0.0);
+                    $currSessions = (int) ($ev['direct_sessions'] ?? $surgeFinding->metadata_json['primary_signal']['current_value'] ?? 0);
 
                     $primaryFinancialLabel = 'Direct Traffic Anomaly';
                     $formattedPrimaryFinancial = '+' . number_format($surgePct, 1) . '% Surge';
                     $primaryFinancialColor = 'amber';
-                    $primaryMetricSubtext = 'Unassigned volume surge with flat conversion (requires referral audit).';
+                    $primaryMetricSubtext = 'Unassigned Direct traffic surge requiring referrer and log inspection.';
                     $contextMetricBadge = number_format($currSessions) . ' Sessions (' . number_format($directShare, 1) . '% Share)';
                 } else {
                     $primaryFinancialLabel = 'Operational Diagnostic';
@@ -618,12 +720,19 @@ class InitiativeAggregationService
             $warningParts[] = "{$provisionalAccountsCount} provisional " . Str::plural('account', $provisionalAccountsCount) . ' ' . ($provisionalAccountsCount === 1 ? 'requires' : 'require') . ' manual review';
         }
         if ($revalidationFindingsCount > 0) {
-            $warningParts[] = "{$revalidationFindingsCount} " . Str::plural('account', $revalidationFindingsCount) . ' ' . ($revalidationFindingsCount === 1 ? 'requires' : 'require') . ' detector revalidation';
+            if ($isAccountBased) {
+                $warningParts[] = "{$revalidationFindingsCount} " . Str::plural('account', $revalidationFindingsCount) . ' ' . ($revalidationFindingsCount === 1 ? 'requires' : 'require') . ' detector revalidation';
+            } elseif ($staleFindingsCount === 0) {
+                $warningParts[] = "{$revalidationFindingsCount} " . Str::plural('finding', $revalidationFindingsCount) . ' ' . ($revalidationFindingsCount === 1 ? 'requires' : 'require') . ' revalidation';
+            }
         }
         if ($staleFindingsCount > 0) {
             $warningParts[] = $findings->count() === 1
                 ? 'Historical telemetry (>7 days old) — verify against current logs'
                 : "{$staleFindingsCount} of {$findings->count()} findings reflect historical telemetry (>7 days old)";
+        }
+        if ($isUnclassifiedPillar) {
+            $warningParts[] = 'Pillar classification required for unknown finding type';
         }
         $cardWarningText = ! empty($warningParts) ? implode(' · ', $warningParts) : null;
 
@@ -647,6 +756,7 @@ class InitiativeAggregationService
             strategicGoal: $strategicGoal,
             pillar: $pillar,
             findings: $findings,
+            accounts: $accounts,
             isAccountBased: $isAccountBased,
             accountCount: $accountCount,
             provenAccountsCount: $provenAccountsCount,
@@ -667,10 +777,11 @@ class InitiativeAggregationService
             'strategic_goal'             => $strategicGoal,
             'display_title'              => $cardPresentation['display_title'],
             'initiative_title'           => "{$client?->name}: {$strategicGoal}",
-            'pillar'                     => $pillar->value,
-            'pillar_label'               => $pillar->label(),
-            'pillar_color'               => $pillar->color(),
-            'pillar_icon'                => $pillar->icon(),
+            'pillar'                     => $pillar?->value ?? 'unclassified',
+            'pillar_label'               => $pillar?->label() ?? 'Classification Required',
+            'pillar_color'               => $pillar?->color() ?? 'warning',
+            'pillar_icon'                => $pillar?->icon() ?? 'heroicon-o-question-mark-circle',
+            'is_unclassified_pillar'     => $isUnclassifiedPillar,
             'is_account_based'           => $isAccountBased,
             'entity_term_singular'       => $entityTermSingular,
             'entity_term_plural'         => $entityTermPlural,
@@ -753,13 +864,10 @@ class InitiativeAggregationService
             }
         }
 
-        // Fallback by pillar / category for operational or technical findings
-        $pillar = $finding->finding_pillar instanceof FindingPillar 
-            ? $finding->finding_pillar 
-            : FindingPillar::tryFrom((string)$finding->finding_pillar);
-
-        if ($pillar === FindingPillar::TechnicalHealth) {
-            return 'Data & Technical Health Governance';
+        // Preserve strategic goals independently from pillar classification via FindingTypeRegistry
+        $classification = FindingTypeRegistry::classify($finding);
+        if ($classification['is_known']) {
+            return $classification['strategic_goal'];
         }
 
         $category = (string) ($finding->finding_category?->value ?? $finding->finding_category);
@@ -767,9 +875,64 @@ class InitiativeAggregationService
         return match ($category) {
             'Conversion', 'Checkout' => 'Checkout Conversion Optimization',
             'Search', 'Merchandising' => 'Product Discovery & Catalog Uplift',
-            'Behavioral' => 'Digital Experience Engagement',
-            default => 'Commercial Account Growth',
+            'Behavioral' => 'Direct Traffic & Referral Audit',
+            default => $classification['strategic_goal'],
         };
+    }
+
+    /**
+     * Request-scoped analytical helpers for operational findings lacking pre-computed enrichment.
+     */
+    protected function resolveOperationalReconciliationSummary(Client $client, array $freshness): array
+    {
+        try {
+            $end = ! empty($freshness['source_window_end'])
+                ? Carbon::parse($freshness['source_window_end'])->endOfDay()
+                : Carbon::yesterday()->endOfDay();
+            $start = ! empty($freshness['source_window_start'])
+                ? Carbon::parse($freshness['source_window_start'])->startOfDay()
+                : $end->copy()->subDays(29)->startOfDay();
+
+            return (new RevenueReconciler())->summarizeReadOnly($client, $start, $end);
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    protected function resolveOperationalConversionDiagnostics(Client $client, Finding $finding, array $freshness): array
+    {
+        try {
+            $periodDays = (int) ($finding->metadata_json['period_days'] ?? 30);
+            $end = ! empty($freshness['source_window_end'])
+                ? Carbon::parse($freshness['source_window_end'])->endOfDay()
+                : Carbon::yesterday()->endOfDay();
+            $start = ! empty($freshness['source_window_start'])
+                ? Carbon::parse($freshness['source_window_start'])->startOfDay()
+                : $end->copy()->subDays(max(0, $periodDays - 1))->startOfDay();
+            $prevEnd = $start->copy()->subDay()->endOfDay();
+            $prevStart = $prevEnd->copy()->subDays(max(0, $periodDays - 1))->startOfDay();
+
+            return (new MetricsDiagnosticService())->buildConversionWindowDiagnostics($client, $start, $end, $prevStart, $prevEnd);
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    protected function resolveOperationalKlaviyoDiagnostics(Client $client, Finding $finding, array $freshness): array
+    {
+        try {
+            $periodDays = (int) ($finding->metadata_json['period_days'] ?? 30);
+            $end = ! empty($freshness['source_window_end'])
+                ? Carbon::parse($freshness['source_window_end'])->endOfDay()
+                : Carbon::yesterday()->endOfDay();
+            $start = ! empty($freshness['source_window_start'])
+                ? Carbon::parse($freshness['source_window_start'])->startOfDay()
+                : $end->copy()->subDays(max(0, $periodDays - 1))->startOfDay();
+
+            return (new MetricsDiagnosticService())->buildKlaviyoAttributionDiagnostics($client, $start, $end);
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /**
@@ -913,8 +1076,9 @@ class InitiativeAggregationService
      */
     protected function buildCardPresentation(
         string $strategicGoal,
-        FindingPillar $pillar,
+        ?FindingPillar $pillar,
         Collection $findings,
+        Collection $accounts,
         bool $isAccountBased,
         int $accountCount,
         int $provenAccountsCount,
@@ -1012,15 +1176,31 @@ class InitiativeAggregationService
                 $period = (int) ($cMeta['period_days'] ?? 30);
                 $pctFormatted = (abs($diffPct - round($diffPct)) < 0.05 ? number_format(round($diffPct), 0) : number_format($diffPct, 1)) . '%';
 
+                $cvrAccount = $accounts->firstWhere('finding_id', $cvrFinding->id);
+                $convDiag = $cvrAccount['opportunity_explanation']['expandable_details']['conversion_diagnostics']
+                    ?? $cMeta['conversion_diagnostics']
+                    ?? ($cvrFinding->evidence_json['conversion_diagnostics'] ?? []);
+                $diagType = $convDiag['diagnosis_type'] ?? null;
+
                 if ($campaignTaggingFinding) {
                     $tEv = is_array($campaignTaggingFinding->evidence_json) ? $campaignTaggingFinding->evidence_json : (json_decode($campaignTaggingFinding->evidence_json ?? '[]', true) ?: []);
                     $tMeta = is_array($campaignTaggingFinding->metadata_json) ? $campaignTaggingFinding->metadata_json : (json_decode($campaignTaggingFinding->metadata_json ?? '[]', true) ?: []);
                     $klaviyoRev = (float) ($tEv['klaviyo_revenue'] ?? $tMeta['primary_signal']['evidence']['klaviyo_revenue'] ?? 0.0);
                     $summary = "Storewide {$period}-day conversion fell to " . number_format($currCvr, 2) . "%, while " . $this->formatExecutiveCurrency($klaviyoRev) . " in Klaviyo email revenue went unassigned in GA4.";
-                    $nextStep = 'Audit checkout funnel drop-offs by channel and add utm_source=klaviyo tags to promotional emails.';
+                    $nextStep = 'Segment conversion by channel against Direct traffic spikes and reconcile Klaviyo attribution.';
+                } elseif ($diagType === 'traffic_denominator_dilution') {
+                    $nonDirPrev = number_format((float) ($convDiag['previous']['ga4_non_direct_cvr'] ?? 0), 2);
+                    $nonDirCurr = number_format((float) ($convDiag['current']['ga4_non_direct_cvr'] ?? 0), 2);
+                    $summary = "Overall {$period}-day GA4 CVR fell {$pctFormatted} to " . number_format($currCvr, 2) . "% due to Direct-session dilution (excluding Direct: {$nonDirPrev}% → {$nonDirCurr}%).";
+                    $nextStep = 'Audit Direct traffic quality with Analytics rather than modifying checkout flows.';
+                } elseif ($diagType === 'mixed_dilution_and_commercial_softness') {
+                    $nonDirCurr = number_format((float) ($convDiag['current']['ga4_non_direct_cvr'] ?? 0), 2);
+                    $mCurrOrd = (int) ($convDiag['current']['magento_valid_orders'] ?? 0);
+                    $summary = "Overall {$period}-day GA4 CVR dropped {$pctFormatted} amid Direct traffic surge alongside {$nonDirCurr}% non-Direct CVR and {$mCurrOrd} valid orders.";
+                    $nextStep = 'Review Direct session attribution, non-Direct channels, and pending/excluded Magento order statuses.';
                 } else {
                     $summary = "Storewide {$period}-day GA4 conversion rate declined by {$pctFormatted} to " . number_format($currCvr, 2) . "% compared to the prior period.";
-                    $nextStep = 'Audit checkout step drop-offs and review conversion trends across devices and traffic channels.';
+                    $nextStep = 'Segment conversion by channel and verify Magento valid order volume before altering checkout.';
                 }
 
                 return [
@@ -1040,34 +1220,35 @@ class InitiativeAggregationService
                 return [
                     'display_title'     => 'Email Campaign Attribution',
                     'card_metric_value' => $this->formatExecutiveCurrency($klaviyoRev),
-                    'card_metric_label' => 'unassigned campaign revenue',
-                    'card_summary'      => "Klaviyo recorded " . $this->formatExecutiveCurrency($klaviyoRev) . " in campaign revenue while GA4 attributed $0 due to missing UTM parameters (not lost sales).",
-                    'card_next_step'    => 'Add standardized utm_source=klaviyo parameters to promotional email links and verify GA4 attribution.',
+                    'card_metric_label' => 'Klaviyo attributed revenue',
+                    'card_summary'      => "Klaviyo attributed " . $this->formatExecutiveCurrency($klaviyoRev) . " in email revenue while GA4 Email reported $0 (model variance, not lost sales).",
+                    'card_next_step'    => 'Audit Klaviyo attribution windows and outbound campaign/flow UTM tagging in Marketing Operations.',
                 ];
             }
         }
 
         // 2. Direct Traffic & Referral Audit
-        if ($strategicGoal === 'Digital Experience Engagement' || $trafficSurgeFinding) {
+        if ($strategicGoal === 'Digital Experience Engagement' || $strategicGoal === 'Direct Traffic & Referral Audit' || $trafficSurgeFinding) {
             $tEv = $trafficSurgeFinding ? (is_array($trafficSurgeFinding->evidence_json) ? $trafficSurgeFinding->evidence_json : (json_decode($trafficSurgeFinding->evidence_json ?? '[]', true) ?: [])) : [];
             $tMeta = $trafficSurgeFinding ? (is_array($trafficSurgeFinding->metadata_json) ? $trafficSurgeFinding->metadata_json : (json_decode($trafficSurgeFinding->metadata_json ?? '[]', true) ?: [])) : [];
             $surgePct = (float) ($tEv['surge_pct'] ?? $tMeta['primary_signal']['evidence']['surge_pct'] ?? 0.0);
             $directShare = (float) ($tEv['direct_share_pct'] ?? $tMeta['primary_signal']['evidence']['direct_share_pct'] ?? 0.0);
-            $currSessions = (int) ($tMeta['primary_signal']['current_value'] ?? 0);
+            $currSessions = (int) ($tEv['direct_sessions'] ?? $tMeta['primary_signal']['current_value'] ?? 0);
 
             return [
                 'display_title'     => 'Direct Traffic & Referral Audit',
-                'card_metric_value' => number_format($surgePct, 1) . '%',
-                'card_metric_label' => 'direct traffic increase',
-                'card_summary'      => "Direct traffic rose " . number_format($surgePct, 1) . "% to " . number_format($currSessions) . " sessions (" . number_format($directShare, 1) . "% of site traffic) while conversion remained flat.",
-                'card_next_step'    => 'Inspect landing page referrers, user-agent distributions, and IP filters in Analytics to identify the source.',
+                'card_metric_value' => '+' . number_format($surgePct, 1) . '%',
+                'card_metric_label' => 'Direct traffic surge',
+                'card_summary'      => "Direct traffic rose +" . number_format($surgePct, 1) . "% to " . number_format($currSessions) . " sessions (" . number_format($directShare, 1) . "% of site traffic) without a proportional order lift.",
+                'card_next_step'    => 'Inspect landing page referrers, user-agent distributions, and GA4 channel rules to isolate traffic origin.',
             ];
         }
 
         // 3. Storewide Observed Revenue Decline
-        if ($revenueDropFinding) {
-            $rMeta = is_array($revenueDropFinding->metadata_json) ? $revenueDropFinding->metadata_json : (json_decode($revenueDropFinding->metadata_json ?? '[]', true) ?: []);
-            $dropAmt = (float) ($rMeta['difference_amount'] ?? $revenueDropFinding->estimated_revenue_impact ?? $directRevenueImpact);
+        if ($revenueDropFinding || $strategicGoal === 'Storewide Revenue Performance') {
+            $revFinding = $revenueDropFinding ?? $findings->first();
+            $rMeta = $revFinding ? (is_array($revFinding->metadata_json) ? $revFinding->metadata_json : (json_decode($revFinding->metadata_json ?? '[]', true) ?: [])) : [];
+            $dropAmt = (float) ($rMeta['difference_amount'] ?? $revFinding?->estimated_revenue_impact ?? $directRevenueImpact);
             $dropPct = abs((float) ($rMeta['difference_pct'] ?? 0.0));
             $dropPeriod = (int) ($rMeta['period_days'] ?? 30);
 
@@ -1076,7 +1257,7 @@ class InitiativeAggregationService
                 'card_metric_value' => $this->formatExecutiveCurrency($dropAmt),
                 'card_metric_label' => 'observed revenue decline',
                 'card_summary'      => "Adobe Commerce revenue fell " . number_format($dropPct, 1) . "% (" . $this->formatExecutiveCurrency($dropAmt) . ") over the trailing {$dropPeriod} days compared to the prior period.",
-                'card_next_step'    => 'Review storewide order volume trends and verify catalog availability and ERP order sync.',
+                'card_next_step'    => 'Review storewide order volume trends, order status exclusions, and ERP order sync.',
             ];
         }
 
@@ -1093,7 +1274,7 @@ class InitiativeAggregationService
 
             if ($klaviyoAttrFinding && $platformVarFinding) {
                 $ga4Clause = $this->describePlatformVarianceDirection($platformVarFinding);
-                $summary = "Klaviyo and GA4 differ by " . $this->formatExecutiveCurrency($attrVariance) . ", {$ga4Clause}, alongside " . number_format($errCount) . " packaging-tapes script errors.";
+                $summary = "Klaviyo and GA4 differ by " . $this->formatExecutiveCurrency($attrVariance) . ", {$ga4Clause}, alongside " . number_format($errCount) . " storewide Clarity script errors.";
             } else {
                 $summary = "Cross-platform attribution differs by {$metricVal} alongside " . number_format($errCount) . " front-end JavaScript exceptions requiring technical review.";
             }
@@ -1103,38 +1284,43 @@ class InitiativeAggregationService
                 'card_metric_value' => $metricVal,
                 'card_metric_label' => 'attribution discrepancy',
                 'card_summary'      => $summary,
-                'card_next_step'    => 'Resolve the front-end cart script exception in Engineering and align GA4 and Klaviyo tracking.',
+                'card_next_step'    => 'Review front-end browser script exceptions in Engineering and reconcile cross-platform attribution.',
             ];
         }
 
-        if ($attrVariance > 0 || $platformVarFinding) {
+        if ($attrVariance > 0 || $platformVarFinding || $strategicGoal === 'Revenue & Channel Attribution') {
             $metricVal = $attrVariance > 0 ? $this->formatExecutiveCurrency($attrVariance) : (number_format($varPct, 1) . '%');
-            $summary = $platformVarFinding
-                ? ($this->describePlatformVarianceDirection($platformVarFinding) . ' over the monitored window, reflecting cross-platform tracking alignment differences rather than lost orders.')
-                : ("Klaviyo and GA4 email revenue differ by " . $this->formatExecutiveCurrency($attrVariance) . " across reporting models, reflecting tracking alignment differences.");
+            if ($platformVarFinding && $klaviyoAttrFinding) {
+                $ga4Clause = $this->describePlatformVarianceDirection($platformVarFinding);
+                $summary = "Klaviyo vs GA4 differs by " . $this->formatExecutiveCurrency($attrVariance) . ", and {$ga4Clause} (reporting alignment variances, not lost sales).";
+            } elseif ($platformVarFinding) {
+                $summary = $this->describePlatformVarianceDirection($platformVarFinding) . ' over the monitored window, reflecting cross-platform tracking and order-status alignment differences.';
+            } else {
+                $summary = "Klaviyo attributed " . $this->formatExecutiveCurrency($attrVariance) . " in email revenue vs $0 in GA4 Email across differing attribution models.";
+            }
 
             return [
                 'display_title'     => 'Revenue & Channel Attribution',
                 'card_metric_value' => $metricVal,
                 'card_metric_label' => 'attribution discrepancy',
                 'card_summary'      => $summary,
-                'card_next_step'    => 'Reconcile GA4 ecommerce tracking, attribution windows, and cross-channel UTM parameters.',
+                'card_next_step'    => 'Reconcile GA4 purchase status filtering, Klaviyo attribution windows, and UTM parameters.',
             ];
         }
 
-        if ($scriptErrorFinding) {
-            $sEv = is_array($scriptErrorFinding->evidence_json) ? $scriptErrorFinding->evidence_json : (json_decode($scriptErrorFinding->evidence_json ?? '[]', true) ?: []);
-            $sMeta = is_array($scriptErrorFinding->metadata_json) ? $scriptErrorFinding->metadata_json : (json_decode($scriptErrorFinding->metadata_json ?? '[]', true) ?: []);
+        if ($scriptErrorFinding || $strategicGoal === 'Storefront & Script Health') {
+            $sFinding = $scriptErrorFinding ?? $findings->first();
+            $sEv = $sFinding ? (is_array($sFinding->evidence_json) ? $sFinding->evidence_json : (json_decode($sFinding->evidence_json ?? '[]', true) ?: [])) : [];
+            $sMeta = $sFinding ? (is_array($sFinding->metadata_json) ? $sFinding->metadata_json : (json_decode($sFinding->metadata_json ?? '[]', true) ?: [])) : [];
             $errCount = (int) ($sEv['error_count'] ?? $sMeta['primary_signal']['evidence']['error_count'] ?? 0);
-            $sessions = (int) ($sEv['clarity_sessions'] ?? $sMeta['primary_signal']['evidence']['clarity_sessions'] ?? 0);
-            $exc = $sEv['exception_type'] ?? $sMeta['primary_signal']['evidence']['exception_type'] ?? 'script';
+            $sessions = (int) ($sEv['monitored_sessions'] ?? $sEv['clarity_sessions'] ?? $sMeta['primary_signal']['evidence']['clarity_sessions'] ?? 0);
 
             return [
-                'display_title'     => 'Storefront & Cart Script Health',
+                'display_title'     => 'Storefront & Script Health',
                 'card_metric_value' => number_format($errCount),
-                'card_metric_label' => 'JavaScript exceptions',
-                'card_summary'      => number_format($errCount) . " front-end JavaScript exceptions ({$exc}) occurred" . ($sessions > 0 ? (' across ' . number_format($sessions) . ' sessions') : '') . ', indicating storefront interaction friction.',
-                'card_next_step'    => "Reproduce the {$exc} script exception in Engineering and deploy a front-end fix.",
+                'card_metric_label' => 'Clarity script errors',
+                'card_summary'      => number_format($errCount) . ' storewide JavaScript exceptions logged in Clarity' . ($sessions > 0 ? (' across ' . number_format($sessions) . ' monitored sessions') : '') . '.',
+                'card_next_step'    => 'Inspect front-end browser console logs and Clarity telemetry in Engineering to isolate the failing script.',
             ];
         }
 
@@ -1152,7 +1338,7 @@ class InitiativeAggregationService
     /**
      * Synthesize "What business opportunity exists?" (Question 1)
      */
-    protected function synthesizeBusinessOpportunity(string $goal, FindingPillar $pillar, int $accountCount, ?string $clientName, ?Collection $findings = null, bool $isAccountBased = true): string
+    protected function synthesizeBusinessOpportunity(string $goal, ?FindingPillar $pillar, int $accountCount, ?string $clientName, ?Collection $findings = null, bool $isAccountBased = true): string
     {
         if (! $isAccountBased) {
             $count = $findings ? $findings->count() : $accountCount;
@@ -1164,7 +1350,7 @@ class InitiativeAggregationService
                 $cvrFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['conversion_rate']));
                 $campaignTaggingFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['campaign_tagging']));
                 if ($goal === 'Checkout Conversion Optimization' && ! $cvrFinding && $campaignTaggingFinding) {
-                    return "{$count} email campaign attribution finding identified for missing UTM tagging.";
+                    return "{$count} email attribution discrepancy finding identified across Klaviyo and GA4.";
                 }
                 $platformVarFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['platform_variance', 'ga4_vs_commerce']));
                 $scriptErrorFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['script_error']));
@@ -1176,9 +1362,10 @@ class InitiativeAggregationService
 
             return match ($goal) {
                 'Commercial Account Growth' => "{$count} operational and attribution findings identified across storewide data and tracking pipelines.",
-                'Digital Experience Engagement' => "{$count} analytics telemetry finding identified involving unassigned direct traffic surges.",
-                'Checkout Conversion Optimization' => "{$count} conversion and attribution findings identified across cart, email, and checkout funnels.",
-                'Data & Technical Health Governance' => "{$count} technical or data pipeline anomalies have been detected requiring engineering validation.",
+                'Revenue & Channel Attribution' => "{$count} cross-platform attribution discrepancies identified across Commerce, GA4, and Klaviyo.",
+                'Digital Experience Engagement', 'Direct Traffic & Referral Audit' => "{$count} analytics telemetry finding identified involving unassigned direct traffic surges.",
+                'Checkout Conversion Optimization' => "{$count} conversion findings requiring traffic segmentation and funnel verification.",
+                'Storefront & Script Health', 'Data & Technical Health Governance' => "{$count} technical or data pipeline anomalies have been detected requiring engineering validation.",
                 default => "{$count} operational findings identified under strategic goal '{$goal}'.",
             };
         }
@@ -1212,7 +1399,7 @@ class InitiativeAggregationService
                     return "Evaluates to {$formattedValue} in modeled conversion impact from the observed GA4 conversion rate drop.";
                 }
                 if ($goal === 'Checkout Conversion Optimization' && ! $cvrFinding && $campaignTaggingFinding) {
-                    return "Evaluates to {$formattedValue} in unassigned Klaviyo campaign revenue missing utm_source tags in GA4 (not lost sales).";
+                    return "Evaluates to {$formattedValue} in Klaviyo attributed revenue uncredited in GA4 Email (model variance, not lost sales).";
                 }
                 $platformVarFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['platform_variance', 'ga4_vs_commerce']));
                 $scriptErrorFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['script_error']));
@@ -1223,9 +1410,10 @@ class InitiativeAggregationService
             }
 
             return match ($goal) {
-                'Commercial Account Growth' => "Evaluates to {$formattedValue} across cross-platform attribution variances and cart exceptions. Error counts represent technical friction and should not be treated as lost sales without order log corroboration.",
-                'Digital Experience Engagement' => "Evaluates to {$formattedValue} in direct session volume. Surge traffic with flat conversion requires referrer audit to determine campaign tracking or crawler artifacts.",
-                'Checkout Conversion Optimization' => "Evaluates to {$formattedValue} in unassigned campaign revenue (missing Klaviyo UTM tags) alongside conversion rate shifts. Attribution gaps identify reporting blind spots rather than lost revenue.",
+                'Commercial Account Growth' => "Evaluates to {$formattedValue} across cross-platform attribution variances and storefront exceptions. Error counts represent technical friction and should not be treated as lost sales without order log corroboration.",
+                'Revenue & Channel Attribution' => "Evaluates to {$formattedValue} in cross-platform attribution discrepancies between email/analytics/commerce systems (reporting differences, not lost sales).",
+                'Digital Experience Engagement', 'Direct Traffic & Referral Audit' => "Evaluates to {$formattedValue} in direct session volume requiring referrer and log inspection to determine campaign tracking or crawler artifacts.",
+                'Checkout Conversion Optimization' => "Conversion shifts require channel segmentation against Direct traffic volume and Magento order logs before attributing loss.",
                 default => "Diagnostic evaluation identifies {$formattedValue} categorized strictly as {$financialLabel}.",
             };
         }
@@ -1258,7 +1446,7 @@ class InitiativeAggregationService
                     return 'E-commerce team to audit checkout step drop-offs and analyze conversion across devices and traffic channels.';
                 }
                 if ($goal === 'Checkout Conversion Optimization' && ! $cvrFinding && $campaignTaggingFinding) {
-                    return 'Marketing Operations to add standardized utm_source=klaviyo parameters to promotional email campaign links.';
+                    return 'Marketing Operations to audit Klaviyo attribution windows and outbound campaign/flow UTM tagging.';
                 }
                 $platformVarFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['platform_variance', 'ga4_vs_commerce']));
                 $scriptErrorFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['script_error']));
@@ -1269,9 +1457,11 @@ class InitiativeAggregationService
             }
 
             return match ($goal) {
-                'Commercial Account Growth' => "Engineering and Marketing Operations to review individual findings: inspect cart_item_options exceptions in Sentry and reconcile GA4 vs Klaviyo attribution models.",
-                'Digital Experience Engagement' => "Analytics team to audit direct traffic telemetry, verify IP exclusion filters, and review landing page attribution for recent unbranded campaigns.",
-                'Checkout Conversion Optimization' => "Marketing Operations to audit Klaviyo campaign links for missing utm_source tags and E-commerce team to inspect checkout step drop-offs.",
+                'Commercial Account Growth' => "Engineering and Marketing Operations to inspect front-end console error telemetry and reconcile GA4 vs Klaviyo attribution models.",
+                'Revenue & Channel Attribution' => "Marketing Operations and Analytics to reconcile GA4 purchase status exclusions, Klaviyo attribution windows, and UTM tagging.",
+                'Digital Experience Engagement', 'Direct Traffic & Referral Audit' => "Analytics team to audit direct traffic telemetry, verify IP exclusion filters, and inspect landing page referrers.",
+                'Checkout Conversion Optimization' => "Analytics and E-commerce Operations to segment conversion excluding Direct traffic and review valid vs excluded Magento orders.",
+                'Storefront & Script Health' => "Engineering to inspect browser console logs and Clarity telemetry for storewide JavaScript exceptions.",
                 default => "Have {$roleLabel} review operational findings and execute appropriate investigation playbooks.",
             };
         }

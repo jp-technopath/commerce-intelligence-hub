@@ -146,7 +146,7 @@ class WorkPrioritizationEngine
                 'title'                    => $finding->title,
                 'client_id'                => $finding->client_id,
                 'client_name'              => $finding->client?->name ?? 'Client',
-                'finding_pillar'           => $finding->finding_pillar?->value ?? 'growth_opportunity',
+                'finding_pillar'           => $finding->finding_pillar?->value ?? (FindingTypeRegistry::classify($finding)['pillar_value'] ?? 'unclassified'),
                 'finding_category'         => $finding->finding_category?->value ?? 'Revenue',
                 'severity'                 => $finding->severity instanceof FindingSeverity ? $finding->severity->value : (string) $finding->severity,
                 'status'                   => $finding->status instanceof FindingStatus ? $finding->status->value : (string) $finding->status,

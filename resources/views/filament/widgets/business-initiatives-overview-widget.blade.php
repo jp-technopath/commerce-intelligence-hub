@@ -186,11 +186,25 @@
 
     {{-- Simplified Executive Initiative Cards Grid (Natural Card Heights) --}}
     @if ($initiatives->isEmpty())
+        @php
+            $emptyStateTitle = match ($this->selectedPillar) {
+                'growth_opportunity' => 'No Active Growth Opportunities',
+                'business_risk'      => 'No Active Business Risk Findings',
+                'technical_health'   => 'No Active Technical & Data Health Findings',
+                default              => 'No Active Strategic Initiatives',
+            };
+            $emptyStateBody = match ($this->selectedPillar) {
+                'growth_opportunity' => 'No qualifying winback, reactivation, replenishment, or expansion opportunities currently match this filter.',
+                'business_risk'      => 'No open conversion, revenue deterioration, or account contraction risk findings match this filter. Check integration sync status before assuming normal performance.',
+                'technical_health'   => 'No open storefront script error, attribution variance, or traffic anomaly findings match this filter. Absence of active alerts does not guarantee error-free integrations.',
+                default              => 'No active strategic initiatives match the selected customer and pillar filter.',
+            };
+        @endphp
         <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-12 text-center">
-            <x-heroicon-o-check-circle class="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-            <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">No Actionable Initiatives Required</h3>
+            <x-heroicon-o-funnel class="w-10 h-10 text-gray-400 mx-auto mb-3" />
+            <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">{{ $emptyStateTitle }}</h3>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-md mx-auto">
-                All client accounts are purchasing within expected cadence run-rates or data baselines are maturing.
+                {{ $emptyStateBody }}
             </p>
         </div>
     @else
@@ -390,9 +404,19 @@
                                             @endif
                                         </div>
 
-                                        @if (!empty($acc['company_name']) && $acc['company_name'] !== ($acc['primary_name'] ?? ''))
+                                        @if (!empty($acc['company_name']) && strcasecmp(trim($acc['company_name']), trim($acc['primary_name'] ?? '')) !== 0 && !str_starts_with(strtolower(trim($acc['primary_name'] ?? '')), strtolower(trim($acc['company_name']))))
                                             <div class="text-xs text-gray-500 dark:text-gray-400">
                                                 {{ $acc['company_name'] }}
+                                            </div>
+                                        @endif
+                                        @if (!empty($acc['last_order_date_label']) || !empty($acc['evaluated_date_label']))
+                                            <div class="text-[11px] text-gray-500 dark:text-gray-400 flex flex-wrap items-center gap-2 pt-0.5">
+                                                @if (!empty($acc['last_order_date_label']))
+                                                    <span>Last Purchase: <strong class="text-gray-700 dark:text-gray-300">{{ $acc['last_order_date_label'] }}</strong>@if (!empty($acc['last_order_amount'])) (${{ number_format($acc['last_order_amount'], 2) }})@endif</span>
+                                                @endif
+                                                @if (!empty($acc['evaluated_date_label']))
+                                                    <span>&middot; Evaluated: <strong class="text-gray-700 dark:text-gray-300">{{ $acc['evaluated_date_label'] }}</strong></span>
+                                                @endif
                                             </div>
                                         @endif
                                     </div>
@@ -535,14 +559,27 @@
                                         <p class="text-gray-600 dark:text-gray-400 text-[11px] leading-relaxed">
                                             {{ $details['cadence_methodology'] ?? 'Calculated using account purchase intervals and variability coefficient.' }}
                                         </p>
-                                        <div class="text-[10px] text-gray-500 dark:text-gray-400 pt-1 flex items-center justify-between">
-                                            <span>Threshold: <strong class="text-gray-800 dark:text-gray-200">{{ $details['calibrated_threshold_days'] ?? 'N/A' }}d</strong></span>
+                                        <div class="text-[10px] text-gray-500 dark:text-gray-400 pt-1 flex flex-wrap items-center justify-between gap-2">
+                                            <span>Effective Threshold: <strong class="text-gray-800 dark:text-gray-200">{{ $details['effective_threshold_days'] ?? ($details['calibrated_threshold_days'] ?? 'N/A') }}d</strong>@if (!empty($details['raw_cadence_threshold_days'])) (Raw cadence: {{ $details['raw_cadence_threshold_days'] }}d)@endif</span>
                                             @if (!empty($acc['requires_revalidation']))
                                                 <span class="text-rose-600 dark:text-rose-400 font-semibold">Revalidation Required</span>
                                             @else
                                                 <span class="text-emerald-600 dark:text-emerald-400 font-semibold">Authoritative</span>
                                             @endif
                                         </div>
+                                        @if (!empty($details['last_order_date_formatted']) || !empty($details['pre_dormancy_12m_spend']) || !empty($details['order_line_limitation_note']))
+                                            <div class="text-[10px] text-gray-500 dark:text-gray-400 pt-1 border-t border-gray-100 dark:border-gray-800 space-y-0.5">
+                                                @if (!empty($details['pre_dormancy_12m_spend']))
+                                                    <div>Final Active 12m Spend: <strong class="text-gray-800 dark:text-gray-200">${{ number_format($details['pre_dormancy_12m_spend'], 2) }}</strong> across {{ $details['pre_dormancy_12m_orders'] ?? 0 }} order(s)</div>
+                                                @endif
+                                                @if (!empty($details['peak_ordering_months']))
+                                                    <div>Historical Peak Months: <strong class="text-gray-800 dark:text-gray-200">{{ implode(', ', $details['peak_ordering_months']) }}</strong></div>
+                                                @endif
+                                                @if (!empty($details['order_line_limitation_note']))
+                                                    <div class="text-gray-400 italic">{{ $details['order_line_limitation_note'] }}</div>
+                                                @endif
+                                            </div>
+                                        @endif
                                     </div>
 
                                     {{-- Financial Definitions & Benchmarks --}}
@@ -787,9 +824,18 @@
                                                 <span>Diagnostic Telemetry &amp; Detector Context</span>
                                             </div>
                                             <div class="text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
-                                                <div>Detector: <strong class="text-gray-800 dark:text-gray-200">{{ $details['detector_name'] ?? 'N/A' }}</strong></div>
-                                                <div>Observation Period: <strong class="text-gray-800 dark:text-gray-200">{{ $acc['observation_period'] ?? 'Recent 30 Days' }}</strong></div>
-                                                <div>Data Freshness: <strong class="text-gray-800 dark:text-gray-200">{{ $acc['freshness_badge'] ?? 'Recent' }}</strong></div>
+                                                <div>Detector: <strong class="text-gray-800 dark:text-gray-200">{{ $details['detector_name'] ?? ($acc['opportunity_type'] ?? 'N/A') }}</strong></div>
+                                                <div>Source Observation Window: <strong class="text-gray-800 dark:text-gray-200">{{ $acc['observation_period'] ?? 'Monitoring episode' }}</strong></div>
+                                                <div>Source Freshness: <strong class="text-gray-800 dark:text-gray-200">{{ $acc['freshness_badge'] ?? 'Unverified' }}</strong></div>
+                                                @if (!empty($details['latest_source_data_date']))
+                                                    <div>Latest Synced Source Data: <strong class="text-gray-800 dark:text-gray-200">{{ $details['latest_source_data_date'] }}</strong></div>
+                                                @endif
+                                                @if (!empty($details['first_detected_at']))
+                                                    <div>First Detected: <strong class="text-gray-800 dark:text-gray-200">{{ \Carbon\Carbon::parse($details['first_detected_at'])->format('M j, Y H:i') }} UTC</strong></div>
+                                                @endif
+                                                @if (!empty($details['evaluated_at']))
+                                                    <div>Last Evaluated: <strong class="text-gray-800 dark:text-gray-200">{{ \Carbon\Carbon::parse($details['evaluated_at'])->format('M j, Y H:i') }} UTC</strong></div>
+                                                @endif
                                                 @if (!empty($details['diagnostic_details']['detector_description']))
                                                     <div class="pt-1 text-gray-500 text-[10px] leading-relaxed">
                                                         {{ $details['diagnostic_details']['detector_description'] }}

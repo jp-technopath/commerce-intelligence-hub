@@ -293,7 +293,7 @@ class BusinessInitiativesUiAndLifecycleTest extends TestCase
 
         Livewire::test(ListFindings::class)
             ->assertSee('Strategic Initiatives')
-            ->assertSee('All Commercial Opportunities')
+            ->assertSee('All Commercial & Operational')
             ->assertSee('Technical & Data Health')
             ->assertSee('Resolved / Dismissed');
     }

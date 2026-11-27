@@ -133,7 +133,7 @@ class OpportunityCoordinator
         return Finding::where('client_id', $clientId)
             ->where('fingerprint', $fingerprint)
             ->where(function ($query) use ($dormancyCutoff) {
-                $query->whereIn('status', [FindingStatus::New->value, FindingStatus::Acknowledged->value, FindingStatus::Snoozed->value, 'open', 'in_progress'])
+                $query->whereIn('status', array_merge(FindingStatus::deduplicationOpenValues(), ['open', 'in_progress']))
                     ->orWhere('detected_at', '>=', $dormancyCutoff);
             })
             ->exists();

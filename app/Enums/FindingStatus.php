@@ -70,16 +70,28 @@ enum FindingStatus: string
         };
     }
 
+    public static function openValues(): array
+    {
+        return [
+            self::New->value,
+            self::UnderReview->value,
+            self::Approved->value,
+            self::Assigned->value,
+            self::Acknowledged->value,
+            self::Investigating->value,
+            self::Accepted->value,
+        ];
+    }
+
+    public static function deduplicationOpenValues(): array
+    {
+        return array_merge(self::openValues(), [
+            self::Snoozed->value,
+        ]);
+    }
+
     public function isOpen(): bool
     {
-        return in_array($this, [
-            self::New,
-            self::UnderReview,
-            self::Approved,
-            self::Assigned,
-            self::Acknowledged,
-            self::Investigating,
-            self::Accepted,
-        ], true);
+        return in_array($this->value, self::openValues(), true);
     }
 }

@@ -269,6 +269,84 @@ class CustomerPurchaseAnalysisService
     }
 
     /**
+     * Batch-compute order-header commercial summaries (last purchase date & amount,
+     * pre-dormancy 12-month spend, peak ordering months) for Winback accounts in one query.
+     *
+     * @param  array<int, string>  $accountHashes
+     * @return array<string, array<string, mixed>>
+     */
+    public function getWinbackOrderSummariesForHashes(int $clientId, array $accountHashes): array
+    {
+        $hashes = array_values(array_filter(array_unique($accountHashes)));
+        if (empty($hashes)) {
+            return [];
+        }
+
+        $facts = CommerceCustomerPurchaseFact::where('client_id', $clientId)
+            ->whereIn('customer_identity_hash', $hashes)
+            ->get(['customer_identity_hash', 'canonical_account_id'])
+            ->keyBy('customer_identity_hash');
+
+        $canonicalIds = $facts->pluck('canonical_account_id')->filter()->unique()->values()->all();
+
+        $orders = CommerceOrder::where('client_id', $clientId)
+            ->where('is_valid', true)
+            ->where(function ($q) use ($hashes, $canonicalIds) {
+                $q->whereIn('customer_identity_hash', $hashes);
+                if (! empty($canonicalIds)) {
+                    $q->orWhereIn('canonical_account_id', $canonicalIds);
+                }
+            })
+            ->orderBy('order_date', 'asc')
+            ->get(['customer_identity_hash', 'canonical_account_id', 'source_increment_id', 'order_date', 'net_revenue']);
+
+        $byCanonical = $orders->whereNotNull('canonical_account_id')->groupBy('canonical_account_id');
+        $byHash = $orders->groupBy('customer_identity_hash');
+
+        $result = [];
+        foreach ($hashes as $hash) {
+            $canonicalId = $facts->get($hash)?->canonical_account_id;
+            $acctOrders = ($canonicalId && $byCanonical->has($canonicalId))
+                ? $byCanonical->get($canonicalId)
+                : $byHash->get($hash, collect());
+
+            if ($acctOrders->isEmpty()) {
+                continue;
+            }
+
+            $latestOrder = $acctOrders->last();
+            $latestAt = Carbon::parse($latestOrder->order_date);
+            $windowStart = $latestAt->copy()->subDays(365);
+
+            $preDormancyOrders = $acctOrders->filter(
+                fn ($o) => Carbon::parse($o->order_date)->greaterThanOrEqualTo($windowStart)
+            );
+
+            $monthCounts = [];
+            if ($acctOrders->count() >= 4) {
+                foreach ($acctOrders as $o) {
+                    $monthLabel = Carbon::parse($o->order_date)->format('M');
+                    $monthCounts[$monthLabel] = ($monthCounts[$monthLabel] ?? 0) + 1;
+                }
+                arsort($monthCounts);
+                $monthCounts = array_slice($monthCounts, 0, 2, true);
+            }
+
+            $result[$hash] = [
+                'last_order_at'           => $latestAt->toIso8601String(),
+                'last_order_net_revenue'  => round((float) $latestOrder->net_revenue, 2),
+                'last_order_increment_id' => $latestOrder->source_increment_id,
+                'pre_dormancy_12m_spend'  => round((float) $preDormancyOrders->sum('net_revenue'), 2),
+                'pre_dormancy_12m_orders' => $preDormancyOrders->count(),
+                'peak_ordering_months'    => array_keys($monthCounts),
+                'has_line_item_sku_data'  => false,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
      * Canonical formatting of customer display information across Forge.
      */
     public static function formatCustomerDisplay(
@@ -284,10 +362,16 @@ class CustomerPurchaseAnalysisService
         $hasName = ! empty($customerName);
         $hasId = ! empty($customerId);
 
-        // Distinguish company name from individual contact name
+        // Distinguish company name from individual contact name without duplicating shared names
         $primaryName = null;
-        if ($hasCompany && $hasName && strcasecmp(trim($companyName), trim($customerName)) !== 0) {
-            $primaryName = trim($companyName) . ' (' . trim($customerName) . ')';
+        if ($hasCompany && $hasName) {
+            $trimmedCompany = trim($companyName);
+            $trimmedName = trim($customerName);
+            if (strcasecmp($trimmedCompany, $trimmedName) !== 0 && stripos($trimmedCompany, $trimmedName) === false) {
+                $primaryName = "{$trimmedCompany} ({$trimmedName})";
+            } else {
+                $primaryName = $trimmedCompany;
+            }
         } elseif ($hasCompany) {
             $primaryName = trim($companyName);
         } elseif ($hasName) {

@@ -1205,6 +1205,18 @@ class JiraProvider implements ProjectManagementProvider
             );
         }
 
+        // Block consolidated/superseded duplicates from generating separate external Jira tasks
+        if ($finding && (! empty($finding->metadata_json['superseded_by_finding_id']) || ($finding->dismissed_reason ?? null) === 'consolidated_duplicate')) {
+            $supersedingId = (int) ($finding->metadata_json['superseded_by_finding_id'] ?? 0);
+            $superseding = $supersedingId > 0 ? Finding::find($supersedingId) : null;
+            if ($superseding && $superseding->pm_work_item_id && $superseding->pmWorkItem) {
+                return $superseding->pmWorkItem;
+            }
+            throw new \InvalidArgumentException(
+                "Cannot create PM work item for consolidated duplicate Finding #{$finding->id}; link or create work items on primary Finding #{$supersedingId} instead."
+            );
+        }
+
         if ($finding && ! in_array($finding->status, [FindingStatus::Approved, FindingStatus::Accepted], true)) {
             throw new \InvalidArgumentException(
                 "Cannot create PM work item for Finding #{$finding->id}: Finding must be approved or accepted prior to work item creation. Current status: {$finding->status->value}."
@@ -1216,6 +1228,34 @@ class JiraProvider implements ProjectManagementProvider
 
         if ($finding && $finding->pm_work_item_id && $finding->pmWorkItem) {
             return $finding->pmWorkItem;
+        }
+
+        // Prevent duplicate Jira work items if an open/active sibling shares the same scope key OR any sibling shares the same episode fingerprint
+        // Future incident recurrences after prior episodes are closed (Resolved/Dismissed) receive a new episode fingerprint and remain eligible.
+        if ($finding) {
+            $baseScopeKey = $finding->metadata_json['base_scope_key'] ?? null;
+            $relatedLinked = Finding::where('client_id', $finding->client_id)
+                ->where('id', '!=', $finding->id)
+                ->whereNotNull('pm_work_item_id')
+                ->where(function ($q) use ($finding, $baseScopeKey) {
+                    if ($finding->fingerprint) {
+                        $q->where('fingerprint', $finding->fingerprint);
+                    }
+                    if ($baseScopeKey) {
+                        $q->orWhere(function ($sub) use ($baseScopeKey) {
+                            $sub->where('metadata_json->base_scope_key', $baseScopeKey)
+                                ->whereIn('status', FindingStatus::deduplicationOpenValues());
+                        });
+                    }
+                    if (! empty($finding->metadata_json['superseded_by_finding_id'])) {
+                        $q->orWhere('id', (int) $finding->metadata_json['superseded_by_finding_id']);
+                    }
+                })
+                ->first();
+
+            if ($relatedLinked && $relatedLinked->pmWorkItem) {
+                return $relatedLinked->pmWorkItem;
+            }
         }
 
         if ($idempotencyToken) {

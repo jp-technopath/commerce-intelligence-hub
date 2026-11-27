@@ -9,7 +9,10 @@ use App\Models\Client;
 use App\Models\ClientFindingConfiguration;
 use App\Models\CommerceMetric;
 use App\Models\Finding;
+use App\Services\Metrics\MetricsDiagnosticService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class FindingRuleEvaluator
@@ -62,7 +65,16 @@ class FindingRuleEvaluator
         $periodDays = (int) ($rule['period_days'] ?? 30);
         $now        = now();
         $from       = $now->copy()->subDays($periodDays)->startOfDay();
-        $to         = $now->copy()->endOfDay();
+        $to         = $now->copy()->subDay()->endOfDay();
+
+        // Clamp window to shared available GA4 date if rule uses GA4 to avoid partial-day zeros
+        if (str_contains((string) $rule['metric_a'], 'ga4.') || str_contains((string) ($rule['metric_b'] ?? ''), 'ga4.')) {
+            $maxGa4 = CommerceMetric::where('client_id', $client->id)->where('source', 'ga4')->max('date');
+            if ($maxGa4) {
+                $to = Carbon::parse($maxGa4)->endOfDay();
+                $from = $to->copy()->subDays(max(0, $periodDays - 1))->startOfDay();
+            }
+        }
 
         $metricAKey = $rule['metric_a'];
         $valA       = FindingMetricRegistry::resolveMetric($client, $metricAKey, $from, $to);
@@ -160,9 +172,9 @@ class FindingRuleEvaluator
                 break;
 
             case 'percentage_change':
-                // Period-over-period comparison
-                $fromPrev = $now->copy()->subDays($periodDays * 2)->startOfDay();
-                $toPrev   = $now->copy()->subDays($periodDays + 1)->endOfDay();
+                // Period-over-period comparison (disjoint preceding window of equal length)
+                $toPrev   = $from->copy()->subDay()->endOfDay();
+                $fromPrev = $toPrev->copy()->subDays(max(0, $periodDays - 1))->startOfDay();
                 $valPrev  = (float) FindingMetricRegistry::resolveMetric($client, $metricAKey, $fromPrev, $toPrev);
 
                 $diffAmount = abs((float) $valA - $valPrev);
@@ -199,20 +211,6 @@ class FindingRuleEvaluator
             return false;
         }
 
-        // ── Deduplication: Skip if an open finding for this rule already exists ──
-        $openFindingExists = Finding::where('client_id', $client->id)
-            ->where('finding_type', $rule['key'])
-            ->whereIn('status', [
-                FindingStatus::New->value,
-                FindingStatus::Investigating->value,
-                FindingStatus::Accepted->value,
-            ])
-            ->exists();
-
-        if ($openFindingExists) {
-            return false;
-        }
-
         // ── Formulate Evidence Payload ─────────────────────────────────────────
         $registered = FindingMetricRegistry::getRegisteredMetrics();
         $metaA      = $registered[$metricAKey] ?? [];
@@ -224,6 +222,9 @@ class FindingRuleEvaluator
             'operator'             => $operator,
             'period_days'          => $periodDays,
             'threshold'            => $threshold,
+            'source_window_start'  => $from->toDateString(),
+            'source_window_end'    => $to->toDateString(),
+            'evaluated_at'         => $now->toIso8601String(),
             'metric_a'             => [
                 'key'   => $metricAKey,
                 'label' => $metaA['label'] ?? $metricAKey,
@@ -232,11 +233,17 @@ class FindingRuleEvaluator
             'difference_amount'    => round($diffAmount, 2),
             'difference_pct'       => round($diffPct, 2),
             'quality_gates_passed' => true,
-            'sources'              => array_values(array_filter([
+            'sources'              => array_values(array_unique(array_filter([
                 $metaA['source'] ?? null,
                 $metaB['source'] ?? null,
-            ])),
+            ]))),
         ];
+
+        if ($valPrev !== null) {
+            $evidence['prior_value'] = round((float) $valPrev, 2);
+            $evidence['prior_window_start'] = $fromPrev->toDateString();
+            $evidence['prior_window_end'] = $toPrev->toDateString();
+        }
 
         if ($metaB !== null) {
             $evidence['metric_b'] = [
@@ -244,6 +251,14 @@ class FindingRuleEvaluator
                 'label' => $metaB['label'] ?? $rule['metric_b'],
                 'value' => round((float) $valB, 2),
             ];
+        }
+
+        // Attach scenario-specific authoritative diagnostics via shared analytical services
+        $diagService = new MetricsDiagnosticService();
+        if ($operator === 'percentage_change' && str_contains($metricAKey, 'conversion_rate')) {
+            $evidence['conversion_diagnostics'] = $diagService->buildConversionWindowDiagnostics($client, $from, $to, $fromPrev, $toPrev);
+        } elseif ($operator === 'percentage_difference' && (str_contains($metricAKey, 'klaviyo') || str_contains((string) ($rule['metric_b'] ?? ''), 'klaviyo'))) {
+            $evidence['klaviyo_diagnostics'] = $diagService->buildKlaviyoAttributionDiagnostics($client, $from, $to);
         }
 
         // ── Determine Category & Severity ──────────────────────────────────────
@@ -392,21 +407,97 @@ class FindingRuleEvaluator
 
         $evidence['revenue_impact_calculation'] = $impactCalculation;
 
-        // ── Create Deterministic Finding ───────────────────────────────────────
-        Finding::create([
-            'client_id'                => $client->id,
-            'finding_type'             => $rule['key'],
-            'finding_category'         => $category->value,
-            'title'                    => $title,
-            'description'              => $description,
-            'severity'                 => $severity->value,
-            'confidence_score'         => $confidenceScore,
-            'estimated_revenue_impact' => $estimatedRevenueImpact,
-            'status'                   => FindingStatus::New->value,
-            'metadata_json'            => $evidence,
-            'detected_at'              => now(),
-        ]);
+        $classification = FindingTypeRegistry::classifyByDescriptor(
+            findingType: $rule['key'],
+            ruleKey: $rule['key'],
+            metricKey: $metricAKey,
+            operator: $operator,
+            differencePct: $operator === 'percentage_change' ? (float) $diffPct : null
+        );
 
-        return true;
+        // ── Persist or refresh inside distributed Cache::lock + DB transaction ─────────────
+        $lock = Cache::lock("forge:rule_eval:client:{$client->id}:{$rule['key']}", 30);
+
+        return $lock->block(5, function () use ($client, $rule, $category, $title, $description, $severity, $confidenceScore, $estimatedRevenueImpact, $evidence, $classification, $to, $now) {
+            return DB::transaction(function () use ($client, $rule, $category, $title, $description, $severity, $confidenceScore, $estimatedRevenueImpact, $evidence, $classification, $to, $now) {
+                $existing = Finding::where('client_id', $client->id)
+                    ->where('finding_type', $rule['key'])
+                    ->openForDeduplication()
+                    ->lockForUpdate()
+                    ->orderBy('id')
+                    ->first();
+
+                if ($existing) {
+                    $oldMeta = is_array($existing->metadata_json) ? $existing->metadata_json : [];
+                    $oldWindowEnd = $oldMeta['source_window_end'] ?? ($existing->evidence_json['source_window_end'] ?? null);
+                    $newWindowEnd = $to->toDateString();
+                    $isNewerWindow = ! $oldWindowEnd || strcmp($newWindowEnd, $oldWindowEnd) > 0;
+
+                    $history = is_array($oldMeta['observation_history'] ?? null) ? $oldMeta['observation_history'] : [];
+                    if ($isNewerWindow && $oldWindowEnd) {
+                        $history[] = [
+                            'observed_at'         => $oldWindowEnd,
+                            'source_window_start' => $oldMeta['source_window_start'] ?? null,
+                            'source_window_end'   => $oldWindowEnd,
+                            'metric_a'            => $oldMeta['metric_a'] ?? null,
+                            'metric_b'            => $oldMeta['metric_b'] ?? null,
+                            'difference_pct'      => $oldMeta['difference_pct'] ?? null,
+                        ];
+                        $history = array_slice($history, -10);
+                    }
+
+                    $effectiveWindowStart = $isNewerWindow
+                        ? ($evidence['source_window_start'] ?? ($oldMeta['source_window_start'] ?? null))
+                        : ($oldMeta['source_window_start'] ?? ($evidence['source_window_start'] ?? null));
+                    $effectiveWindowEnd = $isNewerWindow ? $newWindowEnd : $oldWindowEnd;
+                    $effectiveLastObserved = $isNewerWindow
+                        ? ($newWindowEnd . 'T23:59:59+00:00')
+                        : ($oldMeta['last_observed_at'] ?? ($effectiveWindowEnd . 'T23:59:59+00:00'));
+
+                    $existing->update([
+                        'finding_pillar'           => $existing->finding_pillar?->value ?? $classification['pillar_value'],
+                        'title'                    => $title,
+                        'description'              => $description,
+                        'severity'                 => $severity->value,
+                        'confidence_score'         => $confidenceScore,
+                        'estimated_revenue_impact' => $estimatedRevenueImpact,
+                        'evidence_json'            => array_merge($evidence, [
+                            'source_window_start'   => $effectiveWindowStart,
+                            'source_window_end'     => $effectiveWindowEnd,
+                            'observation_refreshed' => $isNewerWindow,
+                        ]),
+                        'metadata_json'            => array_merge($oldMeta, $evidence, [
+                            'source_window_start' => $effectiveWindowStart,
+                            'source_window_end'   => $effectiveWindowEnd,
+                            'observation_history' => $history,
+                            'last_observed_at'    => $effectiveLastObserved,
+                        ]),
+                    ]);
+
+                    return false;
+                }
+
+                Finding::create([
+                    'client_id'                => $client->id,
+                    'finding_type'             => $rule['key'],
+                    'finding_pillar'           => $classification['pillar_value'],
+                    'finding_category'         => $category->value,
+                    'target_role'              => $classification['target_role'],
+                    'title'                    => $title,
+                    'description'              => $description,
+                    'severity'                 => $severity->value,
+                    'confidence_score'         => $confidenceScore,
+                    'estimated_revenue_impact' => $estimatedRevenueImpact,
+                    'status'                   => FindingStatus::New->value,
+                    'evidence_json'            => array_merge($evidence, ['observation_refreshed' => true]),
+                    'metadata_json'            => array_merge($evidence, [
+                        'last_observed_at' => $to->toDateString() . 'T23:59:59+00:00',
+                    ]),
+                    'detected_at'              => $now,
+                ]);
+
+                return true;
+            });
+        });
     }
 }

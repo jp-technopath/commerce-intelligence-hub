@@ -152,18 +152,16 @@ class Finding extends Model
 
     public function scopeActive($query)
     {
-        return $query->whereIn('status', [
-            FindingStatus::New->value,
-            FindingStatus::UnderReview->value,
-            FindingStatus::Approved->value,
-            FindingStatus::Assigned->value,
-            FindingStatus::Acknowledged->value,
-            FindingStatus::Investigating->value,
-            FindingStatus::Accepted->value,
-        ])->where(function ($q) {
-            $q->whereNull('snoozed_until')
-              ->orWhere('snoozed_until', '<=', now());
-        });
+        return $query->whereIn('status', FindingStatus::openValues())
+            ->where(function ($q) {
+                $q->whereNull('snoozed_until')
+                  ->orWhere('snoozed_until', '<=', now());
+            });
+    }
+
+    public function scopeOpenForDeduplication(Builder $query): Builder
+    {
+        return $query->whereIn('status', FindingStatus::deduplicationOpenValues());
     }
 
     public function transitionTo(

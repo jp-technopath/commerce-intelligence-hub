@@ -3,6 +3,7 @@
 namespace Tests\Feature\Intelligence;
 
 use App\Enums\ClientStatus;
+use App\Models\BehavioralMetric;
 use App\Models\Client;
 use App\Models\Finding;
 use App\Models\PmWorkItem;
@@ -28,6 +29,24 @@ class ShadowModeIsolationTest extends TestCase
             'platform_type' => 'Magento',
             'status' => ClientStatus::Active,
         ]);
+
+        // Seed real tenant-scoped Clarity telemetry so replay detects an authentic spike
+        foreach (['2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03'] as $baselineDate) {
+            BehavioralMetric::create([
+                'client_id'     => $client->id,
+                'date'          => $baselineDate,
+                'traffic'       => 500,
+                'script_errors' => 5,
+            ]);
+        }
+        foreach (['2026-11-04', '2026-11-05', '2026-11-06'] as $spikeDate) {
+            BehavioralMetric::create([
+                'client_id'     => $client->id,
+                'date'          => $spikeDate,
+                'traffic'       => 200,
+                'script_errors' => 450,
+            ]);
+        }
 
         $initialFindingsCount = Finding::count();
         $initialWorkItemsCount = class_exists(PmWorkItem::class) ? PmWorkItem::count() : 0;

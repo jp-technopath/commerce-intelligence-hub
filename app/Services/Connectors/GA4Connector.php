@@ -370,6 +370,9 @@ class GA4Connector
             $aov = $data['transactions'] > 0
                 ? round($data['revenue'] / $data['transactions'], 2)
                 : 0.0;
+            $weightedCvr = $data['sessions'] > 0
+                ? round(($data['transactions'] / $data['sessions']) * 100, 4)
+                : 0.0;
 
             $this->integration->client->commerceMetrics()->updateOrCreate(
                 ['date' => $dateKey, 'source' => 'ga4'],
@@ -380,7 +383,7 @@ class GA4Connector
                     'returning_customers'   => max(0, $data['total_users'] - $data['new_users']),
                     'revenue'               => round($data['revenue'], 2),
                     'orders'                => $data['transactions'],
-                    'conversion_rate'       => round($data['conversion_rate'] * 100, 4),
+                    'conversion_rate'       => $weightedCvr,
                     'average_order_value'   => $aov,
                     'source_breakdown_json' => $data['source_breakdown'],
                     'device_breakdown_json' => [],
