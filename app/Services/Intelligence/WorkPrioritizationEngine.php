@@ -95,9 +95,23 @@ class WorkPrioritizationEngine
         $now = now();
 
         $query = Finding::with(['client', 'responsibleUser', 'pmWorkItem'])
+            ->whereHas('client', fn ($q) => $q->external())
             ->whereNotIn('status', [FindingStatus::Resolved->value, FindingStatus::Dismissed->value]);
 
         if ($clientId) {
+            $client = Client::find($clientId);
+            if ($client && $client->isInternal()) {
+                return [
+                    'role'                 => $role,
+                    'role_label'           => $this->getRoleLabel($role),
+                    'recommended_order'    => [],
+                    'all_executable_count' => 0,
+                    'total_revenue_impact' => 0.0,
+                    'budget_warnings'      => 0,
+                    'needs_attention'      => [],
+                    'generated_at'         => $now->toDateTimeString(),
+                ];
+            }
             $query->where('client_id', $clientId);
         } elseif ($actor && ! $actor->is_admin) {
             $assignedIds = $actor->getAssignedClientIds();
@@ -128,7 +142,9 @@ class WorkPrioritizationEngine
               });
         });
 
-        $findings = $query->get();
+        $findings = $query->get()
+            ->reject(fn (Finding $finding) => $finding->client && $finding->client->isInternal())
+            ->values();
 
         $executableActions = [];
         $needsAttention = [];
@@ -234,7 +250,7 @@ class WorkPrioritizationEngine
         $topPriorities = array_slice($allPriorities, 0, 5);
 
         // Gather clients over budget
-        $clientsQuery = Client::query()->where('status', 'active');
+        $clientsQuery = Client::query()->where('status', 'active')->external();
         if ($clientId) {
             $clientsQuery->where('id', $clientId);
         }
@@ -254,7 +270,7 @@ class WorkPrioritizationEngine
         }
 
         // Milestone counts
-        $milestoneQuery = Finding::query();
+        $milestoneQuery = Finding::query()->whereHas('client', fn ($q) => $q->external());
         if ($clientId) {
             $milestoneQuery->where('client_id', $clientId);
         }

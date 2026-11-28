@@ -34,7 +34,7 @@ class RunLiveFindingsAnalysis extends Command
         $clientId = $this->option('client');
         $runAi = (bool) $this->option('ai');
 
-        $query = Client::query();
+        $query = Client::query()->external();
         if ($clientId) {
             $query->where('id', $clientId);
         }

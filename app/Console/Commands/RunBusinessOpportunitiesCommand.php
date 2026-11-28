@@ -34,7 +34,7 @@ class RunBusinessOpportunitiesCommand extends Command
         $dryRun = (bool) $this->option('dry-run');
         $format = $this->option('format');
 
-        $query = Client::query()->where('status', 'active');
+        $query = Client::query()->where('status', 'active')->external();
         if ($clientId) {
             $query->where('id', $clientId);
         }

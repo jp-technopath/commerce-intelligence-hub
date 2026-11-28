@@ -24,6 +24,10 @@ class FindingRuleEvaluator
      */
     public function evaluate(Client $client): int
     {
+        if ($client->isInternal()) {
+            return 0;
+        }
+
         $activeConfig = ClientFindingConfiguration::where('client_id', $client->id)
             ->active()
             ->first();
@@ -62,6 +66,10 @@ class FindingRuleEvaluator
      */
     public function evaluateRule(Client $client, array $rule): bool
     {
+        if ($client->isInternal()) {
+            return false;
+        }
+
         $periodDays = (int) ($rule['period_days'] ?? 30);
         $now        = now();
         $from       = $now->copy()->subDays($periodDays)->startOfDay();

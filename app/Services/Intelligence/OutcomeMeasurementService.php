@@ -34,8 +34,29 @@ class OutcomeMeasurementService
      */
     public function evaluateFindingOutcome(Finding $finding, ?User $actor = null, array $options = []): RecommendationOutcome
     {
-        // 0. Security Context Fail-Closed Safeguard
+        // 0. Security Context & Tenant Isolation Fail-Closed Safeguards
         ClientScopeContext::assertAuthorizedForClient($finding->client_id, $actor);
+
+        if ($finding->client && $finding->client->isInternal()) {
+            throw new \InvalidArgumentException(
+                "Cannot measure commercial outcomes for internal or synthetic tenant Finding #{$finding->id}."
+            );
+        }
+
+        $nonActionableDispositions = [
+            'invalidated_by_source_data_correction',
+            'remediated_by_source_data_correction',
+            'invalidated_synthetic_fixture',
+            'invalidated_unsupported_intelligence',
+            'closed_superseded_historical_observation',
+            'closed_revalidated_funnel_recovery',
+        ];
+        $dispositionType = is_array($finding->metadata_json) ? ($finding->metadata_json['disposition_type'] ?? null) : null;
+        if ($finding->status === \App\Enums\FindingStatus::Dismissed || in_array($dispositionType, $nonActionableDispositions, true)) {
+            throw new \InvalidArgumentException(
+                "Cannot record commercial outcome for non-actionable or dismissed Finding #{$finding->id} (disposition: " . ($dispositionType ?? 'dismissed') . ")."
+            );
+        }
 
         // 1. Safeguard: Verify Action Completed
         if ($finding->execution_status !== FindingExecutionStatus::ActionCompleted && $finding->execution_status !== FindingExecutionStatus::Closed) {

@@ -60,6 +60,12 @@ class BusinessOpportunityEngine
             'findings'          => [],
         ];
 
+        if ($client->isInternal()) {
+            $summary['status'] = 'skipped_internal_client';
+            $summary['message'] = 'Internal or synthetic tenant excluded from customer-facing intelligence.';
+            return $summary;
+        }
+
         // 1. Data Readiness & Freshness Safeguards
         $freshness = $this->freshnessTracker->evaluateFreshness($client);
         $summary['freshness'] = [

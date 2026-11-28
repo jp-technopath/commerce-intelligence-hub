@@ -88,7 +88,10 @@ class BusinessDashboard extends Page
             }
         }
 
-        return $query->pluck('name', 'id')->toArray();
+        return $query->get()
+            ->reject(fn (Client $client) => $client->isInternal())
+            ->pluck('name', 'id')
+            ->toArray();
     }
 
     public function getClientsProperty(): array
@@ -197,7 +200,11 @@ class BusinessDashboard extends Page
     public function getSelectedClientProperty(): ?Client
     {
         if (! $this->selectedClientId) return null;
-        return Client::find($this->selectedClientId);
+        $client = Client::find($this->selectedClientId);
+        if (! $client || $client->isInternal()) {
+            return null;
+        }
+        return $client;
     }
 
     public function setPeriod(string $days): void

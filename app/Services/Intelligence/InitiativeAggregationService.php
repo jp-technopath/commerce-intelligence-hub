@@ -53,6 +53,9 @@ class InitiativeAggregationService
 
         if ($client) {
             ClientScopeContext::assertAuthorizedForClient($client, $currentUser);
+            if ($client->isInternal()) {
+                return collect();
+            }
         } else {
             // Portfolio-wide query requires superadmin user or system maintenance
             if (! ClientScopeContext::isSystemMaintenance()) {
@@ -66,6 +69,7 @@ class InitiativeAggregationService
 
         $query = Finding::query()
             ->with(['client', 'responsibleUser', 'approvedByUser', 'pmWorkItem', 'outcomes'])
+            ->whereHas('client', fn ($q) => $q->external())
             ->where(function ($q) {
                 $q->whereNull('status')
                   ->orWhereNotIn('status', [FindingStatus::Dismissed->value, FindingStatus::Ignored->value]);
@@ -89,7 +93,9 @@ class InitiativeAggregationService
             }
         }
 
-        $findings = $query->orderByDesc('priority_score')->orderByDesc('confidence_score')->get();
+        $findings = $query->orderByDesc('priority_score')->orderByDesc('confidence_score')->get()
+            ->reject(fn (Finding $finding) => $finding->client && $finding->client->isInternal())
+            ->values();
 
         // Constituent-finding-level pillar filtering (resolving known NULL pillars via FindingTypeRegistry without defaulting unknown types)
         if ($pillarFilter) {
@@ -1193,8 +1199,8 @@ class InitiativeAggregationService
                 } elseif ($diagType === 'traffic_denominator_dilution') {
                     $nonDirPrev = number_format((float) ($convDiag['previous']['ga4_non_direct_cvr'] ?? 0), 2);
                     $nonDirCurr = number_format((float) ($convDiag['current']['ga4_non_direct_cvr'] ?? 0), 2);
-                    $summary = "Overall {$period}-day GA4 CVR fell {$pctFormatted} to " . number_format($currCvr, 2) . "% due to Direct-session dilution (excluding Direct: {$nonDirPrev}% → {$nonDirCurr}%).";
-                    $nextStep = 'Audit Direct traffic quality with Analytics rather than modifying checkout flows.';
+                    $summary = "Overall {$period}-day GA4 CVR fell {$pctFormatted} to " . number_format($currCvr, 2) . "% amid unassigned Direct-session dilution (excluding Direct: {$nonDirPrev}% → {$nonDirCurr}%).";
+                    $nextStep = 'Inspect referrer headers, landing pages, user-agent distributions, and GA4 channel rules in Analytics rather than modifying checkout flows.';
                 } elseif ($diagType === 'mixed_dilution_and_commercial_softness') {
                     $nonDirCurr = number_format((float) ($convDiag['current']['ga4_non_direct_cvr'] ?? 0), 2);
                     $mCurrOrd = (int) ($convDiag['current']['magento_valid_orders'] ?? 0);
@@ -1206,7 +1212,9 @@ class InitiativeAggregationService
                 }
 
                 return [
-                    'display_title'     => 'Checkout Conversion Optimization',
+                    'display_title'     => $diagType === 'traffic_denominator_dilution'
+                        ? 'Conversion Rate & Traffic Dilution Audit'
+                        : 'Checkout Conversion Optimization',
                     'card_metric_value' => $pctFormatted,
                     'card_metric_label' => 'conversion rate decline',
                     'card_summary'      => $summary,
@@ -1420,6 +1428,11 @@ class InitiativeAggregationService
                 $cvrFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['conversion_rate']));
                 $campaignTaggingFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['campaign_tagging']));
                 if ($goal === 'Checkout Conversion Optimization' && $cvrFinding && ! $campaignTaggingFinding) {
+                    $cvrDiagType = $cvrFinding->metadata_json['conversion_diagnostics']['diagnosis_type']
+                        ?? ($cvrFinding->evidence_json['conversion_diagnostics']['diagnosis_type'] ?? null);
+                    if ($cvrDiagType === 'traffic_denominator_dilution') {
+                        return 'Overall GA4 conversion rate was diluted by unassigned Direct session volume while non-Direct conversion and Magento valid order counts remained positive; available telemetry does not indicate checkout deterioration or confirm automated bot activity without log inspection.';
+                    }
                     return "Evaluates to {$formattedValue} in modeled conversion impact from the observed GA4 conversion rate drop.";
                 }
                 if ($goal === 'Checkout Conversion Optimization' && ! $cvrFinding && $campaignTaggingFinding) {
@@ -1475,6 +1488,11 @@ class InitiativeAggregationService
                 $cvrFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['conversion_rate']));
                 $campaignTaggingFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['campaign_tagging']));
                 if ($goal === 'Checkout Conversion Optimization' && $cvrFinding && ! $campaignTaggingFinding) {
+                    $cvrDiagType = $cvrFinding->metadata_json['conversion_diagnostics']['diagnosis_type']
+                        ?? ($cvrFinding->evidence_json['conversion_diagnostics']['diagnosis_type'] ?? null);
+                    if ($cvrDiagType === 'traffic_denominator_dilution') {
+                        return 'Analytics team to inspect referrer headers, landing pages, user-agent distributions, and GA4 channel grouping rules rather than modifying checkout flows.';
+                    }
                     return 'E-commerce team to audit checkout step drop-offs and analyze conversion across devices and traffic channels.';
                 }
                 if ($goal === 'Checkout Conversion Optimization' && ! $cvrFinding && $campaignTaggingFinding) {

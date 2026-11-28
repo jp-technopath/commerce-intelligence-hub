@@ -53,6 +53,13 @@ class ChangeDetectionEngine
      */
     public function run(Client $client): int
     {
+        if ($client->isInternal()) {
+            Log::info('ChangeDetectionEngine: skipped internal/synthetic client', [
+                'client_id' => $client->id,
+            ]);
+            return 0;
+        }
+
         if (config('intelligence.stage2.enabled', true)) {
             return $this->runStage2($client);
         }
@@ -65,6 +72,10 @@ class ChangeDetectionEngine
      */
     public function runStage2(Client $client): int
     {
+        if ($client->isInternal()) {
+            return 0;
+        }
+
         $lock = Cache::lock("forge:intelligence_detect:client:{$client->id}", 60);
         if (! $lock->get()) {
             Log::info('ChangeDetectionEngine: skipped concurrent run due to active client lock', [
@@ -540,6 +551,10 @@ class ChangeDetectionEngine
      */
     public function runLegacy(Client $client): int
     {
+        if ($client->isInternal()) {
+            return 0;
+        }
+
         $newFindings = 0;
 
         try {

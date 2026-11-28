@@ -26,7 +26,9 @@ class RunNightlyAnalysis implements ShouldQueue
 
     public function handle(): void
     {
-        $clients = Client::where('status', 'active')->get();
+        $clients = Client::where('status', 'active')->external()->get()
+            ->reject(fn (Client $client) => $client->isInternal())
+            ->values();
         $engine  = new ChangeDetectionEngine();
         $analyst = new AIAnalyst();
 

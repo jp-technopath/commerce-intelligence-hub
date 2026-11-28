@@ -80,34 +80,7 @@ class Integration extends Model
             }
         } catch (\Throwable $e) {}
 
-        // 2. Try candidate fallback keys (e.g. local key, previous prod keys)
-        $candidateKeys = [
-            'fPg+FfvO7T7kDDJiTdwko5a9Cbcyp9yt41kIVaMQ2X8=', // Local key
-            'E2iu1AZORQP5LWQ8c1R5aJo9/Omh7dDqfRzyAhjsCig=', // Default candidate key
-            'cfKjZFh01Yt8ie11EV5ixFu+MMnGbAuDJ50xDj1miI8=',
-        ];
-
-        foreach ($candidateKeys as $k) {
-            $rawKey = base64_decode($k);
-            if (strlen($rawKey) !== 32) continue;
-            try {
-                $enc = new \Illuminate\Encryption\Encrypter($rawKey, 'AES-256-CBC');
-                $dec = $enc->decrypt($value, false);
-                $json = is_string($dec) ? json_decode($dec, true) : $dec;
-                if (is_array($json)) {
-                    return $json;
-                }
-            } catch (\Throwable $e) {}
-            try {
-                $enc = new \Illuminate\Encryption\Encrypter($rawKey, 'AES-256-CBC');
-                $dec = $enc->decrypt($value, true);
-                if (is_array($dec)) {
-                    return $dec;
-                }
-            } catch (\Throwable $e) {}
-        }
-
-        // 3. Try plain JSON string
+        // 2. Try plain JSON string (legacy unencrypted rows)
         $json = json_decode($value, true);
         if (is_array($json)) {
             return $json;

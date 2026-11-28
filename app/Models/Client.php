@@ -383,12 +383,24 @@ class Client extends Model
     }
 
     /**
-     * Check if this client represents an internal agency workspace or tracking project.
+     * Check if this client represents an internal agency workspace, test fixture, or tracking project.
      */
     public function isInternal(): bool
     {
-        if (isset($this->attributes['is_internal'])) {
-            return (bool) $this->attributes['is_internal'];
+        $config = is_array($this->monitoring_config)
+            ? $this->monitoring_config
+            : (json_decode((string) $this->monitoring_config, true) ?: []);
+
+        if (! empty($config['is_synthetic_fixture'])) {
+            return true;
+        }
+
+        if (isset($this->attributes['is_internal']) && (bool) $this->attributes['is_internal']) {
+            return true;
+        }
+
+        if (isset($this->attributes['is_internal']) && ! (bool) $this->attributes['is_internal']) {
+            return false;
         }
 
         return str_contains(strtolower($this->name ?? ''), 'technopath internal')
