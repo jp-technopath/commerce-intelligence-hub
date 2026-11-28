@@ -204,6 +204,42 @@ class ClientResource extends Resource
                                 ->addActionLabel('Add Threshold Override')
                                 ->collapsible()
                                 ->cloneable(),
+
+                            Forms\Components\Section::make('Commerce Order Qualification Policy')
+                                ->description('Client-specific Magento/commerce order eligibility rules preserved independently of other monitoring settings.')
+                                ->schema([
+                                    Forms\Components\TagsInput::make('monitoring_config.order_settings.eligible_statuses')
+                                        ->label('Eligible Order Statuses')
+                                        ->placeholder('complete, processing, confirmed, paid_in_full')
+                                        ->helperText('Terminal/fraud statuses (canceled, closed, fraud, holded, payment_review) remain blocked.')
+                                        ->default(['complete', 'processing']),
+
+                                    Forms\Components\TagsInput::make('monitoring_config.order_settings.excluded_statuses')
+                                        ->label('Explicitly Excluded Statuses')
+                                        ->placeholder('canceled, closed, holded, fraud, internalon')
+                                        ->default(['canceled', 'closed', 'holded', 'fraud', 'test', 'duplicate', 'payment_review']),
+
+                                    Forms\Components\TagsInput::make('monitoring_config.order_settings.b2b_credit_term_methods')
+                                        ->label('B2B Credit-Term Payment Methods')
+                                        ->placeholder('purchaseorder, checkmo, banktransfer, stripe_payments_invoice'),
+
+                                    Forms\Components\TagsInput::make('monitoring_config.order_settings.b2b_authorized_statuses')
+                                        ->label('B2B Full-Authorized Statuses')
+                                        ->placeholder('confirmed'),
+
+                                    Forms\Components\Toggle::make('monitoring_config.order_settings.allow_authorized_b2b_confirmed')
+                                        ->label('Allow Fully-Authorized B2B Confirmed Orders')
+                                        ->helperText('Qualifies processing-state orders whose payment authorization covers full order total before ERP invoicing.')
+                                        ->default(false),
+
+                                    Forms\Components\Toggle::make('monitoring_config.order_settings.allow_invoiced_pending_payment')
+                                        ->label('Allow Invoiced B2B Pending-Payment Orders')
+                                        ->helperText('Qualifies fully invoiced orders using configured B2B credit-term payment methods.')
+                                        ->default(false),
+                                ])
+                                ->columns(2)
+                                ->collapsible()
+                                ->collapsed(),
                         ]),
 
                     // ── Tab 3: Findings Rules ─────────────────────────

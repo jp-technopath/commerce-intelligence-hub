@@ -8,30 +8,35 @@ use App\Models\Integration;
 /**
  * ValidOrderFilter
  *
- * Centralized service evaluating order status eligibility and exclusions
+ * Centralized service evaluating order status and settlement eligibility
  * according to client and integration configuration settings.
  */
 class ValidOrderFilter
 {
-    public const DEFAULT_ELIGIBLE_STATUSES = ['complete', 'processing'];
-    public const DEFAULT_EXCLUDED_STATUSES = ['canceled', 'closed', 'holded', 'fraud', 'test', 'duplicate'];
+    public const DEFAULT_ELIGIBLE_STATUSES = OrderQualificationPolicy::DEFAULT_ELIGIBLE_STATUSES;
+    public const DEFAULT_EXCLUDED_STATUSES = OrderQualificationPolicy::DEFAULT_EXCLUDED_STATUSES;
+
+    private OrderQualificationPolicy $policy;
+
+    public function __construct(?OrderQualificationPolicy $policy = null)
+    {
+        $this->policy = $policy ?? new OrderQualificationPolicy();
+    }
+
+    /**
+     * Evaluate full order qualification and financial classification.
+     */
+    public function evaluate(array $order, Client|Integration|null $context = null): OrderQualificationResult
+    {
+        return $this->policy->evaluate($order, $context);
+    }
 
     /**
      * Get eligible order statuses for a client or integration.
      */
     public function getEligibleStatuses(Client|Integration|null $context = null): array
     {
-        if (! $context) {
-            return self::DEFAULT_ELIGIBLE_STATUSES;
-        }
-
-        $config = match (true) {
-            $context instanceof Client      => $context->monitoring_config['order_settings'] ?? [],
-            $context instanceof Integration => $context->monitoring_config['order_settings'] ?? $context->client->monitoring_config['order_settings'] ?? [],
-            default                          => [],
-        };
-
-        return array_map('strtolower', $config['eligible_statuses'] ?? self::DEFAULT_ELIGIBLE_STATUSES);
+        return $this->policy->getEligibleStatuses($context);
     }
 
     /**
@@ -39,27 +44,17 @@ class ValidOrderFilter
      */
     public function getExcludedStatuses(Client|Integration|null $context = null): array
     {
-        if (! $context) {
-            return self::DEFAULT_EXCLUDED_STATUSES;
-        }
-
-        $config = match (true) {
-            $context instanceof Client      => $context->monitoring_config['order_settings'] ?? [],
-            $context instanceof Integration => $context->monitoring_config['order_settings'] ?? $context->client->monitoring_config['order_settings'] ?? [],
-            default                          => [],
-        };
-
-        return array_map('strtolower', $config['excluded_statuses'] ?? self::DEFAULT_EXCLUDED_STATUSES);
+        return $this->policy->getExcludedStatuses($context);
     }
 
     /**
-     * Determine if an order is valid given its status and flags.
+     * Determine if an order is valid given its state, status, settlement, and flags.
      *
-     * @param  array{status?: string, is_test?: bool, is_fraud?: bool, is_duplicate?: bool, is_fully_refunded?: bool}  $order
+     * @param  array<string, mixed>  $order
      */
     public function isValidOrder(array $order, Client|Integration|null $context = null): bool
     {
-        return $this->getExclusionReason($order, $context) === null;
+        return $this->policy->evaluate($order, $context)->isValid;
     }
 
     /**
@@ -67,35 +62,7 @@ class ValidOrderFilter
      */
     public function getExclusionReason(array $order, Client|Integration|null $context = null): ?string
     {
-        if (! empty($order['is_test'])) {
-            return 'test_order';
-        }
-
-        if (! empty($order['is_fraud'])) {
-            return 'fraudulent_order';
-        }
-
-        if (! empty($order['is_duplicate'])) {
-            return 'duplicate_order';
-        }
-
-        if (! empty($order['is_fully_refunded'])) {
-            return 'fully_refunded';
-        }
-
-        $status           = strtolower($order['status'] ?? 'unknown');
-        $eligibleStatuses = $this->getEligibleStatuses($context);
-        $excludedStatuses = $this->getExcludedStatuses($context);
-
-        if (in_array($status, $excludedStatuses, true)) {
-            return 'status_excluded:' . $status;
-        }
-
-        if (! in_array($status, $eligibleStatuses, true)) {
-            return 'status_not_eligible:' . $status;
-        }
-
-        return null;
+        return $this->policy->evaluate($order, $context)->exclusionReason;
     }
 
     /**

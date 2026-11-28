@@ -502,26 +502,28 @@ class InitiativeAggregationService
             };
             $primaryMetricSubtext = 'Modeled commercial impact based on telemetry delta.';
         } else {
-            // Check for unassigned campaign revenue or attribution variance in evidence
+            // Check for unassigned campaign revenue or attribution variances in evidence (never sum independent models)
             $unassignedRev = (float) $findings->map(function ($f) {
                 $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
                 return $ev['klaviyo_revenue'] ?? ($f->metadata_json['primary_signal']['evidence']['klaviyo_revenue'] ?? 0.0);
             })->sum();
 
-            $attrVariance = (float) $findings->map(function ($f) {
-                $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
-                $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
-                return $meta['difference_amount'] ?? ($ev['variance_amount'] ?? ($ev['difference_amount'] ?? 0.0));
-            })->sum();
+            $attrBreakdown  = $this->extractNonAdditiveAttributionBreakdown($findings);
+            $platformVarAmt = $attrBreakdown['platform_variance_amount'];
+            $klaviyoVarAmt  = $attrBreakdown['klaviyo_variance_amount'];
+            $otherVarAmt    = $attrBreakdown['other_variance_amount'];
+            $primaryAttrAmt = $platformVarAmt > 0 ? $platformVarAmt : ($klaviyoVarAmt > 0 ? $klaviyoVarAmt : $otherVarAmt);
 
-            if ($attrVariance > 0) {
+            if ($primaryAttrAmt > 0) {
                 $hasMonetaryMetric = true;
-                $primaryFinancialLabel = 'Attribution Variance';
-                $primaryFinancialValue = $attrVariance;
-                $formattedPrimaryFinancial = '$' . number_format($attrVariance, 2);
+                $primaryFinancialLabel = ($platformVarAmt > 0 && $klaviyoVarAmt > 0) ? 'GA4 vs Commerce Variance' : 'Attribution Variance';
+                $primaryFinancialValue = $primaryAttrAmt;
+                $formattedPrimaryFinancial = '$' . number_format($primaryAttrAmt, 2);
                 $primaryFinancialNature = 'attribution_variance';
                 $primaryFinancialColor = 'blue';
-                $primaryMetricSubtext = 'Cross-platform reporting discrepancy (not lost sales or pipeline).';
+                $primaryMetricSubtext = ($platformVarAmt > 0 && $klaviyoVarAmt > 0)
+                    ? 'Separate Klaviyo vs GA4 Email variance ($' . number_format($klaviyoVarAmt, 2) . ') is non-additive; neither represents lost sales.'
+                    : 'Cross-platform reporting discrepancy (not lost sales or pipeline).';
                 // Context metric: check for script errors
                 $scriptErr = $findings->first(fn($f) => str_contains($f->finding_type, 'script_error') || str_contains($f->source_id ?? '', 'script_error') || str_contains($f->metadata_json['detector_key'] ?? '', 'script_error'));
                 if ($scriptErr) {
@@ -1161,11 +1163,11 @@ class InitiativeAggregationService
         $revenueDropFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['revenue_drop']));
         $trafficSurgeFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['volume_surge', 'traffic']));
 
-        $attrVariance = (float) $findings->map(function (Finding $f) {
-            $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
-            $ev = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
-            return $meta['difference_amount'] ?? ($ev['variance_amount'] ?? ($ev['difference_amount'] ?? 0.0));
-        })->sum();
+        $attrBreakdown = $this->extractNonAdditiveAttributionBreakdown($findings);
+        $platformVarAmt = $attrBreakdown['platform_variance_amount'];
+        $klaviyoVarAmt  = $attrBreakdown['klaviyo_variance_amount'];
+        $otherVarAmt    = $attrBreakdown['other_variance_amount'];
+        $primaryAttrAmt = $platformVarAmt > 0 ? $platformVarAmt : ($klaviyoVarAmt > 0 ? $klaviyoVarAmt : $otherVarAmt);
 
         // 1. Checkout & Funnel Conversion
         if ($strategicGoal === 'Checkout Conversion Optimization') {
@@ -1261,22 +1263,31 @@ class InitiativeAggregationService
             ];
         }
 
-        // 4. Attribution Discrepancies & Storefront Script Health
+        // 4. Attribution Discrepancies & Storefront Script Health (never sum separate attribution variances)
         $pEv = $platformVarFinding ? (is_array($platformVarFinding->evidence_json) ? $platformVarFinding->evidence_json : (json_decode($platformVarFinding->evidence_json ?? '[]', true) ?: [])) : [];
         $pMeta = $platformVarFinding ? (is_array($platformVarFinding->metadata_json) ? $platformVarFinding->metadata_json : (json_decode($platformVarFinding->metadata_json ?? '[]', true) ?: [])) : [];
         $varPct = (float) ($pEv['variance_pct'] ?? $pMeta['primary_signal']['evidence']['variance_pct'] ?? $pMeta['difference_pct'] ?? 0.0);
 
-        if (($attrVariance > 0 || $platformVarFinding) && $scriptErrorFinding) {
+        if (($primaryAttrAmt > 0 || $platformVarFinding) && $scriptErrorFinding) {
             $sEv = is_array($scriptErrorFinding->evidence_json) ? $scriptErrorFinding->evidence_json : (json_decode($scriptErrorFinding->evidence_json ?? '[]', true) ?: []);
             $sMeta = is_array($scriptErrorFinding->metadata_json) ? $scriptErrorFinding->metadata_json : (json_decode($scriptErrorFinding->metadata_json ?? '[]', true) ?: []);
             $errCount = (int) ($sEv['error_count'] ?? $sMeta['primary_signal']['evidence']['error_count'] ?? 0);
-            $metricVal = $attrVariance > 0 ? $this->formatExecutiveCurrency($attrVariance) : (number_format($varPct, 1) . '%');
+            $metricVal = $varPct > 0
+                ? (number_format($varPct, 1) . '%')
+                : ($primaryAttrAmt > 0 ? $this->formatExecutiveCurrency($primaryAttrAmt) : '1 Finding');
 
             if ($klaviyoAttrFinding && $platformVarFinding) {
                 $ga4Clause = $this->describePlatformVarianceDirection($platformVarFinding);
-                $summary = "Klaviyo and GA4 differ by " . $this->formatExecutiveCurrency($attrVariance) . ", {$ga4Clause}, alongside " . number_format($errCount) . " storewide Clarity script errors.";
+                $ga4Part = $platformVarAmt > 0
+                    ? "{$ga4Clause} (" . $this->formatExecutiveCurrency($platformVarAmt) . ")"
+                    : $ga4Clause;
+                $klavPart = $klaviyoVarAmt > 0
+                    ? $this->formatExecutiveCurrency($klaviyoVarAmt)
+                    : '$0';
+                $summary = "{$ga4Part}, Klaviyo vs GA4 Email differs separately by {$klavPart} (non-additive), alongside " . number_format($errCount) . " storewide Clarity script errors.";
             } else {
-                $summary = "Cross-platform attribution differs by {$metricVal} alongside " . number_format($errCount) . " front-end JavaScript exceptions requiring technical review.";
+                $displayDiff = $primaryAttrAmt > 0 ? $this->formatExecutiveCurrency($primaryAttrAmt) : (number_format($varPct, 1) . '%');
+                $summary = "Cross-platform attribution differs by {$displayDiff} alongside " . number_format($errCount) . " front-end JavaScript exceptions requiring technical review.";
             }
 
             return [
@@ -1288,21 +1299,34 @@ class InitiativeAggregationService
             ];
         }
 
-        if ($attrVariance > 0 || $platformVarFinding || $strategicGoal === 'Revenue & Channel Attribution') {
-            $metricVal = $attrVariance > 0 ? $this->formatExecutiveCurrency($attrVariance) : (number_format($varPct, 1) . '%');
+        if ($primaryAttrAmt > 0 || $platformVarFinding || $strategicGoal === 'Revenue & Channel Attribution') {
             if ($platformVarFinding && $klaviyoAttrFinding) {
+                $metricVal = $varPct > 0
+                    ? (number_format($varPct, 1) . '%')
+                    : $this->formatExecutiveCurrency($platformVarAmt > 0 ? $platformVarAmt : $klaviyoVarAmt);
+                $metricLabel = $varPct > 0 ? 'GA4 vs Commerce variance' : 'attribution discrepancy';
                 $ga4Clause = $this->describePlatformVarianceDirection($platformVarFinding);
-                $summary = "Klaviyo vs GA4 differs by " . $this->formatExecutiveCurrency($attrVariance) . ", and {$ga4Clause} (reporting alignment variances, not lost sales).";
+                $ga4Part = $platformVarAmt > 0
+                    ? "{$ga4Clause} (" . $this->formatExecutiveCurrency($platformVarAmt) . ")"
+                    : $ga4Clause;
+                $klavPart = $klaviyoVarAmt > 0
+                    ? $this->formatExecutiveCurrency($klaviyoVarAmt)
+                    : '$0';
+                $summary = "{$ga4Part}, while Klaviyo and GA4 Email differ separately by {$klavPart} (non-additive reporting variances, not lost sales).";
             } elseif ($platformVarFinding) {
+                $metricVal = $varPct > 0 ? (number_format($varPct, 1) . '%') : $this->formatExecutiveCurrency($platformVarAmt);
+                $metricLabel = 'attribution discrepancy';
                 $summary = $this->describePlatformVarianceDirection($platformVarFinding) . ' over the monitored window, reflecting cross-platform tracking and order-status alignment differences.';
             } else {
-                $summary = "Klaviyo attributed " . $this->formatExecutiveCurrency($attrVariance) . " in email revenue vs $0 in GA4 Email across differing attribution models.";
+                $metricVal = $primaryAttrAmt > 0 ? $this->formatExecutiveCurrency($primaryAttrAmt) : (number_format($varPct, 1) . '%');
+                $metricLabel = 'attribution discrepancy';
+                $summary = "Klaviyo attributed " . $this->formatExecutiveCurrency($primaryAttrAmt) . " in email revenue vs $0 in GA4 Email across differing attribution models.";
             }
 
             return [
                 'display_title'     => 'Revenue & Channel Attribution',
                 'card_metric_value' => $metricVal,
-                'card_metric_label' => 'attribution discrepancy',
+                'card_metric_label' => $metricLabel,
                 'card_summary'      => $summary,
                 'card_next_step'    => 'Reconcile GA4 purchase status filtering, Klaviyo attribution windows, and UTM parameters.',
             ];
@@ -1404,6 +1428,14 @@ class InitiativeAggregationService
                 $platformVarFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['platform_variance', 'ga4_vs_commerce']));
                 $scriptErrorFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['script_error']));
                 $klaviyoAttrFinding = $findings->first(fn(Finding $f) => $this->findingMatchesSignal($f, ['klaviyo']) && $this->findingMatchesSignal($f, ['attribution_variance']));
+                if ($platformVarFinding && $klaviyoAttrFinding) {
+                    $breakdown = $this->extractNonAdditiveAttributionBreakdown($findings);
+                    $ga4Part = $breakdown['platform_variance_amount'] > 0
+                        ? $this->describePlatformVarianceDirection($platformVarFinding) . ' (' . $this->formatExecutiveCurrency($breakdown['platform_variance_amount']) . ')'
+                        : $this->describePlatformVarianceDirection($platformVarFinding);
+                    $klavPart = $this->formatExecutiveCurrency($breakdown['klaviyo_variance_amount']);
+                    return "{$ga4Part}, while Klaviyo vs GA4 Email reports a separate, non-additive discrepancy of {$klavPart} (tracking alignment differences, not lost sales).";
+                }
                 if ($goal === 'Commercial Account Growth' && $platformVarFinding && ! $scriptErrorFinding && ! $klaviyoAttrFinding) {
                     return $this->describePlatformVarianceDirection($platformVarFinding) . ' over the monitored window, reflecting cross-platform tracking alignment differences rather than lost orders.';
                 }
@@ -1504,5 +1536,46 @@ class InitiativeAggregationService
 
         $record = ClientFindingConfiguration::where('client_id', $clientId)->first();
         return $this->configCache[$clientId] = ($record?->configuration_json ?? []);
+    }
+
+    /**
+     * Extract independent attribution discrepancy dollar amounts without summing
+     * non-additive platform models (e.g., GA4 vs Commerce + Klaviyo vs GA4 Email).
+     *
+     * @return array{
+     *   platform_variance_amount: float,
+     *   klaviyo_variance_amount: float,
+     *   other_variance_amount: float
+     * }
+     */
+    protected function extractNonAdditiveAttributionBreakdown(Collection $findings): array
+    {
+        $platformAmt = 0.0;
+        $klaviyoAmt  = 0.0;
+        $otherAmt    = 0.0;
+
+        foreach ($findings as $f) {
+            $meta = is_array($f->metadata_json) ? $f->metadata_json : (json_decode($f->metadata_json ?? '[]', true) ?: []);
+            $ev   = is_array($f->evidence_json) ? $f->evidence_json : (json_decode($f->evidence_json ?? '[]', true) ?: []);
+            $amt  = (float) ($meta['difference_amount'] ?? ($ev['variance_amount'] ?? ($ev['difference_amount'] ?? 0.0)));
+
+            if ($amt <= 0) {
+                continue;
+            }
+
+            if ($this->findingMatchesSignal($f, ['platform_variance', 'ga4_vs_commerce'])) {
+                $platformAmt = max($platformAmt, $amt);
+            } elseif ($this->findingMatchesSignal($f, ['klaviyo']) && $this->findingMatchesSignal($f, ['attribution_variance'])) {
+                $klaviyoAmt = max($klaviyoAmt, $amt);
+            } else {
+                $otherAmt = max($otherAmt, $amt);
+            }
+        }
+
+        return [
+            'platform_variance_amount' => round($platformAmt, 2),
+            'klaviyo_variance_amount'  => round($klaviyoAmt, 2),
+            'other_variance_amount'    => round($otherAmt, 2),
+        ];
     }
 }

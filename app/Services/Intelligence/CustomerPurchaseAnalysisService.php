@@ -3,6 +3,7 @@
 namespace App\Services\Intelligence;
 
 use App\Models\Client;
+use App\Models\CommerceCustomerIdentityMapping;
 use App\Models\CommerceCustomerPurchaseFact;
 use App\Models\CommerceOrder;
 use Carbon\Carbon;
@@ -110,6 +111,20 @@ class CustomerPurchaseAnalysisService
         $fact = CommerceCustomerPurchaseFact::where('client_id', $client->id)
             ->where('customer_identity_hash', $customerIdentityHash)
             ->first();
+
+        if (! $fact) {
+            $mappedCanonical = CommerceCustomerIdentityMapping::where('client_id', $client->id)
+                ->where('identity_type', 'source_identity_hash')
+                ->where('identity_value', $customerIdentityHash)
+                ->where('is_active', true)
+                ->value('canonical_account_id');
+
+            if (! empty($mappedCanonical)) {
+                $fact = CommerceCustomerPurchaseFact::where('client_id', $client->id)
+                    ->where('canonical_account_id', $mappedCanonical)
+                    ->first();
+            }
+        }
 
         if (! $fact) {
             $this->accountProfileCache[$cacheKey] = null;
@@ -226,10 +241,24 @@ class CustomerPurchaseAnalysisService
             return self::$resolvedCustomerDisplayCache[$cacheKey];
         }
 
-        // 1. Check purchase facts (reconciled, verified)
+        // 1. Check purchase facts (reconciled, verified), including canonical mapping fallback
         $fact = CommerceCustomerPurchaseFact::where('client_id', $clientId)
             ->where('customer_identity_hash', $customerIdentityHash)
             ->first();
+
+        if (! $fact) {
+            $mappedCanonical = CommerceCustomerIdentityMapping::where('client_id', $clientId)
+                ->where('identity_type', 'source_identity_hash')
+                ->where('identity_value', $customerIdentityHash)
+                ->where('is_active', true)
+                ->value('canonical_account_id');
+
+            if (! empty($mappedCanonical)) {
+                $fact = CommerceCustomerPurchaseFact::where('client_id', $clientId)
+                    ->where('canonical_account_id', $mappedCanonical)
+                    ->first();
+            }
+        }
 
         $custId = $fact?->customer_id;
         $custEmail = $fact?->customer_email;

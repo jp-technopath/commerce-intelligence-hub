@@ -5,6 +5,8 @@ namespace App\Services\Intelligence;
 use App\Enums\FindingExecutionStatus;
 use App\Enums\FindingOutcomeStatus;
 use App\Models\Client;
+use App\Models\CommerceCustomerIdentityMapping;
+use App\Models\CommerceCustomerPurchaseFact;
 use App\Models\CommerceOrder;
 use App\Models\Finding;
 use App\Models\RecommendationOutcome;
@@ -49,24 +51,16 @@ class OutcomeMeasurementService
         $method = $options['attribution_method'] ?? $this->determineDefaultMethod($finding);
         $fullRecoveryJustification = $options['full_recovery_justification'] ?? null;
 
-        // 2. Fetch and Deduplicate Eligible Commerce Orders
-        $customerId = $finding->metadata_json['registered_customer_id'] 
-            ?? $finding->metadata_json['customer_id'] 
-            ?? $finding->metadata_json['account_id'] 
-            ?? null;
+        // 2. Fetch and Deduplicate Eligible Commerce Orders using fail-closed canonical account scope
+        $identityScope = $this->resolveCanonicalIdentityScope($finding);
 
         $ordersQuery = CommerceOrder::query()
             ->where('client_id', $finding->client_id)
             ->where('is_valid', true)
-            ->whereNotIn(DB::raw('LOWER(order_status)'), ['canceled', 'cancelled', 'void', 'failed', 'fraud'])
+            ->whereNotIn(DB::raw('LOWER(order_status)'), ['canceled', 'cancelled', 'closed', 'holded', 'payment_review', 'void', 'failed', 'fraud'])
             ->whereBetween('order_date', [$completedAt, $windowEnd]);
 
-        if ($customerId !== null) {
-            $ordersQuery->where(function ($q) use ($customerId) {
-                $q->where('registered_customer_id', (string) $customerId)
-                  ->orWhere('customer_identity_hash', (string) $customerId);
-            });
-        }
+        $this->applyCanonicalIdentityFilter($ordersQuery, $identityScope);
 
         $candidateOrders = $ordersQuery->orderBy('order_date', 'asc')->get();
 
@@ -124,6 +118,10 @@ class OutcomeMeasurementService
         $actualIncrementalImpact = 0.00;
         $methodologyNotes = [];
 
+        if (! $identityScope['has_verified_identity']) {
+            $methodologyNotes[] = 'Identity matching fail-closed: no verified canonical account identifier present on finding.';
+        }
+
         if ($isZeroOutcome) {
             $windowElapsed = now()->greaterThanOrEqualTo($windowEnd) || ! empty($options['force_finalize']);
 
@@ -166,7 +164,7 @@ class OutcomeMeasurementService
                 // Calculate historical pre-dormancy baseline or use supplied benchmark
                 $baselineExpectedRevenue = isset($options['baseline_expected_revenue'])
                     ? (float) $options['baseline_expected_revenue']
-                    : $this->calculateDormantHistoricalBaseline($finding, $customerId, $completedAt);
+                    : $this->calculateDormantHistoricalBaseline($finding, $identityScope, $completedAt);
 
                 $actualIncrementalImpact = max(0.00, round($observedRevenue - $baselineExpectedRevenue, 2));
                 $methodologyNotes[] = "Modeled Incremental Lift (Non-Causal): Observed verified transactions of \${$observedRevenue} across {$ordersCount} valid order(s). Deducted historical pre-dormancy run-rate baseline of \${$baselineExpectedRevenue}. Modeled incremental lift: \${$actualIncrementalImpact}. (Attribution Note: Modeled estimate based on historical purchasing run-rate; external factors including seasonality, general market conditions, and concurrent marketing may influence buyer activity).";
@@ -218,27 +216,245 @@ class OutcomeMeasurementService
     }
 
     /**
+     * Resolve strict canonical purchasing account identifiers scoped strictly to the finding's client.
+     * Matches registered IDs, mapped source hashes, and verified account emails — never company name or email domain.
+     *
+     * @return array{
+     *   has_verified_identity: bool,
+     *   canonical_account_ids: array<int, string>,
+     *   registered_customer_ids: array<int, string>,
+     *   identity_hashes: array<int, string>,
+     *   verified_emails: array<int, string>
+     * }
+     */
+    public function resolveCanonicalIdentityScope(Finding $finding): array
+    {
+        $clientId = (int) $finding->client_id;
+        $meta = is_array($finding->metadata_json) ? $finding->metadata_json : [];
+        $ev   = is_array($finding->evidence_json) ? $finding->evidence_json : [];
+
+        $canonicalIds = [];
+        $registeredIds = [];
+        $identityHashes = [];
+        $verifiedEmails = [];
+
+        foreach ([$meta['canonical_account_id'] ?? null, $ev['canonical_account_id'] ?? null] as $cid) {
+            if (is_string($cid) && trim($cid) !== '') {
+                $canonicalIds[] = trim($cid);
+            }
+        }
+
+        $legacyCustId = $meta['registered_customer_id'] ?? $meta['customer_id'] ?? $meta['account_id'] ?? null;
+        if ($legacyCustId !== null && trim((string) $legacyCustId) !== '') {
+            $custStr = trim((string) $legacyCustId);
+            $registeredIds[] = $custStr;
+            if (strlen($custStr) >= 32 && ctype_xdigit($custStr)) {
+                $identityHashes[] = $custStr;
+            }
+        }
+
+        foreach ([$finding->account_identity_hash, $meta['customer_identity_hash'] ?? null, $meta['account_identity_hash'] ?? null, $ev['customer_identity_hash'] ?? null] as $hashVal) {
+            if (is_string($hashVal) && trim($hashVal) !== '') {
+                $val = trim($hashVal);
+                if (str_starts_with($val, 'client_')) {
+                    $canonicalIds[] = $val;
+                } else {
+                    $identityHashes[] = $val;
+                }
+            }
+        }
+
+        foreach ([$meta['customer_email'] ?? null, $ev['customer_email'] ?? null] as $emailVal) {
+            if (is_string($emailVal) && str_contains(trim($emailVal), '@')) {
+                $verifiedEmails[] = strtolower(trim($emailVal));
+            }
+        }
+
+        $canonicalIds = array_values(array_unique($canonicalIds));
+        $registeredIds = array_values(array_unique($registeredIds));
+        $identityHashes = array_values(array_unique($identityHashes));
+        $verifiedEmails = array_values(array_unique($verifiedEmails));
+
+        if (empty($canonicalIds) && empty($registeredIds) && empty($identityHashes) && empty($verifiedEmails)) {
+            return [
+                'has_verified_identity'   => false,
+                'canonical_account_ids'   => [],
+                'registered_customer_ids' => [],
+                'identity_hashes'         => [],
+                'verified_emails'         => [],
+            ];
+        }
+
+        // Expand canonical IDs via active identity mappings within the same tenant
+        $mappedCanonicalRows = CommerceCustomerIdentityMapping::where('client_id', $clientId)
+            ->where('is_active', true)
+            ->where(function ($q) use ($canonicalIds, $registeredIds, $identityHashes, $verifiedEmails) {
+                $hasClause = false;
+                if (! empty($canonicalIds)) {
+                    $q->whereIn('canonical_account_id', $canonicalIds);
+                    $hasClause = true;
+                }
+                if (! empty($registeredIds)) {
+                    $method = $hasClause ? 'orWhere' : 'where';
+                    $q->{$method}(fn ($sq) => $sq->where('identity_type', 'registered_customer_id')->whereIn('identity_value', $registeredIds));
+                    $hasClause = true;
+                }
+                if (! empty($identityHashes)) {
+                    $method = $hasClause ? 'orWhere' : 'where';
+                    $q->{$method}(fn ($sq) => $sq->where('identity_type', 'source_identity_hash')->whereIn('identity_value', $identityHashes));
+                    $hasClause = true;
+                }
+                if (! empty($verifiedEmails)) {
+                    $method = $hasClause ? 'orWhere' : 'where';
+                    $q->{$method}(fn ($sq) => $sq->where('identity_type', 'normalized_email')->whereIn('identity_value', $verifiedEmails));
+                }
+            })
+            ->pluck('canonical_account_id')
+            ->filter()
+            ->all();
+
+        $canonicalIds = array_values(array_unique(array_merge($canonicalIds, $mappedCanonicalRows)));
+
+        // Expand via reconciled purchase facts within the same tenant
+        $factQuery = CommerceCustomerPurchaseFact::where('client_id', $clientId)
+            ->where(function ($q) use ($canonicalIds, $registeredIds, $identityHashes, $verifiedEmails) {
+                $hasClause = false;
+                if (! empty($canonicalIds)) {
+                    $q->whereIn('canonical_account_id', $canonicalIds);
+                    $hasClause = true;
+                }
+                if (! empty($registeredIds)) {
+                    $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                    $q->{$method}('customer_id', $registeredIds);
+                    $hasClause = true;
+                }
+                if (! empty($identityHashes)) {
+                    $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                    $q->{$method}('customer_identity_hash', $identityHashes);
+                    $hasClause = true;
+                }
+                if (! empty($verifiedEmails)) {
+                    $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                    $q->{$method}(DB::raw('LOWER(TRIM(customer_email))'), $verifiedEmails);
+                }
+            })
+            ->get(['canonical_account_id', 'customer_id', 'customer_identity_hash', 'customer_email']);
+
+        foreach ($factQuery as $f) {
+            if (! empty($f->canonical_account_id)) {
+                $canonicalIds[] = $f->canonical_account_id;
+            }
+            if (! empty($f->customer_id)) {
+                $registeredIds[] = (string) $f->customer_id;
+            }
+            if (! empty($f->customer_identity_hash)) {
+                $identityHashes[] = $f->customer_identity_hash;
+            }
+            if (! empty($f->customer_email) && str_contains((string) $f->customer_email, '@')) {
+                $verifiedEmails[] = strtolower(trim((string) $f->customer_email));
+            }
+        }
+
+        $canonicalIds = array_values(array_unique($canonicalIds));
+
+        // Fetch all linked active identities belonging to discovered canonical accounts
+        if (! empty($canonicalIds)) {
+            $linkedMappings = CommerceCustomerIdentityMapping::where('client_id', $clientId)
+                ->where('is_active', true)
+                ->whereIn('canonical_account_id', $canonicalIds)
+                ->get(['identity_type', 'identity_value']);
+
+            foreach ($linkedMappings as $lm) {
+                if ($lm->identity_type === 'registered_customer_id' && $lm->identity_value !== '') {
+                    $registeredIds[] = (string) $lm->identity_value;
+                } elseif ($lm->identity_type === 'source_identity_hash' && $lm->identity_value !== '') {
+                    $identityHashes[] = (string) $lm->identity_value;
+                } elseif ($lm->identity_type === 'normalized_email' && str_contains((string) $lm->identity_value, '@')) {
+                    $verifiedEmails[] = strtolower(trim((string) $lm->identity_value));
+                }
+            }
+        }
+
+        $registeredIds = array_values(array_unique($registeredIds));
+
+        // Discover verified account emails from valid registered orders for those customer IDs
+        if (! empty($registeredIds)) {
+            $orderEmails = CommerceOrder::where('client_id', $clientId)
+                ->where('is_valid', true)
+                ->whereIn('registered_customer_id', $registeredIds)
+                ->whereNotNull('customer_email')
+                ->pluck('customer_email')
+                ->all();
+
+            foreach ($orderEmails as $oe) {
+                $norm = strtolower(trim((string) $oe));
+                if ($norm !== '' && str_contains($norm, '@')) {
+                    $verifiedEmails[] = $norm;
+                }
+            }
+        }
+
+        $identityHashes = array_values(array_unique($identityHashes));
+        $verifiedEmails = array_values(array_unique($verifiedEmails));
+
+        return [
+            'has_verified_identity'   => ! empty($canonicalIds) || ! empty($registeredIds) || ! empty($identityHashes) || ! empty($verifiedEmails),
+            'canonical_account_ids'   => $canonicalIds,
+            'registered_customer_ids' => $registeredIds,
+            'identity_hashes'         => $identityHashes,
+            'verified_emails'         => $verifiedEmails,
+        ];
+    }
+
+    protected function applyCanonicalIdentityFilter($query, array $identityScope): void
+    {
+        if (empty($identityScope['has_verified_identity'])) {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+
+        $query->where(function ($q) use ($identityScope) {
+            $hasClause = false;
+            if (! empty($identityScope['canonical_account_ids'])) {
+                $q->whereIn('canonical_account_id', $identityScope['canonical_account_ids']);
+                $hasClause = true;
+            }
+            if (! empty($identityScope['registered_customer_ids'])) {
+                $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                $q->{$method}('registered_customer_id', $identityScope['registered_customer_ids']);
+                $hasClause = true;
+            }
+            if (! empty($identityScope['identity_hashes'])) {
+                $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                $q->{$method}('customer_identity_hash', $identityScope['identity_hashes']);
+                $hasClause = true;
+            }
+            if (! empty($identityScope['verified_emails'])) {
+                $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                $q->{$method}(DB::raw('LOWER(TRIM(customer_email))'), $identityScope['verified_emails']);
+            }
+        });
+    }
+
+    /**
      * Compute historical pre-dormancy baseline revenue for a customer.
      * Looks at historical purchases before the dormant period to establish expected baseline.
      */
-    protected function calculateDormantHistoricalBaseline(Finding $finding, mixed $customerId, Carbon $completedAt): float
+    protected function calculateDormantHistoricalBaseline(Finding $finding, array $identityScope, Carbon $completedAt): float
     {
-        if ($customerId === null) {
+        if (empty($identityScope['has_verified_identity'])) {
             // Default conservative baseline: 15% of estimated opportunity value
             return round((float) ($finding->estimated_revenue_impact ?? 0) * 0.15, 2);
         }
 
-        // Look at orders in the 90 days before dormancy/action
-        $priorOrders = CommerceOrder::where('client_id', $finding->client_id)
+        // Look at orders prior to dormancy/action for this canonical account
+        $priorQuery = CommerceOrder::where('client_id', $finding->client_id)
             ->where('is_valid', true)
-            ->where('order_date', '<', $completedAt)
-            ->where(function ($q) use ($customerId) {
-                $q->where('registered_customer_id', (string) $customerId)
-                  ->orWhere('customer_identity_hash', (string) $customerId);
-            })
-            ->latest('order_date')
-            ->take(5)
-            ->get();
+            ->where('order_date', '<', $completedAt);
+
+        $this->applyCanonicalIdentityFilter($priorQuery, $identityScope);
+
+        $priorOrders = $priorQuery->latest('order_date')->take(5)->get();
 
         if ($priorOrders->isEmpty()) {
             // No prior orders found; assume baseline of 10% of estimated impact

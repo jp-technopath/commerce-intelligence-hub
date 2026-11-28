@@ -926,7 +926,7 @@ class OpportunityExplanationService
                 $confirmedObservation = "GA4 overall conversion rate shifted {$weightedPrevCvr}% → {$weightedCurrCvr}%{$storedNote} while Direct traffic expanded to {$dirShare}% of sessions. Excluding Direct traffic, GA4 conversion moved {$nonDirectPrev}% → {$nonDirectCurr}%, and Magento recorded {$mCurrOrd} valid orders ($" . number_format($mCurrRev, 2) . " net) vs {$mPrevOrd} prior valid orders" . ($mExclOrd > 0 ? " ({$mExclOrd} additional orders excluded by status)." : '.');
 
                 if ($diagType === 'traffic_denominator_dilution') {
-                    $possibleImplication = "Overall GA4 conversion decline is primarily explained by Direct traffic denominator dilution rather than commercial order loss; check Direct traffic quality rather than modifying checkout code.";
+                    $possibleImplication = "Available evidence does not currently establish checkout deterioration: overall GA4 conversion decline is primarily explained by Direct traffic denominator dilution rather than commercial order loss; check Direct traffic quality rather than modifying checkout code.";
                     $recommendedAction = "Task Analytics & {$targetTeamLabel} with auditing Direct traffic sources and session quality before making checkout changes.";
                 } elseif ($diagType === 'mixed_dilution_and_commercial_softness') {
                     $possibleImplication = "Observed metrics combine severe Direct-session denominator dilution ({$dirShare}% share) with softer non-Direct conversion ({$nonDirectPrev}% → {$nonDirectCurr}%) and/or lower valid order count ({$mPrevOrd} → {$mCurrOrd}). Both traffic quality and order-status pipelines warrant inspection.";

@@ -177,7 +177,16 @@ class IntegrationsRelationManager extends RelationManager
                     }),
                 Tables\Actions\EditAction::make()
                     ->mutateRecordDataUsing(fn (array $data, Integration $record): array => \App\Filament\Resources\IntegrationResource::deserializeCredentials($data, $record->credentials_json ?? []))
-                    ->mutateFormDataUsing(fn (array $data, Integration $record): array => \App\Filament\Resources\IntegrationResource::serializeCredentials($data, $record->credentials_json ?? [])),
+                    ->mutateFormDataUsing(function (array $data, Integration $record): array {
+                        $data = \App\Filament\Resources\IntegrationResource::serializeCredentials($data, $record->credentials_json ?? []);
+                        $manager = new \App\Services\Configuration\ClientConfigurationManager();
+                        $data['monitoring_config'] = $manager->mergeFormSubmission(
+                            is_array($record->monitoring_config) ? $record->monitoring_config : [],
+                            is_array($data['monitoring_config'] ?? null) ? $data['monitoring_config'] : [],
+                            \App\Services\Configuration\ClientConfigurationManager::PROTECTED_INTEGRATION_KEYS
+                        );
+                        return $data;
+                    }),
                 Tables\Actions\DeleteAction::make(),
             ]);
     }

@@ -24,6 +24,7 @@ class BackfillCustomerDisplayAttributesCommand extends Command
      */
     protected $signature = 'commerce:backfill-customer-display-attributes
                             {--client= : The ID of the client to backfill (reconciles all external if omitted)}
+                            {--confirm-tenant-isolation : Explicit acknowledgment required before mutating customer identity rows}
                             {--dry-run : Inspect without writing changes}';
 
     /**
@@ -52,6 +53,11 @@ class BackfillCustomerDisplayAttributesCommand extends Command
     {
         $clientId = $this->option('client');
         $dryRun = (bool) $this->option('dry-run');
+
+        if (! $dryRun && ! $this->option('confirm-tenant-isolation')) {
+            $this->error('Fail-closed: pass --confirm-tenant-isolation (or use --dry-run) before mutating customer identity records.');
+            return self::FAILURE;
+        }
 
         $this->info('=== Forge: Customer Identity Display Backfill & Verification ===');
         if ($dryRun) {
@@ -112,11 +118,21 @@ class BackfillCustomerDisplayAttributesCommand extends Command
     {
         $this->info('Checking authentic Magento database for Client #2 orders...');
 
-        $dbHost = 'cloudhost-8643311.us-midwest-1.nxcli.net';
-        $dbName = 'a34148d5_09052023';
-        $dbUser = 'a34148d5_jp';
-        $dbPass = 'GrapedHookeyFeintHewers';
-        $dbPort = 3306;
+        $integration = Integration::where('client_id', $client->id)
+            ->where('integration_type', 'adobe_commerce')
+            ->first();
+
+        $creds  = $integration?->credentials_json ?? [];
+        $dbHost = $creds['db_host'] ?? '';
+        $dbName = $creds['db_name'] ?? '';
+        $dbUser = $creds['db_user'] ?? '';
+        $dbPass = $creds['db_password'] ?? '';
+        $dbPort = $creds['db_port'] ?? 3306;
+
+        if (empty($dbHost) || empty($dbName) || empty($dbUser)) {
+            $this->warn("Skipping Client #{$client->id}: Adobe Commerce integration lacks explicit DB credentials in credentials_json.");
+            return;
+        }
 
         try {
             $dsn = "mysql:host={$dbHost};dbname={$dbName};port={$dbPort};charset=utf8mb4";
@@ -232,18 +248,33 @@ class BackfillCustomerDisplayAttributesCommand extends Command
 
         $this->info("Found {$orders->count()} orders requiring contact attributes backfill.");
 
-        $tokenResp = Http::timeout(15)->post('https://shop-backend.cambro.com/rest/V1/integration/admin/token', [
-            'username' => 'jean',
-            'password' => 'g7mP^xt3JWWKU@oP',
-        ]);
+        $integration = Integration::where('client_id', $client->id)
+            ->where('integration_type', 'adobe_commerce')
+            ->first();
+        $creds = $integration?->credentials_json ?? [];
+        $baseStoreUrl = rtrim((string) ($creds['base_url'] ?? ''), '/');
 
-        if (! $tokenResp->successful()) {
-            $this->error("Failed to authenticate with Cambro Adobe Commerce API: " . $tokenResp->body());
+        if ($baseStoreUrl === '') {
+            $this->warn("Skipping Client #{$client->id}: missing base_url in Adobe Commerce credentials_json.");
             return;
         }
 
-        $token = trim($tokenResp->json(), '"');
-        $baseUrl = 'https://shop-backend.cambro.com/rest/V1/orders';
+        if (! empty($creds['access_token'])) {
+            $token = trim((string) $creds['access_token']);
+        } else {
+            $tokenResp = Http::timeout(15)->post($baseStoreUrl . '/rest/V1/integration/admin/token', [
+                'username' => $creds['admin_username'] ?? '',
+                'password' => $creds['admin_password'] ?? '',
+            ]);
+
+            if (! $tokenResp->successful()) {
+                $this->error("Failed to authenticate with Cambro Adobe Commerce API: " . $tokenResp->body());
+                return;
+            }
+
+            $token = trim($tokenResp->json(), '"');
+        }
+        $baseUrl = $baseStoreUrl . '/rest/V1/orders';
 
         $this->backfillFromAdobeCommercePages($client, $baseUrl, $token, $orders, null);
     }
@@ -253,7 +284,23 @@ class BackfillCustomerDisplayAttributesCommand extends Command
      */
     protected function backfillClient5FromAdobeCommerce(Client $client): void
     {
-        $this->info("Fetching authentic Adobe Commerce order data for Client #5 (Goldkamp)...");
+        $this->info("Fetching authentic Adobe Commerce order data for Client #{$client->id} ({$client->name})...");
+
+        $integration = Integration::where('client_id', $client->id)
+            ->where('integration_type', 'adobe_commerce')
+            ->first();
+
+        if (! $integration || (int) $integration->client_id !== (int) $client->id) {
+            $this->warn("Fail-closed: Adobe Commerce integration for Client #{$client->id} not found or tenant mismatch.");
+            return;
+        }
+
+        $baseUrlHost = rtrim((string) ($integration->credentials_json['base_url'] ?? $integration->credentials_json['store_url'] ?? ''), '/');
+        if ($baseUrlHost === '') {
+            $this->warn("Fail-closed: Integration #{$integration->id} lacks explicit base_url in credentials_json.");
+            return;
+        }
+        $baseUrl = $baseUrlHost . '/rest/V1/orders';
 
         $orders = CommerceOrder::where('client_id', $client->id)
             ->whereNull('customer_email')
@@ -261,31 +308,30 @@ class BackfillCustomerDisplayAttributesCommand extends Command
             ->get();
 
         if ($orders->isEmpty()) {
-            $this->info('All Client #5 orders already have contact information.');
+            $this->info("All Client #{$client->id} orders already have contact information.");
             return;
         }
 
         $this->info("Found {$orders->count()} orders requiring contact attributes backfill.");
 
-        $token = $this->getGoldkampToken();
+        $token = $this->getTenantAdobeToken($integration, $baseUrl);
 
         if (! $token) {
-            $this->error("Failed to obtain authorized Adobe Commerce token for Goldkamp.");
+            $this->error("Failed to obtain authorized Adobe Commerce token for Client #{$client->id}.");
             return;
         }
 
-        $baseUrl = 'https://www.tgoldkamp.com/rest/V1/orders';
         $minEntityId = (int) $orders->min('source_order_id') ?: 14044;
 
         $this->backfillFromAdobeCommercePages($client, $baseUrl, $token, $orders, $minEntityId);
     }
 
     /**
-     * Retrieve authorized Goldkamp Adobe Commerce bearer token, refreshing via sync worker if needed.
+     * Retrieve authorized tenant Adobe Commerce bearer token, refreshing via sync worker if needed.
      */
-    protected function getGoldkampToken(): ?string
+    protected function getTenantAdobeToken(Integration $integration, string $baseOrdersUrl): ?string
     {
-        $cached = DB::table('cache')->where('key', 'like', '%adobe_token:9')->value('value');
+        $cached = DB::table('cache')->where('key', 'like', '%adobe_token:' . $integration->id)->value('value');
         if ($cached) {
             try {
                 $token = unserialize($cached);
@@ -293,7 +339,7 @@ class BackfillCustomerDisplayAttributesCommand extends Command
                     'Authorization' => 'Bearer ' . $token,
                     'User-Agent'    => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Accept'        => 'application/json',
-                ])->timeout(10)->get('https://www.tgoldkamp.com/rest/V1/orders', [
+                ])->timeout(10)->get($baseOrdersUrl, [
                     'searchCriteria[pageSize]' => 1,
                 ]);
 
@@ -305,18 +351,12 @@ class BackfillCustomerDisplayAttributesCommand extends Command
             }
         }
 
-        $this->info("Refreshing Goldkamp token via integration sync worker...");
-        $integration = Integration::find(9);
-        if ($integration) {
-            TriggerIntegrationSync::dispatch($integration, 1);
-            sleep(4);
-            $fresh = DB::table('cache')->where('key', 'like', '%adobe_token:9')->value('value');
-            if ($fresh) {
-                return unserialize($fresh);
-            }
-        }
+        $this->info("Refreshing Integration #{$integration->id} token via sync worker...");
+        TriggerIntegrationSync::dispatch($integration, 1);
+        sleep(4);
+        $fresh = DB::table('cache')->where('key', 'like', '%adobe_token:' . $integration->id)->value('value');
 
-        return null;
+        return $fresh ? unserialize($fresh) : null;
     }
 
     /**

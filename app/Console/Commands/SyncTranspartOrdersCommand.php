@@ -56,17 +56,22 @@ class SyncTranspartOrdersCommand extends Command
             ->where('integration_type', 'adobe_commerce')
             ->first();
 
-        if (! $integration) {
-            $this->error('Adobe Commerce integration for Transpart not found.');
+        if (! $integration || (int) $integration->client_id !== (int) $client->id) {
+            $this->error('Fail-closed: Adobe Commerce integration for Transpart (Client #2) not found or tenant mismatch.');
             return self::FAILURE;
         }
 
         $creds  = $integration->credentials_json ?? [];
-        $dbHost = $creds['db_host'] ?? 'cloudhost-8643311.us-midwest-1.nxcli.net';
-        $dbName = $creds['db_name'] ?? 'a34148d5_09052023';
-        $dbUser = $creds['db_user'] ?? 'a34148d5_jp';
-        $dbPass = $creds['db_password'] ?? 'GrapedHookeyFeintHewers';
+        $dbHost = $creds['db_host'] ?? '';
+        $dbName = $creds['db_name'] ?? '';
+        $dbUser = $creds['db_user'] ?? '';
+        $dbPass = $creds['db_password'] ?? '';
         $dbPort = $creds['db_port'] ?? 3306;
+
+        if (empty($dbHost) || empty($dbName) || empty($dbUser)) {
+            $this->error('Fail-closed: Transpart integration (#'.$integration->id.') lacks explicit db_host/db_name/db_user credentials_json.');
+            return self::FAILURE;
+        }
 
         $days    = (int) $this->option('days');
         $fromOpt = $this->option('from');

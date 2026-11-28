@@ -3,17 +3,24 @@
 namespace App\Services\Connectors;
 
 use App\Enums\SyncStatus;
-use App\Models\CommerceCustomerPurchaseFact;
 use App\Models\CommerceMetric;
 use App\Models\CommerceOrder;
 use App\Models\Integration;
 use App\Models\SyncLog;
+use App\Services\Configuration\ClientConfigurationManager;
+use App\Services\Intelligence\CustomerIdentityResolverService;
+use App\Services\Intelligence\CustomerPurchaseFactsReconciler;
+use App\Services\Metrics\OrderQualificationPolicy;
 use App\Services\Metrics\ValidOrderFilter;
 use App\Services\Security\CustomerIdentityHasher;
 use Carbon\Carbon;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * AdobeCommerceConnector
@@ -21,18 +28,33 @@ use Illuminate\Support\Facades\Log;
  * Authenticates via the Magento 2 Admin REST API token endpoint:
  *   POST /rest/V1/integration/admin/token
  *
- * Then uses that token to pull order/revenue data from:
- *   GET /rest/V1/orders (with filters for date range)
+ * Then pulls newly created and recently updated orders from:
+ *   GET /rest/V1/orders (or sales_order DB)
+ * using checkpointed dual-timestamp sync, client-scoped OrderQualificationPolicy,
+ * and atomic canonical customer fact reconciliation.
  */
 class AdobeCommerceConnector
 {
     private ValidOrderFilter $orderFilter;
     private CustomerIdentityHasher $identityHasher;
+    private OrderQualificationPolicy $qualificationPolicy;
+    private CustomerIdentityResolverService $identityResolver;
+    private CustomerPurchaseFactsReconciler $factsReconciler;
+    private ClientConfigurationManager $configManager;
 
-    public function __construct(private readonly Integration $integration)
-    {
-        $this->orderFilter    = new ValidOrderFilter();
-        $this->identityHasher = new CustomerIdentityHasher();
+    public function __construct(
+        private readonly Integration $integration,
+        ?OrderQualificationPolicy $qualificationPolicy = null,
+        ?CustomerIdentityResolverService $identityResolver = null,
+        ?CustomerPurchaseFactsReconciler $factsReconciler = null,
+        ?ClientConfigurationManager $configManager = null
+    ) {
+        $this->orderFilter         = new ValidOrderFilter();
+        $this->identityHasher      = new CustomerIdentityHasher();
+        $this->qualificationPolicy = $qualificationPolicy ?? app(OrderQualificationPolicy::class);
+        $this->identityResolver    = $identityResolver ?? app(CustomerIdentityResolverService::class);
+        $this->factsReconciler     = $factsReconciler ?? app(CustomerPurchaseFactsReconciler::class);
+        $this->configManager       = $configManager ?? app(ClientConfigurationManager::class);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -53,12 +75,49 @@ class AdobeCommerceConnector
         }
 
         try {
-            $from = now()->subDays($numOfDays)->startOfDay()->toIso8601String();
-            $to   = now()->endOfDay()->toIso8601String();
+            // Safe token-refresh / connectivity probe without mutating orders or checkpoints
+            if ($numOfDays < 0) {
+                if (! empty($creds['base_url']) && (empty($creds['db_host']) || ! empty($creds['admin_username']) || ! empty($creds['access_token']) || ! empty($creds['bearer_token']))) {
+                    $this->getAdminToken($creds);
+                }
+
+                $syncLog->update([
+                    'status'            => SyncStatus::Success,
+                    'records_processed' => 0,
+                    'completed_at'      => now(),
+                    'metadata_json'     => [
+                        'orders_fetched' => 0,
+                        'days_processed' => 0,
+                        'mode'           => 'token_refresh_noop',
+                    ],
+                ]);
+
+                return;
+            }
+
+            $syncState          = $this->integration->monitoring_config['sync_state'] ?? [];
+            $overlapMinutes     = max(0, (int) config('intelligence.commerce_sync.checkpoint_overlap_minutes', 120));
+            $initialUpdatedDays = max(1, (int) config('intelligence.commerce_sync.initial_updated_lookback_days', 30));
+
+            $windowEnd          = now();
+            $defaultCreatedFrom = now()->subDays(max(0, $numOfDays))->startOfDay();
+            $createdFromCarbon  = $defaultCreatedFrom;
+
+            if (! empty($syncState['last_successful_window_end']) && $numOfDays <= 2) {
+                $checkpointStart   = Carbon::parse($syncState['last_successful_window_end'])->subMinutes($overlapMinutes);
+                $createdFromCarbon = $checkpointStart->lt($defaultCreatedFrom) ? $checkpointStart : $defaultCreatedFrom;
+                $updatedFromCarbon = $checkpointStart->copy();
+            } else {
+                $updatedFromCarbon = now()->subDays(max($numOfDays, $initialUpdatedDays))->startOfDay();
+            }
+
+            $createdFrom = $createdFromCarbon->toIso8601String();
+            $updatedFrom = $updatedFromCarbon->toIso8601String();
+            $to          = $windowEnd->copy()->endOfDay()->toIso8601String();
 
             if (! empty($creds['db_host']) && ! empty($creds['db_name'])) {
                 try {
-                    $orders = $this->fetchOrdersFromDb($creds, $from, $to);
+                    $orders = $this->fetchOrdersFromDb($creds, $createdFrom, $updatedFrom, $to);
                 } catch (\Throwable $e) {
                     Log::warning('AdobeCommerceConnector: DB sync connection failed or timed out, falling back to REST API', [
                         'integration_id' => $this->integration->id,
@@ -66,41 +125,53 @@ class AdobeCommerceConnector
                     ]);
                     $token   = $this->getAdminToken($creds);
                     $baseUrl = rtrim($creds['base_url'], '/');
-                    $orders  = $this->fetchOrders($baseUrl, $token, $from, $to);
+                    $orders  = $this->fetchOrders($baseUrl, $token, $createdFrom, $updatedFrom, $to);
                 }
             } else {
                 $token   = $this->getAdminToken($creds);
                 $baseUrl = rtrim($creds['base_url'], '/');
-                $orders  = $this->fetchOrders($baseUrl, $token, $from, $to);
+                $orders  = $this->fetchOrders($baseUrl, $token, $createdFrom, $updatedFrom, $to);
             }
 
-            // Persist order line items & facts
-            $this->storeOrdersAndFacts($orders);
+            // Persist qualified order records & reconcile affected canonical customer purchase facts
+            $persistSummary = $this->storeOrdersAndFacts($orders);
 
-            // Aggregate daily metrics
-            $dailyMetrics = $this->aggregateByDay($orders);
+            // Recalculate full-day commerce_metrics for every affected order_date
+            $totalRecords = $this->recalculateDailyMetricsForDates($persistSummary['affected_dates']);
 
-            $totalRecords = 0;
-            foreach ($dailyMetrics as $date => $metrics) {
-                CommerceMetric::updateOrCreate(
-                    [
-                        'client_id' => $this->integration->client_id,
-                        'date'      => $date,
-                        'source'    => 'adobe_commerce',
-                    ],
-                    $metrics
-                );
-                $totalRecords++;
-            }
+            // Advance sync checkpoint ONLY after persistence and recalculation succeed
+            $nextSyncState = [
+                'last_successful_sync_at'    => now()->toIso8601String(),
+                'last_successful_window_end' => $windowEnd->toIso8601String(),
+                'last_created_from'          => $createdFrom,
+                'last_updated_from'          => $updatedFrom,
+                'last_orders_fetched'        => count($orders),
+                'last_dates_recalculated'    => $totalRecords,
+            ];
+
+            $this->configManager->updateIntegrationMonitoringConfig(
+                $this->integration,
+                ['sync_state' => $nextSyncState],
+                source: 'adobe_commerce_sync',
+                actorUserId: null,
+                ipAddress: null,
+                recordAudit: false
+            );
+            $this->integration->refresh();
 
             $syncLog->update([
                 'status'            => SyncStatus::Success,
                 'records_processed' => $totalRecords,
                 'completed_at'      => now(),
                 'metadata_json'     => [
-                    'orders_fetched' => count($orders),
-                    'days_processed' => $totalRecords,
-                    'date_range'     => ['from' => $from, 'to' => $to],
+                    'orders_fetched'      => count($orders),
+                    'days_processed'      => $totalRecords,
+                    'canonical_accounts'  => count($persistSummary['canonical_accounts']),
+                    'date_range'          => [
+                        'created_from' => $createdFrom,
+                        'updated_from' => $updatedFrom,
+                        'to'           => $to,
+                    ],
                 ],
             ]);
 
@@ -110,7 +181,7 @@ class AdobeCommerceConnector
                 'days'           => $totalRecords,
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Cache::forget('adobe_token:' . $this->integration->id);
 
             $safe = $this->sanitiseError($e->getMessage(), $creds);
@@ -129,63 +200,139 @@ class AdobeCommerceConnector
     }
 
     /**
-     * Persist order records into commerce_orders and update customer purchase facts.
+     * Persist qualified order records into commerce_orders and reconcile canonical purchase facts.
+     *
+     * @return array{affected_dates: array<int, string>, canonical_accounts: array<int, string>}
      */
-    private function storeOrdersAndFacts(array $orders): void
+    private function storeOrdersAndFacts(array $orders): array
     {
         $client = $this->integration->client;
         $orderRecords = [];
-        $factsMap = [];
+        $affectedDates = [];
+        $affectedCanonicalIds = [];
+        $affectedHashes = [];
+        $identityMemo = [];
 
         $nowStr = now()->toDateTimeString();
+        $hasExtendedCols = Schema::hasColumn('commerce_orders', 'order_state');
+
+        $incomingIds = [];
+        foreach ($orders as $order) {
+            $eid = (string) ($order['entity_id'] ?? $order['increment_id'] ?? '');
+            if ($eid !== '') {
+                $incomingIds[] = $eid;
+            }
+        }
+
+        if (! empty($incomingIds)) {
+            foreach (array_chunk(array_unique($incomingIds), 500) as $idChunk) {
+                $existingRows = CommerceOrder::where('client_id', $this->integration->client_id)
+                    ->where('integration_id', $this->integration->id)
+                    ->where('source', 'adobe_commerce')
+                    ->whereIn('source_order_id', $idChunk)
+                    ->get(['order_date', 'customer_identity_hash', 'canonical_account_id']);
+
+                foreach ($existingRows as $ex) {
+                    if ($ex->order_date) {
+                        $affectedDates[$ex->order_date->toDateString()] = true;
+                    }
+                    if (! empty($ex->customer_identity_hash)) {
+                        $affectedHashes[] = $ex->customer_identity_hash;
+                    }
+                    if (! empty($ex->canonical_account_id)) {
+                        $affectedCanonicalIds[] = $ex->canonical_account_id;
+                    }
+                }
+            }
+        }
 
         foreach ($orders as $order) {
-            $entityId   = (string) ($order['entity_id'] ?? $order['increment_id'] ?? '');
-            if (! $entityId) continue;
+            $entityId = (string) ($order['entity_id'] ?? $order['increment_id'] ?? '');
+            if ($entityId === '') {
+                continue;
+            }
 
-            $status     = strtolower($order['status'] ?? 'unknown');
-            $grandTotal = (float) ($order['grand_total'] ?? 0);
-            $totalRef   = (float) ($order['total_refunded'] ?? 0);
-            $tax        = (float) ($order['tax_amount'] ?? 0);
-            $shipping   = (float) ($order['shipping_amount'] ?? 0);
-            $discount   = (float) (abs($order['discount_amount'] ?? 0));
             $createdAt  = Carbon::parse($order['created_at'] ?? now());
+            $affectedDates[$createdAt->toDateString()] = true;
+
+            $tax        = (float) ($order['tax_amount'] ?? $order['base_tax_amount'] ?? 0);
+            $shipping   = (float) ($order['shipping_amount'] ?? $order['base_shipping_amount'] ?? 0);
+            $discount   = (float) abs($order['discount_amount'] ?? $order['base_discount_amount'] ?? 0);
             $custEmail  = $order['customer_email'] ?? null;
-            $custId     = isset($order['customer_id']) ? (string) $order['customer_id'] : null;
-            $company    = $order['billing_address']['company'] ?? $order['shipping_address']['company'] ?? null;
+            $custId     = (isset($order['customer_id']) && $order['customer_id'] !== '' && $order['customer_id'] !== null)
+                ? (string) $order['customer_id']
+                : null;
+            $company    = $order['billing_address']['company'] ?? $order['shipping_address']['company'] ?? ($order['company_name'] ?? null);
             $personName = trim(($order['customer_firstname'] ?? '') . ' ' . ($order['customer_lastname'] ?? ''));
             $custName   = $personName !== '' ? $personName : null;
-            $companyName = ! empty($company) ? trim($company) : null;
+            $companyName = ! empty($company) ? trim((string) $company) : null;
 
             $identityHash = $this->identityHasher->hashCustomerIdentity($client, $custId, $custEmail);
+            $identityMemoKey = ($custId ?? '') . '|' . strtolower(trim((string) ($custEmail ?? ''))) . '|' . ($identityHash ?? '');
+            if (isset($identityMemo[$identityMemoKey])) {
+                $canonicalAccountId = $identityMemo[$identityMemoKey];
+            } else {
+                $canonicalAccountId = $this->identityResolver->resolveCanonicalAccountId($client, $custId, $custEmail, $identityHash);
+                $this->identityResolver->registerAccountIdentities(
+                    $client,
+                    $canonicalAccountId,
+                    $custId,
+                    $custEmail,
+                    array_filter([$identityHash])
+                );
+                $identityMemo[$identityMemoKey] = $canonicalAccountId;
+            }
 
-            $isFullyRefunded = ($grandTotal > 0 && $totalRef >= $grandTotal);
-            $orderPayload = [
-                'status'            => $status,
-                'is_fully_refunded' => $isFullyRefunded,
+            $affectedCanonicalIds[] = $canonicalAccountId;
+            if ($identityHash) {
+                $affectedHashes[] = $identityHash;
+            }
+
+            $qual = $this->qualificationPolicy->evaluate($order, $this->integration);
+            $isValid = $qual->isValid;
+            $exclusionReason = $qual->exclusionReason;
+            $netRevenue = $isValid ? $qual->qualifyingNetRevenue : 0.0;
+
+            $metadata = [
+                'customer_group_id'            => $order['customer_group_id'] ?? null,
+                'total_qty_ordered'            => (int) ($order['total_qty_ordered'] ?? 0),
+                'customer_is_guest'            => (bool) ($order['customer_is_guest'] ?? ($custId === null)),
+                'order_state'                   => $qual->orderState,
+                'payment_method'                => $qual->paymentMethod,
+                'qualification_classification'  => $qual->classification,
+                'qualification_reason'          => $qual->qualificationReason,
+                'invoiced_revenue'              => $qual->invoicedRevenue,
+                'paid_revenue'                  => $qual->paidRevenue,
+                'canceled_revenue'              => $qual->canceledRevenue,
+                'qualifying_order_value'        => $qual->qualifyingOrderValue,
+                'outstanding_receivable'        => $qual->outstandingReceivable,
+                'settlement_unverified_revenue' => $qual->settlementUnverifiedRevenue,
+                'refundable_core_deposit'       => $qual->refundableCoreDeposit,
+                'core_deposit_refunded'         => $qual->coreDepositRefunded,
+                'outstanding_core_deposit'      => $qual->outstandingCoreDeposit,
+                'qualifying_gross_revenue'      => $qual->qualifyingGrossRevenue,
+                'unsettled_balance'             => $qual->unsettledBalance,
+                'qualification_provenance'      => $qual->provenance,
+                'base_amount_authorized'        => $order['payment']['base_amount_authorized'] ?? ($order['base_amount_authorized'] ?? null),
             ];
 
-            $isValid = $this->orderFilter->isValidOrder($orderPayload, $this->integration);
-            $exclusionReason = $this->orderFilter->getExclusionReason($orderPayload, $this->integration);
-
-            $netRevenue = $isValid ? max(0.0, $grandTotal - $totalRef) : 0.0;
-
-            $orderRecords[] = [
+            $record = [
                 'client_id'                 => $this->integration->client_id,
                 'integration_id'            => $this->integration->id,
                 'source'                    => 'adobe_commerce',
                 'source_order_id'           => $entityId,
                 'source_increment_id'       => $order['increment_id'] ?? null,
-                'order_status'              => $status,
+                'order_status'              => $qual->orderStatus,
                 'customer_identity_hash'    => $identityHash,
+                'canonical_account_id'      => $canonicalAccountId,
                 'registered_customer_id'    => $custId,
                 'customer_email'            => $custEmail,
                 'customer_name'             => $custName,
                 'company_name'              => $companyName,
                 'order_date'                => $createdAt->toDateTimeString(),
-                'refund_date'               => $totalRef > 0 ? $nowStr : null,
-                'gross_revenue'             => $grandTotal,
-                'refunded_revenue'          => $totalRef,
+                'refund_date'               => $qual->refundedRevenue > 0 ? $nowStr : null,
+                'gross_revenue'             => $qual->grossRevenue,
+                'refunded_revenue'          => $qual->refundedRevenue,
                 'net_revenue'               => $netRevenue,
                 'tax_amount'                => $tax,
                 'shipping_amount'           => $shipping,
@@ -199,179 +346,176 @@ class AdobeCommerceConnector
                 'source_updated_at'         => isset($order['updated_at']) ? Carbon::parse($order['updated_at'])->toDateTimeString() : null,
                 'financial_last_changed_at' => $nowStr,
                 'collected_at'              => $nowStr,
-                'metadata_json'             => json_encode([
-                    'customer_group_id' => $order['customer_group_id'] ?? null,
-                ]),
+                'metadata_json'             => json_encode($metadata),
                 'created_at'                => $nowStr,
                 'updated_at'                => $nowStr,
             ];
 
-            if ($isValid && $identityHash) {
-                if (! isset($factsMap[$identityHash])) {
-                    $factsMap[$identityHash] = [
-                        'client_id'                  => $client->id,
-                        'customer_identity_hash'     => $identityHash,
-                        'customer_id'                => $custId,
-                        'customer_email'             => $custEmail,
-                        'customer_name'              => $custName,
-                        'company_name'               => $companyName,
-                        'first_valid_order_at'       => $createdAt,
-                        'latest_valid_order_at'      => $createdAt,
-                        'lifetime_valid_order_count' => 1,
-                        'lifetime_net_revenue'       => $netRevenue,
-                        'is_registered_customer'     => ($custId !== null ? 1 : 0),
-                    ];
-                } else {
-                    if ($createdAt->lt($factsMap[$identityHash]['first_valid_order_at'])) {
-                        $factsMap[$identityHash]['first_valid_order_at'] = $createdAt;
-                    }
-                    if ($createdAt->gt($factsMap[$identityHash]['latest_valid_order_at'])) {
-                        $factsMap[$identityHash]['latest_valid_order_at'] = $createdAt;
-                    }
-                    $factsMap[$identityHash]['lifetime_valid_order_count']++;
-                    $factsMap[$identityHash]['lifetime_net_revenue'] += $netRevenue;
-                    if (! empty($custEmail)) {
-                        $factsMap[$identityHash]['customer_email'] = $custEmail;
-                    }
-                    if (! empty($custName)) {
-                        $factsMap[$identityHash]['customer_name'] = $custName;
-                    }
-                    if (! empty($companyName)) {
-                        $factsMap[$identityHash]['company_name'] = $companyName;
-                    }
-                    if (! empty($custId)) {
-                        $factsMap[$identityHash]['customer_id'] = $custId;
-                        $factsMap[$identityHash]['is_registered_customer'] = 1;
-                    }
+            if ($hasExtendedCols) {
+                $record['order_state']                  = $qual->orderState;
+                $record['payment_method']               = $qual->paymentMethod;
+                $record['qualification_classification'] = $qual->classification;
+                $record['invoiced_revenue']             = $qual->invoicedRevenue;
+                $record['paid_revenue']                 = $qual->paidRevenue;
+                $record['canceled_revenue']             = $qual->canceledRevenue;
+                $record['outstanding_receivable']       = $qual->outstandingReceivable;
+                if (Schema::hasColumn('commerce_orders', 'settlement_unverified_revenue')) {
+                    $record['qualification_reason']          = $qual->qualificationReason;
+                    $record['qualifying_order_value']        = $qual->qualifyingOrderValue;
+                    $record['settlement_unverified_revenue'] = $qual->settlementUnverifiedRevenue;
+                    $record['refundable_core_deposit']       = $qual->refundableCoreDeposit;
+                    $record['core_deposit_refunded']         = $qual->coreDepositRefunded;
+                    $record['outstanding_core_deposit']      = $qual->outstandingCoreDeposit;
                 }
+            }
+
+            $orderRecords[] = $record;
+        }
+
+        $updateColumns = [
+            'source_increment_id', 'order_status', 'customer_identity_hash', 'canonical_account_id',
+            'registered_customer_id', 'customer_email', 'customer_name', 'company_name',
+            'order_date', 'refund_date', 'gross_revenue', 'refunded_revenue', 'net_revenue',
+            'tax_amount', 'shipping_amount', 'discount_amount', 'currency', 'base_currency',
+            'reporting_currency', 'exchange_rate', 'is_valid', 'exclusion_reason',
+            'source_updated_at', 'financial_last_changed_at', 'collected_at', 'metadata_json', 'updated_at',
+        ];
+
+        if ($hasExtendedCols) {
+            $updateColumns = array_merge($updateColumns, [
+                'order_state', 'payment_method', 'qualification_classification',
+                'invoiced_revenue', 'paid_revenue', 'canceled_revenue', 'outstanding_receivable',
+            ]);
+            if (Schema::hasColumn('commerce_orders', 'settlement_unverified_revenue')) {
+                $updateColumns = array_merge($updateColumns, [
+                    'qualification_reason', 'qualifying_order_value', 'settlement_unverified_revenue',
+                    'refundable_core_deposit', 'core_deposit_refunded', 'outstanding_core_deposit',
+                ]);
             }
         }
 
         // Chunked bulk upsert into commerce_orders
-        foreach (array_chunk($orderRecords, 1000) as $chunk) {
+        foreach (array_chunk($orderRecords, 500) as $chunk) {
             CommerceOrder::upsert(
                 $chunk,
                 ['client_id', 'integration_id', 'source', 'source_order_id'],
-                [
-                    'source_increment_id', 'order_status', 'customer_identity_hash', 'registered_customer_id',
-                    'customer_email', 'customer_name', 'company_name',
-                    'order_date', 'refund_date', 'gross_revenue', 'refunded_revenue', 'net_revenue',
-                    'tax_amount', 'shipping_amount', 'discount_amount', 'currency', 'base_currency',
-                    'reporting_currency', 'exchange_rate', 'is_valid', 'exclusion_reason',
-                    'source_updated_at', 'financial_last_changed_at', 'collected_at', 'metadata_json', 'updated_at'
-                ]
+                $updateColumns
             );
         }
 
-        // Chunked bulk upsert into commerce_customer_purchase_facts
-        $factRecords = [];
-        foreach ($factsMap as $fact) {
-            $factRecords[] = [
-                'client_id'                  => $fact['client_id'],
-                'customer_identity_hash'     => $fact['customer_identity_hash'],
-                'customer_id'                => $fact['customer_id'],
-                'customer_email'             => $fact['customer_email'] ?? null,
-                'customer_name'              => $fact['customer_name'] ?? null,
-                'company_name'               => $fact['company_name'] ?? null,
-                'first_valid_order_at'       => $fact['first_valid_order_at']->toDateTimeString(),
-                'latest_valid_order_at'      => $fact['latest_valid_order_at']->toDateTimeString(),
-                'lifetime_valid_order_count' => $fact['lifetime_valid_order_count'],
-                'lifetime_net_revenue'       => $fact['lifetime_net_revenue'],
-                'is_registered_customer'     => $fact['is_registered_customer'],
-                'refreshed_at'               => $nowStr,
-                'created_at'                 => $nowStr,
-                'updated_at'                 => $nowStr,
-            ];
-        }
+        // Reconcile affected customer purchase facts from full canonical account history
+        $this->factsReconciler->reconcileForCanonicalAccounts(
+            $client,
+            array_values(array_unique(array_filter($affectedCanonicalIds))),
+            array_values(array_unique(array_filter($affectedHashes)))
+        );
 
-        foreach (array_chunk($factRecords, 1000) as $chunk) {
-            CommerceCustomerPurchaseFact::upsert(
-                $chunk,
-                ['client_id', 'customer_identity_hash'],
-                ['customer_id', 'customer_email', 'customer_name', 'company_name', 'first_valid_order_at', 'latest_valid_order_at', 'lifetime_valid_order_count', 'lifetime_net_revenue', 'is_registered_customer', 'refreshed_at', 'updated_at']
-            );
-        }
+        return [
+            'affected_dates'     => array_keys($affectedDates),
+            'canonical_accounts' => array_values(array_unique(array_filter($affectedCanonicalIds))),
+        ];
     }
 
     /**
-     * Group orders by date and aggregate into commerce_metrics columns.
+     * Recalculate full daily CommerceMetric rows from all persisted commerce_orders on the given dates.
+     * Ensures updated historical orders revise their original order_date aggregate accurately.
+     *
+     * @param  array<int, string>  $dates
      */
-    private function aggregateByDay(array $orders): array
+    public function recalculateDailyMetricsForDates(array $dates): int
     {
-        $daily = [];
+        $cleanDates = array_values(array_unique(array_filter($dates)));
+        $updated = 0;
 
-        foreach ($orders as $order) {
-            $date = substr($order['created_at'] ?? '', 0, 10); // YYYY-MM-DD
+        foreach ($cleanDates as $date) {
+            $orders = CommerceOrder::where('client_id', $this->integration->client_id)
+                ->where('source', 'adobe_commerce')
+                ->whereBetween('order_date', ["{$date} 00:00:00", "{$date} 23:59:59"])
+                ->get(['customer_email', 'registered_customer_id', 'order_status', 'net_revenue', 'is_valid', 'metadata_json']);
 
-            if (! $date) continue;
+            $revenue = 0.0;
+            $validOrders = 0;
+            $itemsSold = 0;
+            $newCustomers = 0;
+            $returningCustomers = 0;
+            $statuses = [];
+            $seenEmails = [];
 
-            if (! isset($daily[$date])) {
-                $daily[$date] = [
-                    'revenue'             => 0.0,
-                    'orders'              => 0,
-                    'items_sold'          => 0,
-                    'new_customers'       => 0,
-                    'returning_customers' => 0,
-                    'sessions'            => 0,
-                    'conversion_rate'     => 0.0,
-                    'aov'                 => 0.0,
-                    'metadata_json'       => ['statuses' => []],
-                    '_emails'             => [],
-                ];
-            }
+            foreach ($orders as $row) {
+                $status = strtolower((string) ($row->order_status ?? 'unknown'));
+                $statuses[$status] = ($statuses[$status] ?? 0) + 1;
 
-            $grandTotal = (float) ($order['grand_total'] ?? 0);
-            $totalRef   = (float) ($order['total_refunded'] ?? 0);
-            $qty        = (int) ($order['total_qty_ordered'] ?? 0);
-            $status     = strtolower($order['status'] ?? 'unknown');
-            $email      = $order['customer_email'] ?? '';
-            $isGuest    = (bool) ($order['customer_is_guest'] ?? false);
+                $meta = is_array($row->metadata_json) ? $row->metadata_json : [];
 
-            $orderPayload = [
-                'status'            => $status,
-                'is_fully_refunded' => ($grandTotal > 0 && $totalRef >= $grandTotal),
-            ];
+                if ((bool) $row->is_valid) {
+                    $revenue += (float) $row->net_revenue;
+                    $validOrders++;
+                    $itemsSold += (int) ($meta['total_qty_ordered'] ?? 0);
+                }
 
-            $isValid = $this->orderFilter->isValidOrder($orderPayload, $this->integration);
-
-            if ($isValid) {
-                $daily[$date]['revenue']    += max(0.0, $grandTotal - $totalRef);
-                $daily[$date]['items_sold'] += $qty;
-                $daily[$date]['orders']++;
-            }
-
-            if ($email && ! in_array($email, $daily[$date]['_emails'])) {
-                $daily[$date]['_emails'][] = $email;
-                if ($isGuest) {
-                    $daily[$date]['new_customers']++;
-                } else {
-                    $daily[$date]['returning_customers']++;
+                $email = strtolower(trim((string) ($row->customer_email ?? '')));
+                if ($email !== '' && ! isset($seenEmails[$email])) {
+                    $seenEmails[$email] = true;
+                    $isGuest = $meta['customer_is_guest'] ?? ($row->registered_customer_id === null || $row->registered_customer_id === '');
+                    if ($isGuest) {
+                        $newCustomers++;
+                    } else {
+                        $returningCustomers++;
+                    }
                 }
             }
 
-            $daily[$date]['metadata_json']['statuses'][$status] =
-                ($daily[$date]['metadata_json']['statuses'][$status] ?? 0) + 1;
+            $revenueRounded = round($revenue, 2);
+            $aov = $validOrders > 0 ? round($revenueRounded / $validOrders, 2) : 0.0;
+
+            $payload = [
+                'revenue'             => $revenueRounded,
+                'orders'              => $validOrders,
+                'items_sold'          => $itemsSold,
+                'new_customers'       => $newCustomers,
+                'returning_customers' => $returningCustomers,
+                'sessions'            => 0,
+                'conversion_rate'     => 0.0,
+                'aov'                 => $aov,
+                'metadata_json'       => ['statuses' => $statuses],
+            ];
+
+            $existingMetric = CommerceMetric::where('client_id', $this->integration->client_id)
+                ->where('source', 'adobe_commerce')
+                ->whereDate('date', $date)
+                ->first();
+
+            if ($existingMetric) {
+                $existingMetric->update($payload);
+            } else {
+                CommerceMetric::create(array_merge([
+                    'client_id' => $this->integration->client_id,
+                    'date'      => $date,
+                    'source'    => 'adobe_commerce',
+                ], $payload));
+            }
+
+            $updated++;
         }
 
-        // Clean internal keys and calculate daily AOV
-        foreach ($daily as $date => &$row) {
-            unset($row['_emails']);
-            $row['aov'] = $row['orders'] > 0 ? round($row['revenue'] / $row['orders'], 2) : 0.0;
-        }
-
-        return $daily;
+        return $updated;
     }
 
     public function fetchForDateRange(Carbon $from, Carbon $to): int
     {
         $creds = $this->integration->credentials_json ?? [];
 
-        if (! $this->hasRequiredCredentials($creds)) return 0;
+        if (! $this->hasRequiredCredentials($creds)) {
+            return 0;
+        }
 
         try {
+            $fromIso = $from->toIso8601String();
+            $toIso   = $to->toIso8601String();
+
             if (! empty($creds['db_host']) && ! empty($creds['db_name'])) {
                 try {
-                    $orders = $this->fetchOrdersFromDb($creds, $from->toIso8601String(), $to->toIso8601String());
+                    $orders = $this->fetchOrdersFromDb($creds, $fromIso, $fromIso, $toIso);
                 } catch (\Throwable $e) {
                     Log::warning('AdobeCommerceConnector::fetchForDateRange — DB connection failed, falling back to REST API', [
                         'integration_id' => $this->integration->id,
@@ -379,32 +523,20 @@ class AdobeCommerceConnector
                     ]);
                     $token   = $this->getAdminToken($creds);
                     $baseUrl = rtrim($creds['base_url'], '/');
-                    $orders  = $this->fetchOrders($baseUrl, $token, $from->toIso8601String(), $to->toIso8601String());
+                    $orders  = $this->fetchOrders($baseUrl, $token, $fromIso, $fromIso, $toIso);
                 }
             } else {
                 $token   = $this->getAdminToken($creds);
                 $baseUrl = rtrim($creds['base_url'], '/');
-                $orders  = $this->fetchOrders($baseUrl, $token, $from->toIso8601String(), $to->toIso8601String());
+                $orders  = $this->fetchOrders($baseUrl, $token, $fromIso, $fromIso, $toIso);
             }
 
-            $this->storeOrdersAndFacts($orders);
-
-            $dailyMetrics = $this->aggregateByDay($orders);
-
-            foreach ($dailyMetrics as $date => $metrics) {
-                CommerceMetric::updateOrCreate(
-                    [
-                        'client_id' => $this->integration->client_id,
-                        'date'      => $date,
-                        'source'    => 'adobe_commerce',
-                    ],
-                    $metrics
-                );
-            }
+            $persistSummary = $this->storeOrdersAndFacts($orders);
+            $this->recalculateDailyMetricsForDates($persistSummary['affected_dates']);
 
             return count($orders);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('AdobeCommerceConnector::fetchForDateRange error', [
                 'integration_id' => $this->integration->id,
                 'message'        => $e->getMessage(),
@@ -428,7 +560,7 @@ class AdobeCommerceConnector
             $from = now()->subDays(1)->startOfDay()->toIso8601String();
             $to   = now()->endOfDay()->toIso8601String();
 
-            $orders = $this->fetchOrders($baseUrl, $token, $from, $to, limit: 5);
+            $orders = $this->fetchOrders($baseUrl, $token, $from, $from, $to, limit: 5);
 
             return [
                 'success' => true,
@@ -442,6 +574,58 @@ class AdobeCommerceConnector
                 'message' => 'Connection test failed: ' . $safe,
             ];
         }
+    }
+
+    private function sendWithRetry(callable $requestFn, string $operation): Response
+    {
+        $maxAttempts = max(1, (int) config('intelligence.commerce_sync.retry_max_attempts', 3));
+        $baseDelayMs = max(0, (int) config('intelligence.commerce_sync.retry_base_delay_ms', 1000));
+        $retryableStatuses = [429, 500, 502, 503, 504];
+
+        $lastException = null;
+        $lastResponse = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                /** @var Response $response */
+                $response = $requestFn();
+                $lastResponse = $response;
+
+                if (! in_array($response->status(), $retryableStatuses, true) || $attempt === $maxAttempts) {
+                    return $response;
+                }
+
+                $delayMs = $baseDelayMs * (2 ** ($attempt - 1));
+                Log::warning("AdobeCommerceConnector: transient HTTP {$response->status()} on {$operation}, retrying", [
+                    'integration_id' => $this->integration->id,
+                    'attempt'        => $attempt,
+                    'max_attempts'   => $maxAttempts,
+                    'delay_ms'       => $delayMs,
+                ]);
+            } catch (ConnectionException $e) {
+                $lastException = $e;
+                if ($attempt === $maxAttempts) {
+                    throw $e;
+                }
+
+                $delayMs = $baseDelayMs * (2 ** ($attempt - 1));
+                Log::warning("AdobeCommerceConnector: connection error on {$operation}, retrying", [
+                    'integration_id' => $this->integration->id,
+                    'attempt'        => $attempt,
+                    'error'          => $e->getMessage(),
+                ]);
+            }
+
+            if ($delayMs > 0) {
+                usleep($delayMs * 1000);
+            }
+        }
+
+        if ($lastResponse instanceof Response) {
+            return $lastResponse;
+        }
+
+        throw $lastException ?? new \RuntimeException("Adobe Commerce {$operation} failed after retries.");
     }
 
     private function getAdminToken(array $creds, bool $forceRefresh = false): string
@@ -472,7 +656,7 @@ class AdobeCommerceConnector
 
             foreach ($endpoints as $endpoint) {
                 try {
-                    $response = Http::timeout(30)
+                    $response = $this->sendWithRetry(fn () => Http::timeout(30)
                         ->withHeaders([
                             'User-Agent'      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                             'Content-Type'    => 'application/json',
@@ -483,7 +667,7 @@ class AdobeCommerceConnector
                         ->post($endpoint, [
                             'username' => $creds['admin_username'] ?? '',
                             'password' => $creds['admin_password'] ?? '',
-                        ]);
+                        ]), 'admin_token');
 
                     if ($response->successful()) {
                         $token = trim($response->body(), " \t\n\r\0\x0B\"");
@@ -503,10 +687,17 @@ class AdobeCommerceConnector
         });
     }
 
-    private function fetchOrders(string $baseUrl, string $token, string $from, string $to, int $limit = 100, bool $isRetry = false): array
-    {
-        $allOrders = [];
-        $page      = 1;
+    private function fetchOrders(
+        string $baseUrl,
+        string $token,
+        string $createdFrom,
+        string $updatedFrom,
+        string $to,
+        int $limit = 100,
+        bool $isRetry = false
+    ): array {
+        $ordersByEntity = [];
+        $page           = 1;
 
         $endpoints = [
             $baseUrl . '/rest/V1/orders',
@@ -515,15 +706,22 @@ class AdobeCommerceConnector
         ];
 
         do {
+            // filter_groups[0] is OR: (created_at >= createdFrom OR updated_at >= updatedFrom)
+            // filter_groups[1] is AND upper bound: updated_at <= to
             $queryParams = [
-                'searchCriteria[filter_groups][0][filters][0][field]'        => 'created_at',
-                'searchCriteria[filter_groups][0][filters][0][value]'        => $from,
+                'searchCriteria[filter_groups][0][filters][0][field]'          => 'created_at',
+                'searchCriteria[filter_groups][0][filters][0][value]'          => $createdFrom,
                 'searchCriteria[filter_groups][0][filters][0][condition_type]' => 'gteq',
-                'searchCriteria[filter_groups][1][filters][0][field]'        => 'created_at',
-                'searchCriteria[filter_groups][1][filters][0][value]'        => $to,
+                'searchCriteria[filter_groups][0][filters][1][field]'          => 'updated_at',
+                'searchCriteria[filter_groups][0][filters][1][value]'          => $updatedFrom,
+                'searchCriteria[filter_groups][0][filters][1][condition_type]' => 'gteq',
+                'searchCriteria[filter_groups][1][filters][0][field]'          => 'updated_at',
+                'searchCriteria[filter_groups][1][filters][0][value]'          => $to,
                 'searchCriteria[filter_groups][1][filters][0][condition_type]' => 'lteq',
-                'searchCriteria[pageSize]'                                   => $limit,
-                'searchCriteria[currentPage]'                                => $page,
+                'searchCriteria[sortOrders][0][field]'                         => 'entity_id',
+                'searchCriteria[sortOrders][0][direction]'                     => 'ASC',
+                'searchCriteria[pageSize]'                                     => $limit,
+                'searchCriteria[currentPage]'                                  => $page,
             ];
 
             $response = null;
@@ -532,7 +730,7 @@ class AdobeCommerceConnector
             foreach ($endpoints as $endpointUrl) {
                 $url = $endpointUrl . '?' . http_build_query($queryParams);
 
-                $resp = Http::timeout(30)
+                $resp = $this->sendWithRetry(fn () => Http::timeout(30)
                     ->withHeaders([
                         'Authorization'   => "Bearer {$token}",
                         'User-Agent'      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -540,7 +738,7 @@ class AdobeCommerceConnector
                         'Accept-Language' => 'en-US,en;q=0.9',
                         'Cache-Control'   => 'no-cache',
                     ])
-                    ->get($url);
+                    ->get($url), 'fetch_orders');
 
                 if ($resp->successful()) {
                     $response = $resp;
@@ -553,7 +751,7 @@ class AdobeCommerceConnector
                     Log::warning('AdobeCommerceConnector: 401 token expired, clearing token cache and retrying');
                     $creds    = $this->integration->credentials_json ?? [];
                     $newToken = $this->getAdminToken($creds, forceRefresh: true);
-                    return $this->fetchOrders($baseUrl, $newToken, $from, $to, $limit, isRetry: true);
+                    return $this->fetchOrders($baseUrl, $newToken, $createdFrom, $updatedFrom, $to, $limit, isRetry: true);
                 }
 
                 $errMsg  = $this->parseResponseError($resp);
@@ -566,17 +764,21 @@ class AdobeCommerceConnector
 
             $data       = $response->json();
             $items      = $data['items'] ?? [];
-            $totalCount = $data['total_count'] ?? 0;
+            $totalCount = (int) ($data['total_count'] ?? 0);
 
-            $allOrders = array_merge($allOrders, $items);
+            foreach ($items as $idx => $item) {
+                $key = (string) ($item['entity_id'] ?? $item['increment_id'] ?? "p{$page}_{$idx}");
+                $ordersByEntity[$key] = $item;
+            }
+
             $page++;
 
-        } while (count($allOrders) < $totalCount && ! empty($items));
+        } while (($page - 1) * $limit < $totalCount && ! empty($items));
 
-        return $allOrders;
+        return array_values($ordersByEntity);
     }
 
-    private function fetchOrdersFromDb(array $creds, string $from, string $to): array
+    private function fetchOrdersFromDb(array $creds, string $createdFrom, string $updatedFrom, string $to): array
     {
         $dbHost = $creds['db_host'] ?? '';
         $dbName = $creds['db_name'] ?? '';
@@ -597,39 +799,59 @@ class AdobeCommerceConnector
 
             $storeId = $creds['store_id'] ?? $creds['adobe_store_id'] ?? null;
             $params  = [
-                ':from_date' => \Carbon\Carbon::parse($from)->toDateTimeString(),
-                ':to_date'   => \Carbon\Carbon::parse($to)->toDateTimeString(),
+                ':created_from' => Carbon::parse($createdFrom)->toDateTimeString(),
+                ':updated_from' => Carbon::parse($updatedFrom)->toDateTimeString(),
+                ':to_date'      => Carbon::parse($to)->toDateTimeString(),
             ];
 
             $storeClause = '';
             if ($storeId !== null && $storeId !== '') {
-                $storeClause = ' AND store_id = :store_id';
+                $storeClause = ' AND so.store_id = :store_id';
                 $params[':store_id'] = (int) $storeId;
             }
 
             $sql = "
                 SELECT
-                    entity_id,
-                    increment_id,
-                    status,
-                    grand_total,
-                    total_refunded,
-                    tax_amount,
-                    shipping_amount,
-                    discount_amount,
-                    created_at,
-                    updated_at,
-                    customer_email,
-                    customer_id,
-                    customer_is_guest,
-                    customer_group_id,
-                    order_currency_code,
-                    base_currency_code,
-                    store_to_base_rate,
-                    total_qty_ordered
-                FROM sales_order
-                WHERE created_at >= :from_date AND created_at <= :to_date {$storeClause}
-                ORDER BY created_at ASC
+                    so.entity_id,
+                    so.increment_id,
+                    so.state,
+                    so.status,
+                    so.grand_total,
+                    so.base_grand_total,
+                    so.total_refunded,
+                    so.base_total_refunded,
+                    so.base_total_invoiced,
+                    so.base_total_paid,
+                    so.base_total_canceled,
+                    so.tax_amount,
+                    so.shipping_amount,
+                    so.discount_amount,
+                    so.created_at,
+                    so.updated_at,
+                    so.customer_email,
+                    so.customer_id,
+                    so.customer_firstname,
+                    so.customer_lastname,
+                    so.customer_is_guest,
+                    so.customer_group_id,
+                    so.order_currency_code,
+                    so.base_currency_code,
+                    so.store_to_base_rate,
+                    so.total_qty_ordered,
+                    sop.method AS payment_method,
+                    sop.base_amount_authorized AS base_amount_authorized,
+                    (
+                        SELECT sa.company
+                        FROM sales_order_address sa
+                        WHERE sa.parent_id = so.entity_id AND sa.address_type = 'billing'
+                        LIMIT 1
+                    ) AS company_name
+                FROM sales_order so
+                LEFT JOIN sales_order_payment sop ON sop.parent_id = so.entity_id
+                WHERE ((so.created_at >= :created_from AND so.created_at <= :to_date)
+                    OR (so.updated_at >= :updated_from AND so.updated_at <= :to_date))
+                    {$storeClause}
+                ORDER BY so.entity_id ASC
             ";
 
             $stmt = $pdo->prepare($sql);

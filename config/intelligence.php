@@ -285,6 +285,18 @@ return [
         'window_days' => (int) env('OUTCOME_OBSERVATION_WINDOW_DAYS', 30),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Commerce Sync & Order Qualification Defaults
+    |--------------------------------------------------------------------------
+    */
+    'commerce_sync' => [
+        'checkpoint_overlap_minutes'   => (int) env('COMMERCE_SYNC_OVERLAP_MINUTES', 120),
+        'initial_updated_lookback_days' => (int) env('COMMERCE_SYNC_INITIAL_UPDATED_DAYS', 30),
+        'retry_max_attempts'           => (int) env('COMMERCE_SYNC_RETRY_ATTEMPTS', 3),
+        'retry_base_delay_ms'          => (int) env('COMMERCE_SYNC_RETRY_BASE_DELAY_MS', 1000),
+    ],
+
 ];
 
 

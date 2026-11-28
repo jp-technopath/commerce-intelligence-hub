@@ -227,6 +227,26 @@ class Client extends Model
 
     protected static function booted(): void
     {
+        static::saving(function (Client $client) {
+            if ($client->exists && $client->isDirty('monitoring_config')) {
+                $original = $client->getOriginal('monitoring_config');
+                if (is_string($original)) {
+                    $original = json_decode($original, true) ?: [];
+                }
+                if (is_array($original) && ! empty($original)) {
+                    $incoming = is_array($client->monitoring_config) ? $client->monitoring_config : [];
+                    $manager = new \App\Services\Configuration\ClientConfigurationManager();
+                    $client->monitoring_config = $manager->validateConfig(
+                        $manager->mergePreservingProtectedKeys(
+                            $original,
+                            $incoming,
+                            \App\Services\Configuration\ClientConfigurationManager::PROTECTED_CLIENT_KEYS
+                        )
+                    );
+                }
+            }
+        });
+
         static::saved(function (Client $client) {
             if ($client->project_lead_id) {
                 $client->reattributeMeetingsToLead();

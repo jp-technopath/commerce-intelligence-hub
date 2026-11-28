@@ -22,6 +22,7 @@ class BackfillGoldkampHistoricalOrdersCommand extends Command
                             {--start-page=1 : Page to start from}
                             {--max-entity-id=14044 : Upper bound entity_id for missing historical backfill}
                             {--concurrency=4 : Number of concurrent pages to fetch}
+                            {--confirm-tenant-isolation : Explicit acknowledgment required before mutating orders}
                             {--dry-run : Simulate ingestion without writing to database}';
 
     protected $description = 'Safely backfills historical Magento 2 orders for Goldkamp (Client #5) preserving financial provenance and canonical identity';
@@ -31,8 +32,28 @@ class BackfillGoldkampHistoricalOrdersCommand extends Command
         CustomerIdentityResolverService $resolver,
         ValidOrderFilter $orderFilter
     ): int {
+        $dryRun = (bool) $this->option('dry-run');
+        if (! $dryRun && ! $this->option('confirm-tenant-isolation')) {
+            $this->error('Fail-closed: pass --confirm-tenant-isolation (or use --dry-run) before mutating historical order records.');
+            return 1;
+        }
+
         $client = Client::findOrFail(5);
-        $integration = Integration::findOrFail(9);
+        $integration = Integration::where('client_id', $client->id)
+            ->where('integration_type', 'adobe_commerce')
+            ->findOrFail(9);
+
+        if ((int) $integration->client_id !== (int) $client->id) {
+            $this->error('Fail-closed: Integration tenant mismatch.');
+            return 1;
+        }
+
+        $baseHost = rtrim((string) ($integration->credentials_json['base_url'] ?? $integration->credentials_json['store_url'] ?? ''), '/');
+        if ($baseHost === '') {
+            $this->error('Fail-closed: Integration lacks explicit base_url in credentials_json.');
+            return 1;
+        }
+        $baseUrl = $baseHost . '/rest/V1/orders';
 
         $this->info("=================================================================");
         $this->info("Starting Goldkamp Historical Order Backfill (Client #5, Integ #9)");
@@ -52,13 +73,11 @@ class BackfillGoldkampHistoricalOrdersCommand extends Command
         $this->info("Successfully authenticated with Magento 2 API.");
 
         // 3. Query total available historical orders
-        $baseUrl = 'https://www.tgoldkamp.com/rest/V1/orders';
         $maxEntityId = (int) $this->option('max-entity-id');
         $pageSize = (int) $this->option('page-size');
         $startPage = (int) $this->option('start-page');
         $maxPages = (int) $this->option('max-pages');
         $concurrency = max(1, min(6, (int) $this->option('concurrency')));
-        $dryRun = (bool) $this->option('dry-run');
 
         $this->info("\nStep 3: Querying historical order volume (entity_id < {$maxEntityId})...");
         $metaCheck = Http::withHeaders([

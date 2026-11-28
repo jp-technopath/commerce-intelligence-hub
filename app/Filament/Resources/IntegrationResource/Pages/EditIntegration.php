@@ -56,12 +56,53 @@ class EditIntegration extends EditRecord
         ];
     }
 
+    protected ?array $beforeMonitoringConfigSnapshot = null;
+
     /**
-     * When saving, merge virtual credential fields into credentials_json.
+     * When saving, merge virtual credential fields into credentials_json and preserve monitoring_config keys.
      */
     protected function mutateFormDataBeforeSave(array $data): array
     {
-        return IntegrationResource::serializeCredentials($data, $this->record->credentials_json ?? []);
+        $data = IntegrationResource::serializeCredentials($data, $this->record->credentials_json ?? []);
+
+        $manager = new \App\Services\Configuration\ClientConfigurationManager();
+        $existing = is_array($this->record->monitoring_config) ? $this->record->monitoring_config : [];
+        $this->beforeMonitoringConfigSnapshot = $existing;
+        $submitted = is_array($data['monitoring_config'] ?? null) ? $data['monitoring_config'] : [];
+
+        $data['monitoring_config'] = $manager->mergeFormSubmission(
+            $existing,
+            $submitted,
+            \App\Services\Configuration\ClientConfigurationManager::PROTECTED_INTEGRATION_KEYS
+        );
+
+        return $data;
+    }
+
+    protected function afterSave(): void
+    {
+        if ($this->beforeMonitoringConfigSnapshot === null) {
+            return;
+        }
+
+        $manager = new \App\Services\Configuration\ClientConfigurationManager();
+        $after = is_array($this->record->monitoring_config) ? $this->record->monitoring_config : [];
+        $changed = $manager->computeChangedKeys($this->beforeMonitoringConfigSnapshot, $after);
+
+        if (! empty($changed)) {
+            $manager->recordAudit(
+                clientId: $this->record->client_id,
+                integrationId: $this->record->id,
+                actorUserId: auth()->id(),
+                configScope: 'integration.monitoring_config',
+                version: (int) ($after['_meta']['version'] ?? 1),
+                changedKeys: $changed,
+                before: $this->beforeMonitoringConfigSnapshot,
+                after: $after,
+                source: 'filament_ui',
+                ipAddress: request()?->ip()
+            );
+        }
     }
 
     /**

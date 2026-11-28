@@ -232,6 +232,22 @@ class FindingConfigurationValidator
             }
         }
 
+        // 8. Validate optional order_settings if present in JSON configuration
+        if (isset($data['order_settings'])) {
+            try {
+                (new \App\Services\Configuration\ClientConfigurationManager())->validateConfig([
+                    'order_settings' => $data['order_settings'],
+                ]);
+            } catch (\InvalidArgumentException $e) {
+                $errors[] = $e->getMessage();
+            }
+        }
+
+        // 9. Validate optional performance_objectives if present
+        if (isset($data['performance_objectives']) && ! is_array($data['performance_objectives'])) {
+            $errors[] = 'The "performance_objectives" field must be an object or array.';
+        }
+
         return [
             'is_valid'       => empty($errors),
             'errors'         => $errors,

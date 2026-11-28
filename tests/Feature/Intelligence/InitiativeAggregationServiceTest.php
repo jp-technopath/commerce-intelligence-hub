@@ -512,9 +512,10 @@ class InitiativeAggregationServiceTest extends TestCase
         $this->assertNotNull($attr);
         $this->assertEquals(FindingPillar::TechnicalHealth->value, $attr['pillar']);
         $this->assertEquals('Revenue & Channel Attribution', $attr['display_title']);
-        $this->assertEquals('$4,847', $attr['card_metric_value']);
-        $this->assertEquals('attribution discrepancy', $attr['card_metric_label']);
+        $this->assertEquals('24.1%', $attr['card_metric_value']);
+        $this->assertEquals('GA4 vs Commerce variance', $attr['card_metric_label']);
         $this->assertStringContainsString('GA4 exceeds Commerce revenue by 24.1%', $attr['card_summary']);
+        $this->assertStringContainsString('$4,847', $attr['card_summary']);
         $this->assertStringNotContainsString('underreports', $attr['card_summary']);
 
         $script = $gkInits->firstWhere('strategic_goal', 'Storefront & Script Health');
@@ -529,6 +530,57 @@ class InitiativeAggregationServiceTest extends TestCase
         $this->assertEquals('37.7%', $cbAttr['card_metric_value']);
         $this->assertEquals('attribution discrepancy', $cbAttr['card_metric_label']);
         $this->assertStringContainsString('GA4 exceeds Commerce revenue by 37.7%', $cbAttr['card_summary']);
+    }
+
+    public function test_independent_platform_and_klaviyo_variances_are_never_summed(): void
+    {
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'ga4_klaviyo_attribution_variance',
+            'fingerprint'      => hash('sha256', 'gk_nonadd_klav'),
+            'source_type'      => 'rule',
+            'title'            => 'GA4 vs Klaviyo Attribution Variance (100% Discrepancy)',
+            'finding_pillar'   => null,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'metadata_json'    => ['rule_key' => 'ga4_klaviyo_attribution_variance', 'difference_amount' => 4846.63],
+        ]);
+        Finding::create([
+            'client_id'        => $this->goldkamp->id,
+            'finding_type'     => 'attribution.platform_variance',
+            'fingerprint'      => hash('sha256', 'gk_nonadd_plat'),
+            'source_type'      => 'detector',
+            'source_id'        => 'ga4_vs_commerce',
+            'title'            => 'GA4 vs Commerce revenue variance (25.3% discrepancy)',
+            'finding_pillar'   => null,
+            'finding_category' => FindingCategory::Revenue->value,
+            'status'           => FindingStatus::New->value,
+            'evidence_json'    => ['variance_pct' => 25.3, 'variance_amount' => 18162.26],
+            'metadata_json'    => [
+                'difference_amount' => 18162.26,
+                'primary_signal' => [
+                    'family'         => 'attribution.platform_variance',
+                    'current_value'  => 89813.99,
+                    'previous_value' => 71651.73,
+                    'evidence'       => ['variance_pct' => 25.3, 'variance_amount' => 18162.26],
+                ],
+            ],
+        ]);
+
+        $inits = $this->service->getInitiatives($this->goldkamp, FindingPillar::TechnicalHealth->value);
+        $attr = $inits->firstWhere('strategic_goal', 'Revenue & Channel Attribution');
+
+        $this->assertNotNull($attr);
+        $this->assertEquals('25.3%', $attr['card_metric_value']);
+        $this->assertEquals('$18,162.26', $attr['formatted_primary_financial']);
+        $this->assertEquals('GA4 vs Commerce Variance', $attr['primary_financial_label']);
+
+        foreach (['card_metric_value', 'formatted_primary_financial', 'card_summary', 'why_it_matters'] as $field) {
+            $this->assertStringNotContainsString('23,009', (string) ($attr[$field] ?? ''));
+            $this->assertStringNotContainsString('23,008.89', (string) ($attr[$field] ?? ''));
+        }
+        $this->assertStringContainsString('$18,162', $attr['card_summary']);
+        $this->assertStringContainsString('$4,847', $attr['card_summary']);
     }
 }
 

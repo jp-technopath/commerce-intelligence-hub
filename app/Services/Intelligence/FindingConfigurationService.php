@@ -267,6 +267,12 @@ class FindingConfigurationService
                         ],
                     ],
                 ],
+                'order_settings' => [
+                    'type' => 'object',
+                ],
+                'performance_objectives' => [
+                    'type' => ['object', 'array'],
+                ],
             ],
             'additionalProperties' => false,
         ];

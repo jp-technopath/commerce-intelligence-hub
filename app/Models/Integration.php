@@ -31,6 +31,29 @@ class Integration extends Model
         'last_sync_at'      => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::saving(function (Integration $integration) {
+            if ($integration->exists && $integration->isDirty('monitoring_config')) {
+                $original = $integration->getOriginal('monitoring_config');
+                if (is_string($original)) {
+                    $original = json_decode($original, true) ?: [];
+                }
+                if (is_array($original) && ! empty($original)) {
+                    $incoming = is_array($integration->monitoring_config) ? $integration->monitoring_config : [];
+                    $manager = new \App\Services\Configuration\ClientConfigurationManager();
+                    $integration->monitoring_config = $manager->validateConfig(
+                        $manager->mergePreservingProtectedKeys(
+                            $original,
+                            $incoming,
+                            \App\Services\Configuration\ClientConfigurationManager::PROTECTED_INTEGRATION_KEYS
+                        )
+                    );
+                }
+            }
+        });
+    }
+
     public function getCredentialsJsonAttribute($value): array
     {
         if (empty($value)) {
